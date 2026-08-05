@@ -6,4 +6,10 @@
     <priority>1.0</priority>
     <changefreq>weekly</changefreq>
   </url>
+  <url>
+    <loc>https://wizardshit.store/privacy.html</loc>
+    <lastmod>2026-08-05</lastmod>
+    <priority>0.3</priority>
+    <changefreq>yearly</changefreq>
+  </url>
 </urlset>
