@@ -1,0 +1,31 @@
+body {
+  margin: 0;
+  font-family: system-ui, sans-serif;
+}
+
+/* HEADER */
+.site-header {
+  background: yellow;
+  border-left: 12px solid purple;
+  padding: 2rem 1rem;
+  text-align: center;
+}
+
+.logo {
+  max-width: 280px;
+  width: 100%;
+  height: auto;
+}
+
+/* MAIN CONTENT */
+.site-main {
+  padding: 2rem;
+  text-align: center;
+}
+
+.updates-text {
+  color: purple;
+  font-size: 1.5rem;
+  font-weight: bold;
+  letter-spacing: 0.05em;
+}

@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Wizard Shit - Coming Soon | Animated Series | wizardshit.store</title>
+<!-- SEO Meta Tags -->
+<meta name="description" content="Wizard Shit is an independent animated TV show made by wizards all over the world. Think Adventure Time vibes with weed, magic, and wizard city chaos. Coming soon.">
+<meta name="keywords" content="Wizard Shit, wizardshit.store, wizard animation, animated series, indie animation, independent animation, animated TV show, wizard city, wizard adventure, smoking weed animation, stoner animation, adventure time, magic cartoon, animated comedy, wizard merch, animated web series, indie cartoon">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://wizardshit.store/">
+<meta property="og:title" content="Wizard Shit - Coming Soon | wizardshit.store">
+<meta property="og:description" content="An independent animated show set in Wizard City — made by indie creators all over the world. Coming soon.">
+<meta property="og:image" content="https://wizardshit.store/og-card.png">
+<meta name="robots" content="noindex">
+<link rel="icon" type="image/png" href="/favicon.png">
+<link rel="apple-touch-icon" href="/icon-192.png">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html, body {
+    width: 100%;
+    height: 100%;
+    background: #0e0520;
+    font-family: system-ui, sans-serif;
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+  }
+
+  .container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2rem;
+    padding: 2rem;
+    text-align: center;
+  }
+
+  .logo {
+    width: min(320px, 80vw);
+    filter: drop-shadow(0 0 30px rgba(180, 80, 255, 0.6));
+  }
+
+  .tagline {
+    font-size: clamp(0.75rem, 2.5vw, 1rem);
+    letter-spacing: 0.25em;
+    text-transform: uppercase;
+    color: rgba(255, 220, 120, 0.85);
+    text-shadow: 0 0 20px rgba(255, 200, 80, 0.4);
+  }
+
+  .countdown-wrap {
+    background: linear-gradient(160deg, #4a0f8a 0%, #2a0550 60%, #1a0338 100%);
+    border: 2px solid rgba(180, 80, 255, 0.35);
+    border-radius: 14px;
+    box-shadow:
+      0 0 50px rgba(140, 40, 255, 0.45),
+      inset 0 1px 0 rgba(255,255,255,0.08),
+      inset 0 -1px 0 rgba(0,0,0,0.3);
+    padding: 0;
+    width: min(347px, 90vw);
+    overflow: hidden;
+  }
+
+  .countdown-title {
+    font-size: clamp(0.6rem, 2.5vw, 0.78rem);
+    font-weight: 700;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: rgb(255, 210, 60);
+    text-shadow: 0 0 12px rgba(255, 190, 40, 0.5);
+    padding: 1.1rem 1.5rem 0.9rem;
+    background: linear-gradient(180deg, rgba(255,255,255,0.06) 0%, transparent 100%);
+    border-bottom: 1px solid rgba(180, 80, 255, 0.2);
+  }
+
+  .countdown-digits {
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    gap: clamp(0.3rem, 2.5vw, 0.9rem);
+    padding: 1.1rem 1.2rem 1rem;
+    background: linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.15) 100%);
+  }
+
+  .countdown-unit {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.25rem;
+  }
+
+  .countdown-unit span.num {
+    font-size: clamp(2rem, 10vw, 3rem);
+    font-weight: 700;
+    color: rgb(255, 210, 60);
+    text-shadow:
+      0 0 20px rgba(255, 190, 40, 0.7),
+      0 2px 4px rgba(0,0,0,0.4);
+    line-height: 1;
+    min-width: 2ch;
+    text-align: center;
+  }
+
+  .countdown-unit span.label {
+    font-size: 0.58rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: rgba(255, 210, 60, 0.6);
+  }
+
+  .countdown-sep {
+    font-size: clamp(1.5rem, 8vw, 2.4rem);
+    font-weight: 300;
+    color: rgba(180, 80, 255, 0.6);
+    margin-top: 0.1rem;
+  }
+
+  .countdown-date {
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: rgb(255, 210, 60);
+    letter-spacing: 0.08em;
+    padding: 0.7rem 1.5rem 0.9rem;
+    background: linear-gradient(180deg, rgba(0,0,0,0.2) 0%, rgba(0,0,0,0.35) 100%);
+    border-top: 1px solid rgba(180, 80, 255, 0.2);
+    text-shadow: 0 0 10px rgba(255, 190, 40, 0.4);
+  }
+
+  /* stars background */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      radial-gradient(1px 1px at 10% 15%, rgba(255,255,255,0.6) 0%, transparent 100%),
+      radial-gradient(1px 1px at 30% 60%, rgba(255,255,255,0.4) 0%, transparent 100%),
+      radial-gradient(1px 1px at 55% 25%, rgba(255,255,255,0.5) 0%, transparent 100%),
+      radial-gradient(1px 1px at 75% 70%, rgba(255,255,255,0.3) 0%, transparent 100%),
+      radial-gradient(1px 1px at 85% 10%, rgba(255,255,255,0.6) 0%, transparent 100%),
+      radial-gradient(1px 1px at 20% 85%, rgba(255,255,255,0.4) 0%, transparent 100%),
+      radial-gradient(1px 1px at 65% 50%, rgba(255,255,255,0.3) 0%, transparent 100%),
+      radial-gradient(1px 1px at 45% 90%, rgba(255,255,255,0.5) 0%, transparent 100%),
+      radial-gradient(1px 1px at 92% 45%, rgba(255,255,255,0.4) 0%, transparent 100%),
+      radial-gradient(1px 1px at 5% 40%, rgba(255,255,255,0.3) 0%, transparent 100%);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .container { position: relative; z-index: 1; }
+</style>
+</head>
+<body>
+<div class="container">
+  <img src="wizshtlogo_trans.png" class="logo" alt="Wiz@rdShit Logo">
+  <p class="tagline">Website releasing soon</p>
+  <div class="countdown-wrap">
+    <div class="countdown-title">Wiz@rd Shit Website Release</div>
+    <div class="countdown-digits">
+      <div class="countdown-unit"><span class="num" id="cd-days">00</span><span class="label">days</span></div>
+      <div class="countdown-sep">|</div>
+      <div class="countdown-unit"><span class="num" id="cd-hours">00</span><span class="label">hours</span></div>
+      <div class="countdown-sep">|</div>
+      <div class="countdown-unit"><span class="num" id="cd-mins">00</span><span class="label">minutes</span></div>
+      <div class="countdown-sep">|</div>
+      <div class="countdown-unit"><span class="num" id="cd-secs">00</span><span class="label">seconds</span></div>
+    </div>
+    <div class="countdown-date">April 3, 2026</div>
+  </div>
+  <script>
+    // TO REUSE THIS TIMER: change the date on the line below
+    // (and the "April 3, 2026" text in the countdown-date div above).
+    // When the timer hits zero it sends people to the homepage.
+    (function() {
+      var target = new Date('2026-04-03T17:00:00-04:00').getTime();
+      var launched = false;
+      function launch() {
+        if (launched) return;
+        launched = true;
+        window.location.href = '/';
+      }
+      function tick() {
+        var now = Date.now();
+        var diff = target - now;
+        if (diff <= 0) { launch(); return; }
+        var days  = Math.floor(diff / 86400000);
+        var hours = Math.floor((diff % 86400000) / 3600000);
+        var mins  = Math.floor((diff % 3600000)  / 60000);
+        var secs  = Math.floor((diff % 60000)    / 1000);
+        document.getElementById('cd-days').textContent  = String(days).padStart(2,'0');
+        document.getElementById('cd-hours').textContent = String(hours).padStart(2,'0');
+        document.getElementById('cd-mins').textContent  = String(mins).padStart(2,'0');
+        document.getElementById('cd-secs').textContent  = String(secs).padStart(2,'0');
+      }
+      tick();
+      setInterval(tick, 1000);
+    })();
+  </script>
+</div>
+</body>
+</html>

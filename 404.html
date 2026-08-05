@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="robots" content="noindex">
+<title>Wizard Shit</title>
+<!-- Unknown paths bounce to the homepage; dark background so there's
+     no white flash during the hop. -->
+<style>html, body { background: #0e0520; }</style>
+<script>
+  var page = window.location.pathname.replace(/^\//, '').replace(/\/$/, '');
+  window.location.replace('/?p=' + encodeURIComponent(page));
+</script>
+</head>
+<body></body>
+</html>
