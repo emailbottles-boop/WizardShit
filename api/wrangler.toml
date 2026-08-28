@@ -44,8 +44,9 @@ binding = "IMAGES"
 bucket_name = "wizardshit-images"
 
 [vars]
-# Origins allowed to call the public API from a browser.
-ALLOWED_ORIGINS = "https://wizardshit.store,https://www.wizardshit.store,http://localhost:8080,http://127.0.0.1:8080"
+# (There is deliberately no origin-allowlist var here: the public endpoints
+# answer with Access-Control-Allow-Origin: * on purpose, and admin responses
+# carry no CORS header at all, so they can't be read cross-origin.)
 
 # --- Admin auth, option A (recommended): Cloudflare Access ---
 # Put an Access application in front of this worker's /admin and /api/admin
@@ -68,6 +69,14 @@ ACCESS_AUD = ""
 # Only used when Access is NOT configured above. Set it as a secret so it
 # never lives in this file:
 #   npx wrangler secret put ADMIN_PASSWORD
+
+# --- Session signing (recommended) ---
+# Login sessions (password and Google alike) are signed with a key derived
+# from SESSION_SECRET + ADMIN_PASSWORD. Set a dedicated secret so Google-only
+# setups work with no password configured, and sessions don't hinge on the
+# password alone:
+#   npx wrangler secret put SESSION_SECRET     (any long random string)
+# Changing either secret logs every session out.
 
 # NOTE: there is deliberately no [[ratelimits]] binding here. It was tried and
 # removed: the binding bound fine and limit() returned {success:true} for 14

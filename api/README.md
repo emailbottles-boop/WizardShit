@@ -154,3 +154,19 @@ Founders on the list can then log in with one click if they're signed into
 Google in their browser; the shared password keeps working alongside.
 Google sessions last a week and are revoked by re-running the
 FOUNDER_EMAILS secret without that email.
+
+## Upgrade: hardening pass (2026-08)
+
+One-time steps when deploying this upgrade:
+
+1. Give sessions their own signing secret (any long random string):
+   `npx wrangler secret put SESSION_SECRET`
+   Without it, Google sign-in refuses to start when no ADMIN_PASSWORD is
+   set, and sessions are otherwise tied to the password alone.
+2. Redeploy: `npx wrangler deploy`
+
+What changed: the pageview beacon and failed password attempts are now
+rate-limited per IP; password logins get an expiring session token instead
+of the panel holding the raw password for the whole tab; Google sign-in
+works without a shared password configured; and the unused ALLOWED_ORIGINS
+var was removed. Existing logins are logged out once on deploy.

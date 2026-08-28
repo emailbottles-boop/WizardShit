@@ -398,17 +398,19 @@ export const ADMIN_HTML = `<!DOCTYPE html>
   });
   function tryLogin() {
     var pw = document.getElementById('pwInput').value;
-    sessionStorage.setItem('wizpw', pw);
-    fetch('/api/admin/login', { method: 'POST', headers: authHeaders() })
+    // Verify first, store after: nothing lands in sessionStorage unless the
+    // server accepts it, and what we keep is the expiring session token the
+    // server hands back — not the raw password.
+    fetch('/api/admin/login', { method: 'POST', headers: { 'Authorization': 'Bearer ' + pw } })
       .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
       .then(function (out) {
         if (!out.ok) {
-          sessionStorage.removeItem('wizpw');
           var err = document.getElementById('loginErr');
           err.textContent = out.d.error || 'Login failed';
           err.style.display = 'block';
           return;
         }
+        sessionStorage.setItem('wizpw', out.d.token || pw);
         document.getElementById('loginOverlay').style.display = 'none';
         boot();
       })
