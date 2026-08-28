@@ -6,6 +6,26 @@ name = "wizardshit-api"
 main = "src/index.js"
 compatibility_date = "2026-08-01"
 
+# Keep the wizardshit-api.wizardshit-api.workers.dev URL alive alongside the
+# custom-domain routes below. Adding routes silently disables it otherwise,
+# which would break the direct admin link and leave no way in if the domain
+# or its DNS ever has a bad day.
+workers_dev = true
+
+# Routes on the custom domain. GitHub Pages keeps serving everything else.
+#
+# NEVER add a bare "wizardshit.store/" or "wizardshit.store/*" route here:
+# the worker redirects "/" to /login, so that would bounce the homepage to
+# the login screen. These patterns are deliberately narrow.
+routes = [
+  { pattern = "wizardshit.store/login",  zone_name = "wizardshit.store" },
+  { pattern = "wizardshit.store/login/", zone_name = "wizardshit.store" },
+  { pattern = "wizardshit.store/admin",  zone_name = "wizardshit.store" },
+  { pattern = "wizardshit.store/admin/", zone_name = "wizardshit.store" },
+  { pattern = "wizardshit.store/api/*",  zone_name = "wizardshit.store" },
+  { pattern = "wizardshit.store/img/*",  zone_name = "wizardshit.store" },
+]
+
 # D1 database — create it with:
 #   npx wrangler d1 create wizardshit
 # then paste the database_id it prints below.
