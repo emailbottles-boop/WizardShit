@@ -522,8 +522,15 @@ export default {
         return receiveMessage(request, env);
       }
       if (method === 'POST' && path === '/api/hit') {
-        // pageview beacon: a text/plain path, counted per UTC day
-        const p = (await request.text()).slice(0, 100) || '/';
+        // pageview beacon, counted per UTC day. The label is caller-controlled,
+        // so it is folded into a tiny fixed set: junk requests can nudge counts
+        // but can never grow the table with garbage rows.
+        const raw = (await request.text()).slice(0, 100);
+        let p;
+        if (raw === '/' || raw === '/index.html') p = '/';
+        else if (raw.startsWith('/crew/')) p = '/crew';
+        else if (raw === '/privacy.html') p = '/privacy';
+        else p = '/other';
         const day = new Date().toISOString().slice(0, 10);
         await env.DB.prepare(
           'INSERT INTO page_hits (day, path, hits) VALUES (?, ?, 1) ON CONFLICT(day, path) DO UPDATE SET hits = hits + 1',
