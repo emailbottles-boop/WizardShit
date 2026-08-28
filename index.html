@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Wizard Shit — Animated Wizard Cartoon &amp; Wizard Show</title>
 
 <!-- SEO Meta Tags -->
@@ -120,7 +120,7 @@ html, body {
   font-family: system-ui, sans-serif;
   color: white;
   -webkit-overflow-scrolling: touch;
-  touch-action: pan-y;
+  touch-action: manipulation; /* no double-tap zoom, but pinch zoom stays available */
 }
 
 a { text-decoration: none; color: inherit; }
@@ -463,6 +463,7 @@ body::before {
 }
 
 .nav-box-small {
+  font-family: inherit; /* it's a <button> now; buttons don't inherit fonts */
   min-width: 170px;
   padding: 1rem 1.6rem;
   border-radius: 18px;
@@ -1179,8 +1180,8 @@ input:focus-visible {
     <div class="top-section" style="margin-top: 2rem;">
       <div class="content-title">CONTENT</div>
       <div class="right-buttons">
-        <div class="nav-box-small" id="merchBtn">MERCH</div>
-        <div class="nav-box-small" id="creditsBtn">CREDITS</div>
+        <button type="button" class="nav-box-small" id="merchBtn">MERCH</button>
+        <button type="button" class="nav-box-small" id="creditsBtn">CREDITS</button>
       </div>
     </div>
 
@@ -1237,8 +1238,8 @@ input:focus-visible {
     <div class="top-section" style="margin-top: 2rem;">
       <div class="content-title">MERCH</div>
       <div class="right-buttons">
-        <div class="nav-box-small" id="merchToContentBtn">CONTENT</div>
-        <div class="nav-box-small" id="merchToCreditsBtn">CREDITS</div>
+        <button type="button" class="nav-box-small" id="merchToContentBtn">CONTENT</button>
+        <button type="button" class="nav-box-small" id="merchToCreditsBtn">CREDITS</button>
       </div>
     </div>
     
@@ -1338,28 +1339,12 @@ input:focus-visible {
     </div>
 
     <div style="display: flex; flex-wrap: wrap; gap: 1rem; justify-content: center; margin-top: auto; padding-bottom: 7rem;">
-      <div class="nav-box-small" id="donatorsToHomeBtn">HOME</div>
-      <div class="nav-box-small" id="donatorsToContentBtn">CONTENT</div>
-      <div class="nav-box-small" id="donatorsToMerchBtn">MERCH</div>
-      <div class="nav-box-small" id="donatorsToCreditsBtn">CREDITS</div>
+      <button type="button" class="nav-box-small" id="donatorsToHomeBtn">HOME</button>
+      <button type="button" class="nav-box-small" id="donatorsToContentBtn">CONTENT</button>
+      <button type="button" class="nav-box-small" id="donatorsToMerchBtn">MERCH</button>
+      <button type="button" class="nav-box-small" id="donatorsToCreditsBtn">CREDITS</button>
     </div>
 
-  </div>
-</div>
-
-<!-- CONTENT SCREEN -->
-<div class="screen" id="content">
-  <div class="content-container">
-    <div class="page-title">CONTENT</div>
-    
-    <div class="video-card">
-      <a href="https://www.youtube.com/watch?v=H6cNCTofnrs" target="_blank">
-        <img loading="lazy" decoding="async" src="https://img.youtube.com/vi/H6cNCTofnrs/hqdefault.jpg" alt="Christmas In Wizard City">
-      </a>
-      <div class="caption">Christmas In Wizard City</div>
-    </div>
-
-    <button class="btn btn-secondary" id="backFromContentBtn">BACK</button>
   </div>
 </div>
 
@@ -1370,7 +1355,7 @@ input:focus-visible {
     <div class="top-section" style="margin-top: 2rem;">
       <div class="content-title">CREDITS</div>
       <div class="right-buttons">
-        <div class="nav-box-small" id="donatorsBtn">DONATORS</div>
+        <button type="button" class="nav-box-small" id="donatorsBtn">DONATORS</button>
       </div>
     </div>
     
@@ -1609,7 +1594,6 @@ document.querySelectorAll('.bio-card-back').forEach(function(el) {
 const home = document.getElementById("home");
 const updates = document.getElementById("updates");
 const merch = document.getElementById("merch");
-const content = document.getElementById("content");
 const credits = document.getElementById("credits");
 const donators = document.getElementById("donators");
 
@@ -1618,7 +1602,6 @@ const backBtn = document.getElementById("backBtn");
 const merchBtn = document.getElementById("merchBtn");
 const creditsBtn = document.getElementById("creditsBtn");
 const backFromMerchBtn = document.getElementById("backFromMerchBtn");
-const backFromContentBtn = document.getElementById("backFromContentBtn");
 const backFromCreditsBtn = document.getElementById("backFromCreditsBtn");
 const donatorsBtn = document.getElementById("donatorsBtn");
 const backFromDonatorsBtn = document.getElementById("backFromDonatorsBtn");
@@ -1657,7 +1640,7 @@ document.addEventListener("visibilitychange", () => {
   }
 });
 
-const SCREENS = { home, updates, merch, content, credits, donators };
+const SCREENS = { home, updates, merch, credits, donators };
 
 // Restore path after 404.html redirect (e.g. /?p=credits)
 (function() {
@@ -1667,7 +1650,7 @@ const SCREENS = { home, updates, merch, content, credits, donators };
 })();
 
 function showScreen(screenToShow, pushState = true) {
-  [home, updates, merch, content, credits, donators].forEach(s => s.classList.remove("active"));
+  [home, updates, merch, credits, donators].forEach(s => s.classList.remove("active"));
   screenToShow.classList.add("active");
   const mobileActive = window.matchMedia('(max-width: 900px)').matches;
   waterLayer.style.opacity = screenToShow === home ? 0 : (mobileActive ? 0.5 : 1);
@@ -1749,7 +1732,6 @@ merchBtn.onclick = () => showScreen(merch);
 creditsBtn.onclick = () => showScreen(credits);
 
 backFromMerchBtn.onclick = () => showScreen(updates);
-backFromContentBtn.onclick = () => showScreen(updates);
 backFromCreditsBtn.onclick = () => showScreen(updates);
 donatorsBtn.onclick = () => showScreen(donators);
 
@@ -1768,8 +1750,20 @@ bioCards.forEach(card => {
     card.style.cursor = 'default';
     return;
   }
-  card.addEventListener('click', function() {
-    this.classList.toggle('flipped');
+  // flip cards are interactive, so make them reachable and usable by keyboard
+  card.tabIndex = 0;
+  card.setAttribute('role', 'button');
+  card.setAttribute('aria-pressed', 'false');
+  const flip = function() {
+    const on = card.classList.toggle('flipped');
+    card.setAttribute('aria-pressed', String(on));
+  };
+  card.addEventListener('click', flip);
+  card.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      flip();
+    }
   });
 });
 
@@ -1847,44 +1841,10 @@ if (window.innerWidth <= 900) {
   © Madam Studio — All Rights Reserved · NFP (Not For Profit) · <a href="/privacy.html">Privacy Policy</a>
 </footer>
 
-<script>
-(function() {
-  const LOCK = 'width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no';
-  const meta = document.querySelector('meta[name=viewport]');
-
-  // Force zoom reset on every load (fixes browser-persisted zoom state)
-  meta.setAttribute('content', LOCK);
-
-  // Reset if VisualViewport reports a non-1 scale (e.g. after refresh while zoomed)
-  if (window.visualViewport) {
-    function resetZoom() {
-      if (Math.round(window.visualViewport.scale * 100) !== 100) {
-        meta.setAttribute('content', LOCK);
-      }
-    }
-    window.visualViewport.addEventListener('resize', resetZoom);
-    resetZoom();
-  }
-
-  // Block all gesture-based zoom (Safari + Chrome iOS)
-  ['gesturestart','gesturechange','gestureend'].forEach(function(evt) {
-    document.addEventListener(evt, function(e) { e.preventDefault(); }, { passive: false });
-  });
-  document.addEventListener('touchstart', function(e) { if (e.touches.length > 1) e.preventDefault(); }, { passive: false });
-  document.addEventListener('touchmove',  function(e) { if (e.touches.length > 1) e.preventDefault(); }, { passive: false });
-
-  // Block double-tap zoom
-  var lastTap = 0;
-  document.addEventListener('touchend', function(e) {
-    var now = Date.now();
-    if (now - lastTap < 300) e.preventDefault();
-    lastTap = now;
-  }, { passive: false });
-})();
-</script>
 
 <script src="/js/show-link.js"></script>
 <script src="/js/config.js"></script>
+<script src="/js/beacon.js" defer></script>
 <script src="/js/content.js" defer></script>
 <script src="/js/message-widget.js" defer></script>
 

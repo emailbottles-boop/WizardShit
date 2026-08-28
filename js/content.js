@@ -9,15 +9,7 @@
   var API = (window.WIZ_API_BASE || '').trim().replace(/\/+$/, '');
   if (!API) return;
 
-  // one anonymous pageview tick per visit, for the Control Room's ANALYTICS tab
-  try {
-    fetch(API + '/api/hit', {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain' },
-      body: location.pathname || '/',
-      keepalive: true,
-    }).catch(function () {});
-  } catch (e) { /* never let counting break the site */ }
+  // (the pageview tick lives in js/beacon.js, shared with the crew pages)
 
   fetch(API + '/api/content')
     .then(function (res) {

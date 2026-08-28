@@ -209,12 +209,19 @@ async function verifyGoogleIdToken(token, env) {
   return { email: String(payload.email).toLowerCase() };
 }
 
-// Session tokens are signed with a key derived from ADMIN_PASSWORD, so no
-// extra secret needs configuring; changing the password logs everyone out.
+// Session tokens are signed with a key derived from SESSION_SECRET (if set)
+// and ADMIN_PASSWORD, so no extra secret NEEDS configuring; changing either
+// logs everyone out. With neither configured there is no secret material at
+// all, so token minting/verifying is refused (see sessionSigningConfigured)
+// rather than signing with a publicly-known constant.
+function sessionSigningConfigured(env) {
+  return Boolean(env.SESSION_SECRET || env.ADMIN_PASSWORD);
+}
+
 async function sessionKey(env) {
   const digest = await crypto.subtle.digest(
     'SHA-256',
-    new TextEncoder().encode('wiz-session-v1:' + (env.ADMIN_PASSWORD || '')),
+    new TextEncoder().encode('wiz-session-v1:' + (env.SESSION_SECRET || '') + ':' + (env.ADMIN_PASSWORD || '')),
   );
   return crypto.subtle.importKey('raw', digest, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify']);
 }
@@ -225,15 +232,16 @@ function b64urlEncode(bytes) {
   return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-async function makeSessionToken(email, env) {
+async function makeSessionToken(email, env, mode) {
   const exp = Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60;
-  const payload = email + '|' + exp;
+  const payload = email + '|' + exp + '|' + (mode || 'google');
   const key = await sessionKey(env);
   const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(payload));
   return 'wiztok.' + b64urlEncode(new TextEncoder().encode(payload)) + '.' + b64urlEncode(sig);
 }
 
 async function verifySessionToken(token, env) {
+  if (!sessionSigningConfigured(env)) return null;
   const parts = token.split('.');
   if (parts.length !== 3 || parts[0] !== 'wiztok') return null;
   let payload;
@@ -245,10 +253,15 @@ async function verifySessionToken(token, env) {
   const key = await sessionKey(env);
   const ok = await crypto.subtle.verify('HMAC', key, b64urlDecode(parts[2]), new TextEncoder().encode(payload));
   if (!ok) return null;
-  const [email, expStr] = payload.split('|');
-  if (!email || Number(expStr) < Math.floor(Date.now() / 1000)) return null;
+  const [email, expStr, mode] = payload.split('|');
+  // fail closed: a missing/garbled expiry must not read as "never expires"
+  if (!email || !(Number(expStr) > Math.floor(Date.now() / 1000))) return null;
+  if (mode === 'password') {
+    if (!env.ADMIN_PASSWORD) return null; // password login switched off -> tokens die too
+    return { email, mode };
+  }
   if (!founderEmails(env).includes(email)) return null; // removed founders lose access immediately
-  return { email };
+  return { email, mode: 'google' };
 }
 
 async function timingSafeEqualStr(a, b) {
@@ -266,7 +279,10 @@ async function timingSafeEqualStr(a, b) {
 
 /**
  * Returns { ok: true, mode, email } or { ok: false, error, status }.
- * Access mode wins when configured; the password is only a fallback.
+ * Access mode wins when configured. Otherwise a Bearer credential is tried
+ * first as a session token (minted by password or Google login), then as the
+ * shared password — so Google-only setups work without ADMIN_PASSWORD, and a
+ * password that happens to start with "wiztok." still logs in.
  */
 async function checkAuth(request, env) {
   if (env.ACCESS_TEAM_DOMAIN && env.ACCESS_AUD) {
@@ -280,24 +296,38 @@ async function checkAuth(request, env) {
     }
     return { ok: false, status: 401, error: 'Invalid Cloudflare Access token' };
   }
-  if (env.ADMIN_PASSWORD) {
-    const auth = request.headers.get('Authorization') || '';
-    const given = auth.startsWith('Bearer ') ? auth.slice(7) : '';
-    if (given.startsWith('wiztok.')) {
-      const who = await verifySessionToken(given, env);
-      if (who) return { ok: true, mode: 'google', email: who.email };
-      return { ok: false, status: 401, error: 'Session expired — sign in again' };
+
+  const googleConfigured = Boolean(env.GOOGLE_CLIENT_ID) && founderEmails(env).length > 0;
+  if (!env.ADMIN_PASSWORD && !googleConfigured) {
+    return {
+      ok: false,
+      status: 503,
+      error: 'No auth configured. Set up Cloudflare Access (ACCESS_TEAM_DOMAIN + ACCESS_AUD) or run: npx wrangler secret put ADMIN_PASSWORD',
+    };
+  }
+
+  const auth = request.headers.get('Authorization') || '';
+  const given = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+  if (given.startsWith('wiztok.')) {
+    const who = await verifySessionToken(given, env);
+    if (who) return { ok: true, mode: who.mode, email: who.email };
+  }
+  if (env.ADMIN_PASSWORD && given) {
+    if (await loginLocked(request)) {
+      return { ok: false, status: 429, error: 'Too many attempts — wait a few seconds and try again' };
     }
-    if (given && (await timingSafeEqualStr(given, env.ADMIN_PASSWORD))) {
+    if (await timingSafeEqualStr(given, env.ADMIN_PASSWORD)) {
       return { ok: true, mode: 'password', email: 'owner' };
     }
+    await noteFailedLogin(request);
+  }
+  if (given.startsWith('wiztok.')) {
+    return { ok: false, status: 401, error: 'Session expired — sign in again' };
+  }
+  if (env.ADMIN_PASSWORD) {
     return { ok: false, status: 401, error: 'Wrong or missing password' };
   }
-  return {
-    ok: false,
-    status: 503,
-    error: 'No auth configured. Set up Cloudflare Access (ACCESS_TEAM_DOMAIN + ACCESS_AUD) or run: npx wrangler secret put ADMIN_PASSWORD',
-  };
+  return { ok: false, status: 401, error: 'Not signed in — use the Google button to sign in' };
 }
 
 /* ---------------------------------------------------------------- data --- */
@@ -360,8 +390,8 @@ async function receiveMessage(request, env) {
 }
 
 /**
- * Throttle for the public message endpoint: at most one message per IP per
- * MESSAGE_MIN_SECONDS.
+ * Per-IP flood guards for the public write endpoints, and a lockout for
+ * failed password attempts.
  *
  * This is deliberately NOT Cloudflare's [[ratelimits]] binding. That binding
  * is present at runtime on this account but never enforces -- limit() was
@@ -374,25 +404,58 @@ async function receiveMessage(request, env) {
  * than an exact limiter -- enough to protect D1's daily write cap. A WAF rate
  * limiting rule is the stronger control if one is ever added.
  *
- * Fails OPEN: if the cache misbehaves, a real visitor can still send a message.
+ * Fails OPEN: if the cache misbehaves, a real visitor can still get through.
  */
 const MESSAGE_MIN_SECONDS = 6;
+const HIT_MIN_SECONDS = 5;
+const LOGIN_LOCK_SECONDS = 5;
 
-async function allowMessage(request) {
+function throttleKey(bucket, request) {
   const ip = request.headers.get('CF-Connecting-IP');
-  if (!ip) return true;
-  const key = new Request('https://ratelimit.invalid/msg/' + encodeURIComponent(ip));
+  if (!ip) return null;
+  return new Request('https://ratelimit.invalid/' + bucket + '/' + encodeURIComponent(ip));
+}
+
+// True at most once per IP per `seconds` for a given bucket.
+async function allowOnce(bucket, seconds, request) {
+  const key = throttleKey(bucket, request);
+  if (!key) return true;
   try {
     const cache = caches.default;
     if (await cache.match(key)) return false;
-    await cache.put(
-      key,
-      new Response('1', { headers: { 'Cache-Control': 'max-age=' + MESSAGE_MIN_SECONDS } }),
-    );
+    await cache.put(key, new Response('1', { headers: { 'Cache-Control': 'max-age=' + seconds } }));
     return true;
   } catch {
     return true;
   }
+}
+
+const allowMessage = (request) => allowOnce('msg', MESSAGE_MIN_SECONDS, request);
+const allowHit = (request) => allowOnce('hit', HIT_MIN_SECONDS, request);
+
+// Failed-password lockout: a wrong guess sets a marker; while the marker
+// lives, further password checks from that IP are refused. Keeps a stolen
+// wordlist from being tried at Worker speed while barely affecting a human
+// who fat-fingers the password once.
+async function loginLocked(request) {
+  const key = throttleKey('badpw', request);
+  if (!key) return false;
+  try {
+    return Boolean(await caches.default.match(key));
+  } catch {
+    return false;
+  }
+}
+
+async function noteFailedLogin(request) {
+  const key = throttleKey('badpw', request);
+  if (!key) return;
+  try {
+    await caches.default.put(
+      key,
+      new Response('1', { headers: { 'Cache-Control': 'max-age=' + LOGIN_LOCK_SECONDS } }),
+    );
+  } catch {}
 }
 
 /* ------------------------------------------------------------ printful --- */
@@ -466,9 +529,11 @@ async function serveImage(env, key) {
 }
 
 /**
- * Drop the cached /api/content response so a SAVE shows up immediately rather
- * than after the 60s max-age. Both hostnames are purged because the panel can
- * be reached on either, and each is a separate cache key.
+ * Drop the cached /api/content response so a SAVE shows up quickly. Both
+ * hostnames are purged because the panel can be reached on either, and each
+ * is a separate cache key. Note caches.default is per-datacenter: only the
+ * colo that handled the SAVE is purged; visitors routed through other colos
+ * fall back to the 60s max-age.
  */
 async function purgeContentCache() {
   const cache = caches.default;
@@ -492,7 +557,7 @@ export default {
         status: 204,
         headers: {
           ...PUBLIC_CORS,
-          'Access-Control-Allow-Methods': 'GET, POST, PUT, OPTIONS',
+          'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
           'Access-Control-Allow-Headers': 'Content-Type, Authorization, Cf-Access-Jwt-Assertion',
           'Access-Control-Max-Age': '86400',
         },
@@ -525,6 +590,11 @@ export default {
         // pageview beacon, counted per UTC day. The label is caller-controlled,
         // so it is folded into a tiny fixed set: junk requests can nudge counts
         // but can never grow the table with garbage rows.
+        // Per-IP throttle: this is a public D1 write, so without it a one-line
+        // curl loop could inflate the counts and burn the daily write quota.
+        // A dropped hit is a fine trade; reply ok either way so the beacon
+        // never errors in visitors' consoles.
+        if (!(await allowHit(request))) return json({ ok: true }, 200, PUBLIC_CORS);
         const raw = (await request.text()).slice(0, 100);
         let p;
         if (raw === '/' || raw === '/index.html') p = '/';
@@ -542,6 +612,9 @@ export default {
       }
       if (method === 'POST' && path === '/api/glogin') {
         if (!env.GOOGLE_CLIENT_ID) return json({ error: 'Google sign-in is not configured' }, 501);
+        if (!sessionSigningConfigured(env)) {
+          return json({ error: 'Sessions need a signing secret. Run: npx wrangler secret put SESSION_SECRET (any long random string)' }, 503);
+        }
         let body;
         try {
           body = await request.json();
@@ -570,7 +643,14 @@ export default {
         if (!auth.ok) return json({ error: auth.error }, auth.status);
 
         if (method === 'POST' && path === '/api/admin/login') {
-          return json({ ok: true, mode: auth.mode, email: auth.email });
+          // Hand password logins an expiring session token so the panel can
+          // store that instead of keeping the raw password around for the
+          // whole tab lifetime.
+          const out = { ok: true, mode: auth.mode, email: auth.email };
+          if (auth.mode === 'password' && sessionSigningConfigured(env)) {
+            out.token = await makeSessionToken('owner', env, 'password');
+          }
+          return json(out);
         }
         if (method === 'GET' && path === '/api/admin/content') {
           const data = await readCollections(env, true);
@@ -608,13 +688,15 @@ export default {
           }
         }
         if (method === 'GET' && path === '/api/admin/analytics') {
-          const days = await env.DB.prepare(
-            "SELECT day, SUM(hits) AS hits FROM page_hits WHERE day >= date('now', '-29 days') GROUP BY day ORDER BY day",
-          ).all();
-          const months = await env.DB.prepare(
-            "SELECT substr(day, 1, 7) AS month, SUM(hits) AS hits FROM page_hits WHERE day >= date('now', '-365 days') GROUP BY month ORDER BY month",
-          ).all();
-          const totals = await env.DB.prepare('SELECT SUM(hits) AS all_time FROM page_hits').first();
+          const [days, months, totals] = await Promise.all([
+            env.DB.prepare(
+              "SELECT day, SUM(hits) AS hits FROM page_hits WHERE day >= date('now', '-29 days') GROUP BY day ORDER BY day",
+            ).all(),
+            env.DB.prepare(
+              "SELECT substr(day, 1, 7) AS month, SUM(hits) AS hits FROM page_hits WHERE day >= date('now', '-365 days') GROUP BY month ORDER BY month",
+            ).all(),
+            env.DB.prepare('SELECT SUM(hits) AS all_time FROM page_hits').first(),
+          ]);
           return json(
             { days: days.results, months: months.results, all_time: (totals && totals.all_time) || 0 },
             200,
