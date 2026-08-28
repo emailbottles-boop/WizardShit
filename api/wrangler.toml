@@ -1,0 +1,38 @@
+# Wizard Shit backend — Cloudflare Worker
+# Deploy with: npx wrangler deploy   (from the api/ directory)
+# Full setup steps: see api/README.md
+
+name = "wizardshit-api"
+main = "src/index.js"
+compatibility_date = "2026-08-01"
+
+# D1 database — create it with:
+#   npx wrangler d1 create wizardshit
+# then paste the database_id it prints below.
+[[d1_databases]]
+binding = "DB"
+database_name = "wizardshit"
+database_id = "0b069125-5227-49b6-a2b4-25a754ea4f54"
+
+# R2 bucket for uploaded images — create it with:
+#   npx wrangler r2 bucket create wizardshit-images
+[[r2_buckets]]
+binding = "IMAGES"
+bucket_name = "wizardshit-images"
+
+[vars]
+# Origins allowed to call the public API from a browser.
+ALLOWED_ORIGINS = "https://wizardshit.store,https://www.wizardshit.store,http://localhost:8080,http://127.0.0.1:8080"
+
+# --- Admin auth, option A (recommended): Cloudflare Access ---
+# Put an Access application in front of this worker's /admin and /api/admin
+# paths, then fill these in (see README step 5).
+#   ACCESS_TEAM_DOMAIN = "yourteam.cloudflareaccess.com"
+#   ACCESS_AUD         = "the Access application's Audience (AUD) tag"
+ACCESS_TEAM_DOMAIN = ""
+ACCESS_AUD = ""
+
+# --- Admin auth, option B (simpler): shared password ---
+# Only used when Access is NOT configured above. Set it as a secret so it
+# never lives in this file:
+#   npx wrangler secret put ADMIN_PASSWORD
