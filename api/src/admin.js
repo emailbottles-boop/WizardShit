@@ -140,6 +140,15 @@ export const ADMIN_HTML = `<!DOCTYPE html>
   .thumb.round { border-radius: 50%; }
   .img-row { display: flex; gap: 0.7rem; align-items: flex-end; }
   .img-row .grow { flex: 1; }
+  .dropzone {
+    display: flex; gap: 0.9rem; align-items: center;
+    border: 2px dashed rgba(180, 80, 255, 0.35);
+    border-radius: 12px;
+    padding: 0.7rem 0.9rem;
+    transition: border-color 0.15s ease, background 0.15s ease;
+  }
+  .dropzone.dragging { border-color: rgb(255, 210, 60); background: rgba(255, 210, 60, 0.08); }
+  .drop-hint { flex: 1; font-size: 0.72rem; color: rgba(255,255,255,0.45); letter-spacing: 0.08em; text-align: right; }
 
   #toast {
     position: fixed; left: 50%; bottom: 1.6rem; transform: translateX(-50%);
@@ -356,33 +365,31 @@ export const ADMIN_HTML = `<!DOCTYPE html>
     return lab;
   }
 
+  // The picture, a drag-and-drop zone, and an upload button — the file's
+  // address is tracked behind the scenes, owners never see it.
   function imageField(labelText, item, key, round) {
     var box = el('div', 'full');
     box.appendChild(el('label', '', labelText));
-    var row = el('div', 'img-row');
+    var zone = el('div', 'dropzone');
     var thumb = el('div', 'thumb' + (round ? ' round' : ''));
+    thumb.style.width = '72px';
+    thumb.style.height = '72px';
     function refresh() {
       var u = imgPreviewUrl(item[key]);
       thumb.style.backgroundImage = u ? 'url("' + u.replace(/"/g, '%22') + '")' : 'none';
     }
     refresh();
-    var grow = el('div', 'grow');
-    var input = el('input');
-    input.type = 'text';
-    input.value = item[key] || '';
-    input.placeholder = 'filename on the site, or full URL';
-    input.addEventListener('input', function () { item[key] = input.value; refresh(); setDirty(true); });
-    grow.appendChild(input);
-    var up = el('button', 'btn', 'UPLOAD');
+    var hint = el('div', 'drop-hint', 'drag a picture here, or');
+    var up = el('button', 'btn', item[key] ? 'CHANGE IMAGE' : 'UPLOAD IMAGE');
     up.type = 'button';
     var file = el('input');
     file.type = 'file';
     file.accept = 'image/*';
     file.style.display = 'none';
-    up.onclick = function () { file.click(); };
-    file.addEventListener('change', function () {
-      var f = file.files[0];
+
+    function doUpload(f) {
       if (!f) return;
+      if (!/^image\\//.test(f.type)) { toast('That is not an image file', true); return; }
       up.disabled = true;
       up.textContent = '...';
       fetch('/api/admin/upload?name=' + encodeURIComponent(f.name), {
@@ -393,19 +400,38 @@ export const ADMIN_HTML = `<!DOCTYPE html>
         .then(function (r) { return r.json().then(function (d) { if (!r.ok) throw new Error(d.error || 'upload failed'); return d; }); })
         .then(function (d) {
           item[key] = d.url;
-          input.value = d.url;
           refresh();
           setDirty(true);
           toast('Image uploaded');
         })
         .catch(function (e) { toast(e.message, true); })
-        .then(function () { up.disabled = false; up.textContent = 'UPLOAD'; });
+        .then(function () {
+          up.disabled = false;
+          up.textContent = item[key] ? 'CHANGE IMAGE' : 'UPLOAD IMAGE';
+        });
+    }
+
+    up.onclick = function () { file.click(); };
+    thumb.style.cursor = 'pointer';
+    thumb.title = 'Click to pick an image';
+    thumb.onclick = function () { file.click(); };
+    file.addEventListener('change', function () { doUpload(file.files[0]); file.value = ''; });
+
+    ['dragenter', 'dragover'].forEach(function (evName) {
+      zone.addEventListener(evName, function (e) { e.preventDefault(); zone.classList.add('dragging'); });
     });
-    row.appendChild(thumb);
-    row.appendChild(grow);
-    row.appendChild(up);
-    row.appendChild(file);
-    box.appendChild(row);
+    ['dragleave', 'drop'].forEach(function (evName) {
+      zone.addEventListener(evName, function (e) { e.preventDefault(); zone.classList.remove('dragging'); });
+    });
+    zone.addEventListener('drop', function (e) {
+      doUpload(e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]);
+    });
+
+    zone.appendChild(thumb);
+    zone.appendChild(hint);
+    zone.appendChild(up);
+    zone.appendChild(file);
+    box.appendChild(zone);
     return box;
   }
 
