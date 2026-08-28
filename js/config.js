@@ -5,4 +5,4 @@
 //
 // While this is empty the site simply shows the content baked into the HTML,
 // so nothing breaks before the backend exists (or if it's ever unreachable).
-window.WIZ_API_BASE = "";
+window.WIZ_API_BASE = "https://wizardshit-api.wizardshit-api.workers.dev";
