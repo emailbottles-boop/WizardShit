@@ -52,6 +52,13 @@ ALLOWED_ORIGINS = "https://wizardshit.store,https://www.wizardshit.store,http://
 # paths, then fill these in (see README step 5).
 #   ACCESS_TEAM_DOMAIN = "yourteam.cloudflareaccess.com"
 #   ACCESS_AUD         = "the Access application's Audience (AUD) tag"
+# --- Google sign-in on the wizard login page (optional) ---
+# 1) Make an OAuth Client ID at https://console.cloud.google.com/apis/credentials
+#    (Web application; authorized JavaScript origin: https://wizardshit.store)
+# 2) Paste it below, and list the founder emails allowed in.
+GOOGLE_CLIENT_ID = ""
+FOUNDER_EMAILS = "wizardshitofficial@gmail.com"
+
 ACCESS_TEAM_DOMAIN = ""
 ACCESS_AUD = ""
 

@@ -133,3 +133,23 @@ One-time steps when deploying this upgrade:
 
 The site's floating message bubble goes live when GitHub Pages picks up the
 merge — no extra steps. Formspree keeps handling the email-signup box.
+
+## Upgrade: Google sign-in + analytics (2026-08)
+
+1. Add the analytics table to the live database:
+   `npx wrangler d1 execute wizardshit --remote --file=upgrade-analytics.sql`
+2. (Optional — enables "Sign in with Google" on the login page) Create an
+   OAuth Client ID at https://console.cloud.google.com/apis/credentials:
+   New project → OAuth consent screen (External, just the app name + your
+   email, no scopes) → Credentials → Create credentials → OAuth client ID →
+   Web application → add BOTH Authorized JavaScript origins:
+   `https://wizardshit.store` and
+   `https://wizardshit-api.wizardshit-api.workers.dev`.
+   Paste the Client ID into `GOOGLE_CLIENT_ID` in wrangler.toml, and list
+   the allowed founder emails (comma-separated) in `FOUNDER_EMAILS`.
+3. Redeploy: `npx wrangler deploy`
+
+Founders on the list can then log in with one click if they're signed into
+Google in their browser; the shared password keeps working alongside.
+Google sessions last a week and are revoked by removing the email from
+`FOUNDER_EMAILS` and redeploying.
