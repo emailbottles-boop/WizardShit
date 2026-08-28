@@ -237,21 +237,53 @@ async function receiveMessage(request, env) {
   // The honeypot only stops naive bots -- it is a field anyone can read in our
   // own JS. This is the guard that actually protects D1's daily write quota,
   // so it sits immediately before the only public INSERT in the worker.
-  if (env.MSG_LIMIT) {
-    const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
-    const { success } = await env.MSG_LIMIT.limit({ key: ip });
-    if (!success) {
-      return json(
-        { error: "That's a lot of messages at once — give it a minute and try again." },
-        429,
-        PUBLIC_CORS,
-      );
-    }
+  if (!(await allowMessage(request))) {
+    return json(
+      { error: "That's a lot of messages at once — give it a minute and try again." },
+      429,
+      PUBLIC_CORS,
+    );
   }
   await env.DB.prepare('INSERT INTO messages (name, email, body) VALUES (?, ?, ?)')
     .bind(str(data.name, 200), str(data.email, 200), body)
     .run();
   return json({ ok: true }, 200, PUBLIC_CORS);
+}
+
+/**
+ * Throttle for the public message endpoint: at most one message per IP per
+ * MESSAGE_MIN_SECONDS.
+ *
+ * This is deliberately NOT Cloudflare's [[ratelimits]] binding. That binding
+ * is present at runtime on this account but never enforces -- limit() was
+ * observed returning {success:true} for 14 consecutive posts from one IP, so
+ * it would have looked configured while allowing an unlimited flood.
+ *
+ * The edge cache is used as the counter because it costs nothing and, unlike
+ * D1, writing to it does not consume the very quota this is protecting. It is
+ * per-colo and races under exact simultaneity, so it is a flood guard rather
+ * than an exact limiter -- enough to protect D1's daily write cap. A WAF rate
+ * limiting rule is the stronger control if one is ever added.
+ *
+ * Fails OPEN: if the cache misbehaves, a real visitor can still send a message.
+ */
+const MESSAGE_MIN_SECONDS = 6;
+
+async function allowMessage(request) {
+  const ip = request.headers.get('CF-Connecting-IP');
+  if (!ip) return true;
+  const key = new Request('https://ratelimit.invalid/msg/' + encodeURIComponent(ip));
+  try {
+    const cache = caches.default;
+    if (await cache.match(key)) return false;
+    await cache.put(
+      key,
+      new Response('1', { headers: { 'Cache-Control': 'max-age=' + MESSAGE_MIN_SECONDS } }),
+    );
+    return true;
+  } catch {
+    return true;
+  }
 }
 
 /* ------------------------------------------------------------ printful --- */

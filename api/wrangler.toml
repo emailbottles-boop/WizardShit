@@ -17,11 +17,14 @@ workers_dev = true
 # NEVER add a bare "wizardshit.store/" or "wizardshit.store/*" route here:
 # the worker redirects "/" to /login, so that would bounce the homepage to
 # the login screen. These patterns are deliberately narrow.
+#
+# The trailing * on /login and /admin is load-bearing: an exact pattern matches
+# the path only, so "/login?anything" missed the worker and fell through to
+# GitHub Pages. It also covers the trailing-slash form, which the worker
+# redirects itself.
 routes = [
-  { pattern = "wizardshit.store/login",  zone_name = "wizardshit.store" },
-  { pattern = "wizardshit.store/login/", zone_name = "wizardshit.store" },
-  { pattern = "wizardshit.store/admin",  zone_name = "wizardshit.store" },
-  { pattern = "wizardshit.store/admin/", zone_name = "wizardshit.store" },
+  { pattern = "wizardshit.store/login*", zone_name = "wizardshit.store" },
+  { pattern = "wizardshit.store/admin*", zone_name = "wizardshit.store" },
   { pattern = "wizardshit.store/api/*",  zone_name = "wizardshit.store" },
   { pattern = "wizardshit.store/img/*",  zone_name = "wizardshit.store" },
 ]
@@ -57,13 +60,8 @@ ACCESS_AUD = ""
 # never lives in this file:
 #   npx wrangler secret put ADMIN_PASSWORD
 
-# Rate limit for the public POST /api/messages endpoint. Anyone can call that
-# one without a password, and D1's free tier caps daily writes — so an
-# unthrottled flood would exhaust the write quota and break SAVE & PUBLISH,
-# which matters far more than a junk inbox. 10 messages per minute per IP is
-# far above any real person and far below what a script needs to do damage.
-# Costs nothing: this is a built-in Workers binding, not a billable add-on.
-[[ratelimits]]
-name = "MSG_LIMIT"
-namespace_id = "1001"
-simple = { limit = 10, period = 60 }
+# NOTE: there is deliberately no [[ratelimits]] binding here. It was tried and
+# removed: the binding bound fine and limit() returned {success:true} for 14
+# consecutive posts from a single IP, i.e. it never enforced on this account.
+# Leaving it in place would have looked like protection while providing none.
+# The throttle for POST /api/messages now lives in src/index.js (allowMessage).
