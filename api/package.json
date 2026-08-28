@@ -1,0 +1,12 @@
+{
+  "name": "wizardshit-api",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev"
+  },
+  "devDependencies": {
+    "wrangler": "^4.127.0"
+  }
+}
