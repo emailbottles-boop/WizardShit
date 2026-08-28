@@ -140,6 +140,15 @@ export const ADMIN_HTML = `<!DOCTYPE html>
   .thumb.round { border-radius: 50%; }
   .img-row { display: flex; gap: 0.7rem; align-items: flex-end; }
   .img-row .grow { flex: 1; }
+  .dropzone {
+    display: flex; gap: 0.9rem; align-items: center;
+    border: 2px dashed rgba(180, 80, 255, 0.35);
+    border-radius: 12px;
+    padding: 0.7rem 0.9rem;
+    transition: border-color 0.15s ease, background 0.15s ease;
+  }
+  .dropzone.dragging { border-color: rgb(255, 210, 60); background: rgba(255, 210, 60, 0.08); }
+  .drop-hint { flex: 1; font-size: 0.72rem; color: rgba(255,255,255,0.45); letter-spacing: 0.08em; text-align: right; }
 
   #toast {
     position: fixed; left: 50%; bottom: 1.6rem; transform: translateX(-50%);
@@ -176,6 +185,28 @@ export const ADMIN_HTML = `<!DOCTYPE html>
   #loginErr { color: rgb(255, 120, 120); font-size: 0.75rem; margin-top: 0.7rem; display: none; }
 
   .empty { text-align: center; color: rgba(255,255,255,0.45); padding: 2.5rem 1rem; font-size: 0.85rem; letter-spacing: 0.08em; }
+
+  /* photo framing sliders */
+  .framing { display: flex; gap: 1rem; align-items: center; }
+  .framing .sliders { flex: 1; display: grid; grid-template-columns: auto 1fr; gap: 0.35rem 0.7rem; align-items: center; }
+  .framing .sliders span { font-size: 0.6rem; letter-spacing: 0.15em; color: rgba(255,255,255,0.5); text-transform: uppercase; }
+  input[type=range] { width: 100%; accent-color: rgb(255, 210, 60); }
+  .css-link { font-size: 0.65rem; color: rgba(180, 80, 255, 0.9); cursor: pointer; text-decoration: underline; letter-spacing: 0.08em; }
+
+  /* messages inbox */
+  .item.unread { border-color: rgba(255, 210, 60, 0.65); }
+  .msg-meta { font-size: 0.7rem; color: rgba(255,255,255,0.55); }
+  .msg-body { white-space: pre-wrap; font-size: 0.85rem; line-height: 1.5; }
+
+  /* orders + printful import */
+  .order-line { font-size: 0.8rem; color: rgba(255,255,255,0.8); line-height: 1.6; }
+  .order-line a { color: rgb(255, 210, 60); }
+  .pf-panel { border: 2px dashed rgba(255, 220, 120, 0.45); border-radius: 14px; padding: 1rem; margin-bottom: 1rem; }
+  .pf-row { display: flex; gap: 0.8rem; align-items: center; padding: 0.45rem 0; border-bottom: 1px solid rgba(255,255,255,0.08); }
+  .pf-row:last-child { border-bottom: none; }
+  .pf-row .thumb { width: 44px; height: 44px; }
+  .pf-row .grow { flex: 1; font-size: 0.85rem; }
+  .pf-note { font-size: 0.68rem; color: rgba(255,255,255,0.5); margin-top: 0.6rem; }
 </style>
 </head>
 <body>
@@ -201,10 +232,13 @@ export const ADMIN_HTML = `<!DOCTYPE html>
     <button class="tab active" data-tab="merch">MERCH</button>
     <button class="tab" data-tab="credits">CREDITS</button>
     <button class="tab" data-tab="donators">DONATORS</button>
+    <button class="tab" data-tab="messages">MESSAGES</button>
+    <button class="tab" data-tab="orders">ORDERS</button>
   </nav>
 
   <div class="toolbar">
     <button class="btn" id="addBtn">+ ADD</button>
+    <button class="btn" id="printfulBtn" style="display:none">&#8681; IMPORT FROM PRINTFUL</button>
     <span id="dirtyFlag">● unsaved changes</span>
     <span style="flex:1"></span>
     <button class="btn" id="reloadBtn">RELOAD</button>
@@ -221,6 +255,11 @@ export const ADMIN_HTML = `<!DOCTYPE html>
   'use strict';
 
   var state = { merch: [], credits: [], donators: [] };
+  var inbox = null;        // fetched on first visit to MESSAGES
+  var orders = null;       // fetched on first visit to ORDERS
+  var ordersError = '';
+  var pfProducts = null;   // Printful import panel data
+  var pfOpen = false;
   var tab = 'merch';
   var dirty = false;
   var SITE = 'https://wizardshit.store/';
@@ -326,33 +365,31 @@ export const ADMIN_HTML = `<!DOCTYPE html>
     return lab;
   }
 
+  // The picture, a drag-and-drop zone, and an upload button — the file's
+  // address is tracked behind the scenes, owners never see it.
   function imageField(labelText, item, key, round) {
     var box = el('div', 'full');
     box.appendChild(el('label', '', labelText));
-    var row = el('div', 'img-row');
+    var zone = el('div', 'dropzone');
     var thumb = el('div', 'thumb' + (round ? ' round' : ''));
+    thumb.style.width = '72px';
+    thumb.style.height = '72px';
     function refresh() {
       var u = imgPreviewUrl(item[key]);
       thumb.style.backgroundImage = u ? 'url("' + u.replace(/"/g, '%22') + '")' : 'none';
     }
     refresh();
-    var grow = el('div', 'grow');
-    var input = el('input');
-    input.type = 'text';
-    input.value = item[key] || '';
-    input.placeholder = 'filename on the site, or full URL';
-    input.addEventListener('input', function () { item[key] = input.value; refresh(); setDirty(true); });
-    grow.appendChild(input);
-    var up = el('button', 'btn', 'UPLOAD');
+    var hint = el('div', 'drop-hint', 'drag a picture here, or');
+    var up = el('button', 'btn', item[key] ? 'CHANGE IMAGE' : 'UPLOAD IMAGE');
     up.type = 'button';
     var file = el('input');
     file.type = 'file';
     file.accept = 'image/*';
     file.style.display = 'none';
-    up.onclick = function () { file.click(); };
-    file.addEventListener('change', function () {
-      var f = file.files[0];
+
+    function doUpload(f) {
       if (!f) return;
+      if (!/^image\\//.test(f.type)) { toast('That is not an image file', true); return; }
       up.disabled = true;
       up.textContent = '...';
       fetch('/api/admin/upload?name=' + encodeURIComponent(f.name), {
@@ -363,19 +400,148 @@ export const ADMIN_HTML = `<!DOCTYPE html>
         .then(function (r) { return r.json().then(function (d) { if (!r.ok) throw new Error(d.error || 'upload failed'); return d; }); })
         .then(function (d) {
           item[key] = d.url;
-          input.value = d.url;
           refresh();
           setDirty(true);
           toast('Image uploaded');
         })
         .catch(function (e) { toast(e.message, true); })
-        .then(function () { up.disabled = false; up.textContent = 'UPLOAD'; });
+        .then(function () {
+          up.disabled = false;
+          up.textContent = item[key] ? 'CHANGE IMAGE' : 'UPLOAD IMAGE';
+        });
+    }
+
+    up.onclick = function () { file.click(); };
+    thumb.style.cursor = 'pointer';
+    thumb.title = 'Click to pick an image';
+    thumb.onclick = function () { file.click(); };
+    file.addEventListener('change', function () { doUpload(file.files[0]); file.value = ''; });
+
+    ['dragenter', 'dragover'].forEach(function (evName) {
+      zone.addEventListener(evName, function (e) { e.preventDefault(); zone.classList.add('dragging'); });
     });
-    row.appendChild(thumb);
-    row.appendChild(grow);
-    row.appendChild(up);
-    row.appendChild(file);
-    box.appendChild(row);
+    ['dragleave', 'drop'].forEach(function (evName) {
+      zone.addEventListener(evName, function (e) { e.preventDefault(); zone.classList.remove('dragging'); });
+    });
+    zone.addEventListener('drop', function (e) {
+      doUpload(e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]);
+    });
+
+    zone.appendChild(thumb);
+    zone.appendChild(hint);
+    zone.appendChild(up);
+    zone.appendChild(file);
+    box.appendChild(zone);
+    return box;
+  }
+
+  /* ---- photo framing: sliders that write the CSS for you ---- */
+  function parsePos(token) {
+    token = (token || '').trim();
+    if (token === 'left' || token === 'top') return 0;
+    if (token === 'right' || token === 'bottom') return 100;
+    if (token === 'center' || token === '') return 50;
+    var m = token.match(/^(-?\\d+(?:\\.\\d+)?)%$/);
+    return m ? Math.max(0, Math.min(100, Math.round(parseFloat(m[1])))) : null;
+  }
+
+  function parseFraming(css) {
+    css = css || '';
+    var out = { zoom: 100, x: 50, y: 50, raw: false };
+    var size = css.match(/background-size:\\s*([^;]+)/i);
+    var pos = css.match(/background-position:\\s*([^;]+)/i);
+    if (size) {
+      var sm = size[1].trim().match(/^(\\d+(?:\\.\\d+)?)%$/);
+      if (sm) out.zoom = Math.round(parseFloat(sm[1]));
+      else if (size[1].trim() !== 'cover') out.raw = true;
+    }
+    if (pos) {
+      var parts = pos[1].trim().split(/\\s+/);
+      var px = parsePos(parts[0]);
+      var py = parts.length > 1 ? parsePos(parts[1]) : 50;
+      if (px === null || py === null) out.raw = true;
+      else { out.x = px; out.y = py; }
+    }
+    // anything beyond size/position means hand-written CSS we shouldn't clobber
+    var leftovers = css.replace(/background-(size|position):[^;]+;?/gi, '').trim();
+    if (leftovers) out.raw = true;
+    return out;
+  }
+
+  function framingCss(f) {
+    if (f.zoom === 100 && f.x === 50 && f.y === 50) return '';
+    var css = '';
+    if (f.zoom !== 100) css += 'background-size: ' + f.zoom + '%; ';
+    css += 'background-position: ' + f.x + '% ' + f.y + '%;';
+    return css;
+  }
+
+  function framingControl(item) {
+    var box = el('div', 'full');
+    box.appendChild(el('label', '', 'Photo framing — drag the sliders, the CSS writes itself'));
+    var f = parseFraming(item.photo_css);
+
+    var wrap = el('div', 'framing');
+    var preview = el('div', 'thumb round');
+    preview.style.width = '80px';
+    preview.style.height = '80px';
+    function paint() {
+      var u = imgPreviewUrl(item.photo);
+      preview.style.backgroundImage = u ? 'url("' + u.replace(/"/g, '%22') + '")' : 'none';
+      preview.style.backgroundSize = f.zoom === 100 ? 'cover' : f.zoom + '%';
+      preview.style.backgroundPosition = f.x + '% ' + f.y + '%';
+    }
+
+    var sliders = el('div', 'sliders');
+    function slider(labelText, min, max, value, onChange) {
+      sliders.appendChild(el('span', '', labelText));
+      var input = el('input');
+      input.type = 'range';
+      input.min = min;
+      input.max = max;
+      input.value = value;
+      input.addEventListener('input', function () {
+        onChange(Number(input.value));
+        item.photo_css = framingCss(f);
+        rawInput.value = item.photo_css;
+        paint();
+        setDirty(true);
+      });
+      sliders.appendChild(input);
+      return input;
+    }
+    slider('Zoom', 100, 300, f.zoom, function (v) { f.zoom = v; });
+    slider('Left / right', 0, 100, f.x, function (v) { f.x = v; });
+    slider('Up / down', 0, 100, f.y, function (v) { f.y = v; });
+
+    wrap.appendChild(preview);
+    wrap.appendChild(sliders);
+    box.appendChild(wrap);
+
+    // escape hatch for hand-written CSS; shown automatically when we detect it
+    var link = el('span', 'css-link', 'edit css by hand');
+    var rawBox = el('div');
+    rawBox.style.display = f.raw ? '' : 'none';
+    rawBox.style.marginTop = '0.5rem';
+    var rawInput = el('input');
+    rawInput.type = 'text';
+    rawInput.value = item.photo_css || '';
+    rawInput.placeholder = 'e.g. background-size: 170%; background-position: 65% 40%;';
+    rawInput.addEventListener('input', function () {
+      item.photo_css = rawInput.value;
+      f = parseFraming(rawInput.value);
+      paint();
+      setDirty(true);
+    });
+    rawBox.appendChild(rawInput);
+    link.onclick = function () { rawBox.style.display = rawBox.style.display === 'none' ? '' : 'none'; };
+    box.appendChild(link);
+    box.appendChild(rawBox);
+    if (f.raw) {
+      box.appendChild(el('div', 'pf-note', 'This photo uses hand-written CSS — moving a slider will rewrite it.'));
+    }
+
+    paint();
     return box;
   }
 
@@ -434,7 +600,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
       body.appendChild(field('Name', item.name, function (v) { item.name = v; }));
       body.appendChild(field('Roles (one per line)', item.roles, function (v) { item.roles = v; }, false, true));
       body.appendChild(imageField('Photo', item, 'photo', true));
-      body.appendChild(field('Photo framing CSS (optional)', item.photo_css, function (v) { item.photo_css = v; }, true));
+      body.appendChild(framingControl(item));
       body.appendChild(field('Card back — bio or quote', item.back_text, function (v) { item.back_text = v; }, true, true));
       var checks = el('div', 'checks full');
       checks.appendChild(checkbox('style as quote', item.back_quote, function (v) { item.back_quote = v ? 1 : 0; }));
@@ -452,11 +618,168 @@ export const ADMIN_HTML = `<!DOCTYPE html>
     });
   }
 
+  /* ---- messages inbox ---- */
+  function loadInbox() {
+    api('/api/admin/messages')
+      .then(function (d) { inbox = d.messages; render(); })
+      .catch(function (e) { if (e.message !== 'login required') toast(e.message, true); });
+  }
+
+  function renderMessages() {
+    if (inbox === null) {
+      listEl.appendChild(el('div', 'empty', 'Fetching the mail\\u2026'));
+      return;
+    }
+    if (!inbox.length) {
+      listEl.appendChild(el('div', 'empty', 'No messages yet. The bubble on the site delivers here.'));
+      return;
+    }
+    inbox.forEach(function (m) {
+      var card = el('div', 'item' + (m.read ? '' : ' unread'));
+      var head = el('div', 'item-head');
+      var who = el('strong', 'grow', (m.name || 'anonymous') + (m.email ? ' \\u2014 ' + m.email : ''));
+      head.appendChild(who);
+      head.appendChild(el('span', 'msg-meta', (m.created_at || '').slice(0, 16)));
+      var readB = el('button', 'icon-btn', m.read ? '\\u21BA' : '\\u2713');
+      readB.title = m.read ? 'Mark unread' : 'Mark read';
+      readB.onclick = function () {
+        api('/api/admin/messages/' + m.id + '/read', { method: 'POST' }).then(loadInbox)
+          .catch(function (e) { toast(e.message, true); });
+      };
+      var delB = el('button', 'icon-btn danger', '\\uD83D\\uDDD1');
+      delB.title = 'Delete';
+      delB.onclick = function () {
+        if (!confirm('Delete this message forever?')) return;
+        api('/api/admin/messages/' + m.id, { method: 'DELETE' }).then(loadInbox)
+          .catch(function (e) { toast(e.message, true); });
+      };
+      head.appendChild(readB);
+      head.appendChild(delB);
+      card.appendChild(head);
+      card.appendChild(el('div', 'msg-body', m.body));
+      listEl.appendChild(card);
+    });
+  }
+
+  /* ---- printful orders ---- */
+  function loadOrders() {
+    ordersError = '';
+    api('/api/admin/orders')
+      .then(function (d) { orders = d.result || []; render(); })
+      .catch(function (e) {
+        if (e.message === 'login required') return;
+        orders = [];
+        ordersError = e.message;
+        render();
+      });
+  }
+
+  function renderOrders() {
+    if (orders === null) {
+      listEl.appendChild(el('div', 'empty', 'Asking Printful\\u2026'));
+      return;
+    }
+    if (ordersError) {
+      listEl.appendChild(el('div', 'empty', ordersError));
+      return;
+    }
+    if (!orders.length) {
+      listEl.appendChild(el('div', 'empty', 'No orders yet. Go make Rathew famous.'));
+      return;
+    }
+    orders.forEach(function (o) {
+      var card = el('div', 'item');
+      var head = el('div', 'item-head');
+      head.appendChild(el('strong', 'grow', '#' + o.id + ' \\u2014 ' + ((o.recipient && o.recipient.name) || 'unknown')));
+      head.appendChild(el('span', 'msg-meta', (o.status || '') + (o.created ? ' \\u00B7 ' + new Date(o.created * 1000).toLocaleDateString() : '')));
+      card.appendChild(head);
+      var items = (o.items || []).map(function (it) { return it.quantity + '\\u00D7 ' + it.name; }).join(', ');
+      var line = el('div', 'order-line', items);
+      card.appendChild(line);
+      (o.shipments || []).forEach(function (s) {
+        if (!s.tracking_number) return;
+        var t = el('div', 'order-line');
+        t.appendChild(document.createTextNode((s.carrier || 'tracking') + ': '));
+        if (s.tracking_url) {
+          var a = el('a', '', s.tracking_number);
+          a.href = s.tracking_url;
+          a.target = '_blank';
+          a.rel = 'noopener';
+          t.appendChild(a);
+        } else {
+          t.appendChild(document.createTextNode(s.tracking_number));
+        }
+        card.appendChild(t);
+      });
+      listEl.appendChild(card);
+    });
+  }
+
+  /* ---- printful import panel (merch tab) ---- */
+  function slugify(name) {
+    return (name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  }
+
+  function renderPfPanel() {
+    var panel = el('div', 'pf-panel');
+    var head = el('div', 'item-head');
+    head.appendChild(el('strong', 'grow', 'PRINTFUL PRODUCTS'));
+    var closeB = el('button', 'icon-btn', '\\u2716');
+    closeB.onclick = function () { pfOpen = false; render(); };
+    head.appendChild(closeB);
+    panel.appendChild(head);
+    if (pfProducts === null) {
+      panel.appendChild(el('div', 'empty', 'Asking Printful\\u2026'));
+      return panel;
+    }
+    if (typeof pfProducts === 'string') {
+      panel.appendChild(el('div', 'empty', pfProducts));
+      return panel;
+    }
+    var existing = {};
+    state.merch.forEach(function (m) { existing[slugify(m.title)] = true; });
+    pfProducts.forEach(function (p) {
+      var row = el('div', 'pf-row');
+      var thumb = el('div', 'thumb');
+      if (p.thumbnail_url) thumb.style.backgroundImage = 'url("' + p.thumbnail_url.replace(/"/g, '%22') + '")';
+      row.appendChild(thumb);
+      row.appendChild(el('div', 'grow', p.name));
+      var slug = slugify(p.name);
+      var addB = el('button', 'btn', existing[slug] ? 'ON SITE' : '+ ADD');
+      addB.disabled = !!existing[slug];
+      addB.onclick = function () {
+        state.merch.unshift({
+          title: (p.name || '').toUpperCase(),
+          url: 'https://wizard.printful.me/product/' + slug,
+          image: p.thumbnail_url || '',
+          sticker: /sticker/i.test(p.name) ? 1 : 0,
+          row_break: 0,
+          visible: 1,
+        });
+        setDirty(true);
+        render();
+        toast('Added \\u2014 check its link, then SAVE & PUBLISH');
+      };
+      row.appendChild(addB);
+      panel.appendChild(row);
+    });
+    panel.appendChild(el('div', 'pf-note', 'Product links are a best guess from the name \\u2014 double-check them before saving.'));
+    return panel;
+  }
+
   function render() {
     listEl.innerHTML = '';
-    if (tab === 'merch') renderMerch();
-    else if (tab === 'credits') renderCredits();
-    else renderDonators();
+    var editable = tab === 'merch' || tab === 'credits' || tab === 'donators';
+    document.getElementById('addBtn').style.display = editable ? '' : 'none';
+    document.getElementById('saveBtn').style.display = editable ? '' : 'none';
+    document.getElementById('printfulBtn').style.display = tab === 'merch' ? '' : 'none';
+    if (tab === 'merch') {
+      if (pfOpen) listEl.appendChild(renderPfPanel());
+      renderMerch();
+    } else if (tab === 'credits') renderCredits();
+    else if (tab === 'donators') renderDonators();
+    else if (tab === 'messages') { renderMessages(); return; }
+    else { renderOrders(); return; }
     if (!state[tab].length) {
       listEl.appendChild(el('div', 'empty', 'Nothing here yet — hit + ADD.'));
     }
@@ -469,8 +792,24 @@ export const ADMIN_HTML = `<!DOCTYPE html>
       btn.classList.add('active');
       tab = btn.dataset.tab;
       render();
+      if (tab === 'messages' && inbox === null) loadInbox();
+      if (tab === 'orders' && orders === null) loadOrders();
     };
   });
+
+  document.getElementById('printfulBtn').onclick = function () {
+    pfOpen = !pfOpen;
+    render();
+    if (pfOpen && pfProducts === null) {
+      api('/api/admin/printful/products')
+        .then(function (d) { pfProducts = d.result || []; render(); })
+        .catch(function (e) {
+          if (e.message === 'login required') return;
+          pfProducts = e.message;
+          render();
+        });
+    }
+  };
 
   document.getElementById('addBtn').onclick = function () {
     var fresh;
@@ -483,6 +822,8 @@ export const ADMIN_HTML = `<!DOCTYPE html>
   };
 
   document.getElementById('reloadBtn').onclick = function () {
+    if (tab === 'messages') { inbox = null; render(); loadInbox(); return; }
+    if (tab === 'orders') { orders = null; render(); loadOrders(); return; }
     if (dirty && !confirm('Throw away unsaved changes and reload?')) return;
     load();
   };
