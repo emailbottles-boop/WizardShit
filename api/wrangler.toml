@@ -55,9 +55,11 @@ ALLOWED_ORIGINS = "https://wizardshit.store,https://www.wizardshit.store,http://
 # --- Google sign-in on the wizard login page (optional) ---
 # 1) Make an OAuth Client ID at https://console.cloud.google.com/apis/credentials
 #    (Web application; authorized JavaScript origin: https://wizardshit.store)
-# 2) Paste it below, and list the founder emails allowed in.
+# 2) Paste the client id below. The founder email allowlist is stored as a
+#    SECRET so personal emails never sit in this public repo:
+#      npx wrangler secret put FOUNDER_EMAILS
+#    (comma-separated, e.g.: wizardshitofficial@gmail.com,someone@else.com)
 GOOGLE_CLIENT_ID = ""
-FOUNDER_EMAILS = "wizardshitofficial@gmail.com"
 
 ACCESS_TEAM_DOMAIN = ""
 ACCESS_AUD = ""

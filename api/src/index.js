@@ -339,6 +339,10 @@ async function receiveMessage(request, env) {
   if (str(data.website, 50)) return json({ ok: true }, 200, PUBLIC_CORS);
   const body = str(data.message, 4000);
   if (!body) return json({ error: 'Message is empty' }, 400, PUBLIC_CORS);
+  const email = str(data.email, 200);
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return json({ error: 'Add your email so the wizards can reply' }, 400, PUBLIC_CORS);
+  }
   // The honeypot only stops naive bots -- it is a field anyone can read in our
   // own JS. This is the guard that actually protects D1's daily write quota,
   // so it sits immediately before the only public INSERT in the worker.
@@ -417,12 +421,13 @@ async function printfulProxy(env, apiPath) {
 
 /* -------------------------------------------------------------- upload --- */
 
+// No SVG: an uploaded SVG can carry scripts, and /img/* serves from the same
+// origin as the admin panel — raster formats only keeps that door closed.
 const IMAGE_TYPES = {
   'image/png': 'png',
   'image/jpeg': 'jpg',
   'image/gif': 'gif',
   'image/webp': 'webp',
-  'image/svg+xml': 'svg',
 };
 
 async function handleUpload(request, env, origin) {
@@ -453,6 +458,8 @@ async function serveImage(env, key) {
     headers: {
       'Content-Type': obj.httpMetadata?.contentType || 'application/octet-stream',
       'Cache-Control': 'public, max-age=31536000, immutable',
+      'X-Content-Type-Options': 'nosniff',
+      'Content-Security-Policy': "default-src 'none'",
       ...PUBLIC_CORS,
     },
   });
@@ -597,9 +604,12 @@ export default {
           const days = await env.DB.prepare(
             "SELECT day, SUM(hits) AS hits FROM page_hits WHERE day >= date('now', '-29 days') GROUP BY day ORDER BY day",
           ).all();
+          const months = await env.DB.prepare(
+            "SELECT substr(day, 1, 7) AS month, SUM(hits) AS hits FROM page_hits WHERE day >= date('now', '-365 days') GROUP BY month ORDER BY month",
+          ).all();
           const totals = await env.DB.prepare('SELECT SUM(hits) AS all_time FROM page_hits').first();
           return json(
-            { days: days.results, all_time: (totals && totals.all_time) || 0 },
+            { days: days.results, months: months.results, all_time: (totals && totals.all_time) || 0 },
             200,
             { 'Cache-Control': 'no-store' },
           );

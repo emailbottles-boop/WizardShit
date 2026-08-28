@@ -223,6 +223,18 @@ export const ADMIN_HTML = `<!DOCTYPE html>
   .chart .bar:hover { opacity: 1; }
   .chart .bar.zero { background: rgba(255,255,255,0.12); }
   .chart-x { display: flex; justify-content: space-between; font-size: 0.62rem; color: rgba(255,255,255,0.45); margin-top: 0.4rem; letter-spacing: 0.06em; }
+  .range-row { display: flex; gap: 0.5rem; margin-bottom: 0.9rem; }
+  .range-btn { padding: 0.4rem 0.9rem; font-size: 0.7rem; }
+  .range-btn.on { background: linear-gradient(160deg, rgb(255, 210, 60) 0%, rgb(255, 170, 30) 100%); color: #2a0550; border-color: transparent; }
+  .chart.monthly { height: 170px; }
+  .bar-col { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 0.25rem; height: 100%; }
+  .bar-col .bar { width: 100%; flex: none; }
+  .bar-num { font-size: 0.68rem; color: rgba(255,255,255,0.85); font-weight: 700; }
+  .bar-mon { font-size: 0.6rem; color: rgba(255,255,255,0.45); margin-top: 0.25rem; letter-spacing: 0.04em; }
+  .month-list { margin-top: 1rem; }
+  .month-row { display: flex; justify-content: space-between; padding: 0.4rem 0.2rem; border-bottom: 1px solid rgba(255,255,255,0.08); font-size: 0.8rem; }
+  .month-row:last-child { border-bottom: none; }
+  .month-row .v { color: rgb(255, 210, 60); font-weight: 700; }
   #barTip {
     position: fixed; z-index: 60; display: none; pointer-events: none;
     background: rgba(20, 6, 40, 0.97); border: 1.5px solid rgb(255, 210, 60);
@@ -282,6 +294,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
   var inbox = null;        // fetched on first visit to MESSAGES
   var orders = null;       // fetched on first visit to ORDERS
   var stats = null;        // fetched on first visit to ANALYTICS
+  var statRange = '30d';   // '30d' | '12m'
   var googleReady = false;
   var ordersError = '';
   var pfProducts = null;   // Printful import panel data
@@ -821,37 +834,83 @@ export const ADMIN_HTML = `<!DOCTYPE html>
     });
     listEl.appendChild(tiles);
 
+    // range toggle: last 30 days (daily) or last 12 months (monthly)
+    var rangeRow = el('div', 'range-row');
+    [['30d', '30 DAYS'], ['12m', '12 MONTHS']].forEach(function (r) {
+      var b = el('button', 'btn range-btn' + (statRange === r[0] ? ' on' : ''), r[1]);
+      b.onclick = function () { statRange = r[0]; render(); };
+      rangeRow.appendChild(b);
+    });
+    listEl.appendChild(rangeRow);
+
     var card = el('div', 'chart-card');
-    var chart = el('div', 'chart');
-    var max = Math.max.apply(null, series.map(function (s) { return s.hits; }).concat([1]));
     var tip = document.getElementById('barTip');
     if (!tip) {
       tip = el('div');
       tip.id = 'barTip';
       document.body.appendChild(tip);
     }
-    series.forEach(function (s) {
-      var bar = el('div', 'bar' + (s.hits === 0 ? ' zero' : ''));
-      bar.style.height = Math.max(2, Math.round((s.hits / max) * 100)) + '%';
-      bar.setAttribute('aria-label', s.day + ': ' + s.hits + ' views');
-      bar.addEventListener('mouseenter', function () {
-        tip.textContent = s.day + ' \\u2014 ' + s.hits + ' view' + (s.hits === 1 ? '' : 's');
+
+    if (statRange === '30d') {
+      var chart = el('div', 'chart');
+      var max = Math.max.apply(null, series.map(function (s) { return s.hits; }).concat([1]));
+      series.forEach(function (s) {
+        var bar = el('div', 'bar' + (s.hits === 0 ? ' zero' : ''));
+        bar.style.height = Math.max(2, Math.round((s.hits / max) * 100)) + '%';
+        bar.setAttribute('aria-label', s.day + ': ' + s.hits + ' views');
+        bar.addEventListener('mouseenter', function () {
+          tip.textContent = s.day + ' \\u2014 ' + s.hits + ' view' + (s.hits === 1 ? '' : 's');
         tip.style.display = 'block';
+        });
+        bar.addEventListener('mousemove', function (e) {
+          tip.style.left = Math.min(e.clientX + 12, window.innerWidth - 150) + 'px';
+          tip.style.top = (e.clientY - 34) + 'px';
+        });
+        bar.addEventListener('mouseleave', function () { tip.style.display = 'none'; });
+        chart.appendChild(bar);
       });
-      bar.addEventListener('mousemove', function (e) {
-        tip.style.left = Math.min(e.clientX + 12, window.innerWidth - 150) + 'px';
-        tip.style.top = (e.clientY - 34) + 'px';
+      card.appendChild(chart);
+      var xAxis = el('div', 'chart-x');
+      xAxis.appendChild(el('span', '', series[0].day.slice(5)));
+      xAxis.appendChild(el('span', '', 'daily views \\u00B7 hover for counts'));
+      xAxis.appendChild(el('span', '', 'today'));
+      card.appendChild(xAxis);
+      listEl.appendChild(card);
+    } else {
+      // last 12 months, zero-filled, count printed above each bar
+      var byMonth = {};
+      (stats.months || []).forEach(function (m) { byMonth[m.month] = m.hits; });
+      var mSeries = [];
+      var now = new Date();
+      var MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      for (var mi = 11; mi >= 0; mi--) {
+        var dt = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - mi, 1));
+        var key = dt.toISOString().slice(0, 7);
+        mSeries.push({ key: key, label: MONTH_NAMES[dt.getUTCMonth()], hits: byMonth[key] || 0 });
+      }
+      var mMax = Math.max.apply(null, mSeries.map(function (s) { return s.hits; }).concat([1]));
+      var mChart = el('div', 'chart monthly');
+      mSeries.forEach(function (s) {
+        var col = el('div', 'bar-col');
+        col.appendChild(el('div', 'bar-num', String(s.hits)));
+        var bar = el('div', 'bar' + (s.hits === 0 ? ' zero' : ''));
+        bar.style.height = Math.max(2, Math.round((s.hits / mMax) * 72)) + '%';
+        col.appendChild(bar);
+        col.appendChild(el('div', 'bar-mon', s.label));
+        mChart.appendChild(col);
       });
-      bar.addEventListener('mouseleave', function () { tip.style.display = 'none'; });
-      chart.appendChild(bar);
-    });
-    card.appendChild(chart);
-    var xAxis = el('div', 'chart-x');
-    xAxis.appendChild(el('span', '', series[0].day.slice(5)));
-    xAxis.appendChild(el('span', '', 'daily views \\u00B7 hover for counts'));
-    xAxis.appendChild(el('span', '', 'today'));
-    card.appendChild(xAxis);
-    listEl.appendChild(card);
+      card.appendChild(mChart);
+      var mlist = el('div', 'month-list');
+      mSeries.slice().reverse().forEach(function (s) {
+        if (!s.hits) return;
+        var row = el('div', 'month-row');
+        row.appendChild(el('span', '', s.key));
+        row.appendChild(el('span', 'v', s.hits + ' views'));
+        mlist.appendChild(row);
+      });
+      if (mlist.children.length) card.appendChild(mlist);
+      listEl.appendChild(card);
+    }
 
     if (!stats.all_time) {
       listEl.appendChild(el('div', 'empty', 'No views counted yet \\u2014 the site starts reporting once this version is deployed.'));

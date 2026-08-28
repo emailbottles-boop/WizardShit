@@ -145,11 +145,12 @@ merge — no extra steps. Formspree keeps handling the email-signup box.
    Web application → add BOTH Authorized JavaScript origins:
    `https://wizardshit.store` and
    `https://wizardshit-api.wizardshit-api.workers.dev`.
-   Paste the Client ID into `GOOGLE_CLIENT_ID` in wrangler.toml, and list
-   the allowed founder emails (comma-separated) in `FOUNDER_EMAILS`.
+   Paste the Client ID into `GOOGLE_CLIENT_ID` in wrangler.toml, and store
+   the allowed founder emails as a secret (kept out of the public repo):
+   `npx wrangler secret put FOUNDER_EMAILS` — comma-separated list.
 3. Redeploy: `npx wrangler deploy`
 
 Founders on the list can then log in with one click if they're signed into
 Google in their browser; the shared password keeps working alongside.
-Google sessions last a week and are revoked by removing the email from
-`FOUNDER_EMAILS` and redeploying.
+Google sessions last a week and are revoked by re-running the
+FOUNDER_EMAILS secret without that email.

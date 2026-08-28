@@ -54,6 +54,12 @@
     document.getElementById('wizMsgSend').addEventListener('click', function () {
       var text = document.getElementById('wizMsgText').value.trim();
       if (!text) return;
+      var em = emailInput.value.trim();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) {
+        alert('Put your email in the box above first — the wizards need somewhere to reply.');
+        emailInput.focus();
+        return;
+      }
       var send = document.getElementById('wizMsgSend');
       send.disabled = true;
       fetch(API + '/api/messages', {
