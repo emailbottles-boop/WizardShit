@@ -207,6 +207,39 @@ export const ADMIN_HTML = `<!DOCTYPE html>
   .pf-row .thumb { width: 44px; height: 44px; }
   .pf-row .grow { flex: 1; font-size: 0.85rem; }
   .pf-note { font-size: 0.68rem; color: rgba(255,255,255,0.5); margin-top: 0.6rem; }
+
+  /* analytics */
+  .stat-tiles { display: flex; gap: 0.9rem; flex-wrap: wrap; margin-bottom: 1.2rem; }
+  .tile {
+    flex: 1; min-width: 140px;
+    border: 2px solid rgba(180, 80, 255, 0.3); border-radius: 14px;
+    background: rgba(255,255,255,0.06); padding: 1rem; text-align: center;
+  }
+  .tile .num { font-size: 1.9rem; font-weight: 900; color: rgb(255, 210, 60); }
+  .tile .lbl { font-size: 0.62rem; letter-spacing: 0.18em; text-transform: uppercase; color: rgba(255,255,255,0.5); margin-top: 0.3rem; }
+  .chart-card { border: 2px solid rgba(180, 80, 255, 0.3); border-radius: 14px; background: rgba(255,255,255,0.06); padding: 1rem; }
+  .chart { display: flex; align-items: flex-end; gap: 2px; height: 140px; }
+  .chart .bar { flex: 1; background: rgb(255, 210, 60); border-radius: 4px 4px 0 0; min-height: 2px; opacity: 0.85; }
+  .chart .bar:hover { opacity: 1; }
+  .chart .bar.zero { background: rgba(255,255,255,0.12); }
+  .chart-x { display: flex; justify-content: space-between; font-size: 0.62rem; color: rgba(255,255,255,0.45); margin-top: 0.4rem; letter-spacing: 0.06em; }
+  .range-row { display: flex; gap: 0.5rem; margin-bottom: 0.9rem; }
+  .range-btn { padding: 0.4rem 0.9rem; font-size: 0.7rem; }
+  .range-btn.on { background: linear-gradient(160deg, rgb(255, 210, 60) 0%, rgb(255, 170, 30) 100%); color: #2a0550; border-color: transparent; }
+  .chart.monthly { height: 170px; }
+  .bar-col { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 0.25rem; height: 100%; }
+  .bar-col .bar { width: 100%; flex: none; }
+  .bar-num { font-size: 0.68rem; color: rgba(255,255,255,0.85); font-weight: 700; }
+  .bar-mon { font-size: 0.6rem; color: rgba(255,255,255,0.45); margin-top: 0.25rem; letter-spacing: 0.04em; }
+  .month-list { margin-top: 1rem; }
+  .month-row { display: flex; justify-content: space-between; padding: 0.4rem 0.2rem; border-bottom: 1px solid rgba(255,255,255,0.08); font-size: 0.8rem; }
+  .month-row:last-child { border-bottom: none; }
+  .month-row .v { color: rgb(255, 210, 60); font-weight: 700; }
+  #barTip {
+    position: fixed; z-index: 60; display: none; pointer-events: none;
+    background: rgba(20, 6, 40, 0.97); border: 1.5px solid rgb(255, 210, 60);
+    border-radius: 8px; padding: 0.35rem 0.6rem; font-size: 0.72rem; color: #fff;
+  }
 </style>
 </head>
 <body>
@@ -217,6 +250,8 @@ export const ADMIN_HTML = `<!DOCTYPE html>
     <p>Owners only — enter the admin password.</p>
     <input type="password" id="pwInput" placeholder="password" autocomplete="current-password">
     <button class="btn primary" id="pwBtn" style="width:100%">ENTER</button>
+    <div id="gDivider" style="display:none;margin:0.9rem 0 0.7rem;font-size:0.7rem;letter-spacing:0.2em;color:rgba(255,255,255,0.4)">&mdash; OR &mdash;</div>
+    <div id="gBtn" style="display:flex;justify-content:center"></div>
     <div id="loginErr"></div>
   </div>
 </div>
@@ -234,6 +269,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
     <button class="tab" data-tab="donators">DONATORS</button>
     <button class="tab" data-tab="messages">MESSAGES</button>
     <button class="tab" data-tab="orders">ORDERS</button>
+    <button class="tab" data-tab="analytics">ANALYTICS</button>
   </nav>
 
   <div class="toolbar">
@@ -257,6 +293,9 @@ export const ADMIN_HTML = `<!DOCTYPE html>
   var state = { merch: [], credits: [], donators: [] };
   var inbox = null;        // fetched on first visit to MESSAGES
   var orders = null;       // fetched on first visit to ORDERS
+  var stats = null;        // fetched on first visit to ANALYTICS
+  var statRange = '30d';   // '30d' | '12m'
+  var googleReady = false;
   var ordersError = '';
   var pfProducts = null;   // Printful import panel data
   var pfOpen = false;
@@ -297,6 +336,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
     return fetch(path, opts).then(function (res) {
       if (res.status === 401) {
         document.getElementById('loginOverlay').style.display = 'flex';
+        setupGoogleButton();
         throw new Error('login required');
       }
       return res.json().then(function (data) {
@@ -304,6 +344,52 @@ export const ADMIN_HTML = `<!DOCTYPE html>
         return data;
       });
     });
+  }
+
+  /* ---- Google sign-in on the login overlay ---- */
+  function setupGoogleButton() {
+    if (googleReady) return;
+    fetch('/api/login-config')
+      .then(function (r) { return r.json(); })
+      .then(function (cfg) {
+        if (!cfg.google_client_id) return;
+        var s = document.createElement('script');
+        s.src = 'https://accounts.google.com/gsi/client';
+        s.async = true;
+        s.onload = function () {
+          if (googleReady || !window.google) return;
+          googleReady = true;
+          window.google.accounts.id.initialize({
+            client_id: cfg.google_client_id,
+            callback: function (resp) {
+              fetch('/api/glogin', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ credential: resp.credential })
+              })
+                .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
+                .then(function (out) {
+                  if (!out.ok) {
+                    var err = document.getElementById('loginErr');
+                    err.textContent = out.d.error || 'Sign-in failed';
+                    err.style.display = 'block';
+                    return;
+                  }
+                  sessionStorage.setItem('wizpw', out.d.token);
+                  document.getElementById('loginOverlay').style.display = 'none';
+                  boot();
+                })
+                .catch(function () { toast('Network error', true); });
+            }
+          });
+          document.getElementById('gDivider').style.display = 'block';
+          window.google.accounts.id.renderButton(document.getElementById('gBtn'), {
+            theme: 'filled_black', size: 'large', text: 'signin_with', width: 260
+          });
+        };
+        document.head.appendChild(s);
+      })
+      .catch(function () {});
   }
 
   document.getElementById('pwBtn').onclick = tryLogin;
@@ -715,6 +801,122 @@ export const ADMIN_HTML = `<!DOCTYPE html>
     });
   }
 
+  /* ---- analytics ---- */
+  function loadStats() {
+    api('/api/admin/analytics')
+      .then(function (d) { stats = d; render(); })
+      .catch(function (e) { if (e.message !== 'login required') toast(e.message, true); });
+  }
+
+  function renderAnalytics() {
+    if (stats === null) {
+      listEl.appendChild(el('div', 'empty', 'Counting the crystal balls\\u2026'));
+      return;
+    }
+    // build a full 30-day series, zero-filling missing days
+    var byDay = {};
+    (stats.days || []).forEach(function (d) { byDay[d.day] = d.hits; });
+    var series = [];
+    var today = new Date().toISOString().slice(0, 10);
+    for (var i = 29; i >= 0; i--) {
+      var d = new Date(Date.now() - i * 86400000).toISOString().slice(0, 10);
+      series.push({ day: d, hits: byDay[d] || 0 });
+    }
+    var last30 = series.reduce(function (a, b) { return a + b.hits; }, 0);
+    var todayHits = byDay[today] || 0;
+
+    var tiles = el('div', 'stat-tiles');
+    [[todayHits, 'Views today'], [last30, 'Last 30 days'], [stats.all_time || 0, 'All time']].forEach(function (t) {
+      var tile = el('div', 'tile');
+      tile.appendChild(el('div', 'num', String(t[0])));
+      tile.appendChild(el('div', 'lbl', t[1]));
+      tiles.appendChild(tile);
+    });
+    listEl.appendChild(tiles);
+
+    // range toggle: last 30 days (daily) or last 12 months (monthly)
+    var rangeRow = el('div', 'range-row');
+    [['30d', '30 DAYS'], ['12m', '12 MONTHS']].forEach(function (r) {
+      var b = el('button', 'btn range-btn' + (statRange === r[0] ? ' on' : ''), r[1]);
+      b.onclick = function () { statRange = r[0]; render(); };
+      rangeRow.appendChild(b);
+    });
+    listEl.appendChild(rangeRow);
+
+    var card = el('div', 'chart-card');
+    var tip = document.getElementById('barTip');
+    if (!tip) {
+      tip = el('div');
+      tip.id = 'barTip';
+      document.body.appendChild(tip);
+    }
+
+    if (statRange === '30d') {
+      var chart = el('div', 'chart');
+      var max = Math.max.apply(null, series.map(function (s) { return s.hits; }).concat([1]));
+      series.forEach(function (s) {
+        var bar = el('div', 'bar' + (s.hits === 0 ? ' zero' : ''));
+        bar.style.height = Math.max(2, Math.round((s.hits / max) * 100)) + '%';
+        bar.setAttribute('aria-label', s.day + ': ' + s.hits + ' views');
+        bar.addEventListener('mouseenter', function () {
+          tip.textContent = s.day + ' \\u2014 ' + s.hits + ' view' + (s.hits === 1 ? '' : 's');
+        tip.style.display = 'block';
+        });
+        bar.addEventListener('mousemove', function (e) {
+          tip.style.left = Math.min(e.clientX + 12, window.innerWidth - 150) + 'px';
+          tip.style.top = (e.clientY - 34) + 'px';
+        });
+        bar.addEventListener('mouseleave', function () { tip.style.display = 'none'; });
+        chart.appendChild(bar);
+      });
+      card.appendChild(chart);
+      var xAxis = el('div', 'chart-x');
+      xAxis.appendChild(el('span', '', series[0].day.slice(5)));
+      xAxis.appendChild(el('span', '', 'daily views \\u00B7 hover for counts'));
+      xAxis.appendChild(el('span', '', 'today'));
+      card.appendChild(xAxis);
+      listEl.appendChild(card);
+    } else {
+      // last 12 months, zero-filled, count printed above each bar
+      var byMonth = {};
+      (stats.months || []).forEach(function (m) { byMonth[m.month] = m.hits; });
+      var mSeries = [];
+      var now = new Date();
+      var MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      for (var mi = 11; mi >= 0; mi--) {
+        var dt = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - mi, 1));
+        var key = dt.toISOString().slice(0, 7);
+        mSeries.push({ key: key, label: MONTH_NAMES[dt.getUTCMonth()], hits: byMonth[key] || 0 });
+      }
+      var mMax = Math.max.apply(null, mSeries.map(function (s) { return s.hits; }).concat([1]));
+      var mChart = el('div', 'chart monthly');
+      mSeries.forEach(function (s) {
+        var col = el('div', 'bar-col');
+        col.appendChild(el('div', 'bar-num', String(s.hits)));
+        var bar = el('div', 'bar' + (s.hits === 0 ? ' zero' : ''));
+        bar.style.height = Math.max(2, Math.round((s.hits / mMax) * 72)) + '%';
+        col.appendChild(bar);
+        col.appendChild(el('div', 'bar-mon', s.label));
+        mChart.appendChild(col);
+      });
+      card.appendChild(mChart);
+      var mlist = el('div', 'month-list');
+      mSeries.slice().reverse().forEach(function (s) {
+        if (!s.hits) return;
+        var row = el('div', 'month-row');
+        row.appendChild(el('span', '', s.key));
+        row.appendChild(el('span', 'v', s.hits + ' views'));
+        mlist.appendChild(row);
+      });
+      if (mlist.children.length) card.appendChild(mlist);
+      listEl.appendChild(card);
+    }
+
+    if (!stats.all_time) {
+      listEl.appendChild(el('div', 'empty', 'No views counted yet \\u2014 the site starts reporting once this version is deployed.'));
+    }
+  }
+
   /* ---- printful import panel (merch tab) ---- */
   function slugify(name) {
     return (name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
@@ -779,6 +981,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
     } else if (tab === 'credits') renderCredits();
     else if (tab === 'donators') renderDonators();
     else if (tab === 'messages') { renderMessages(); return; }
+    else if (tab === 'analytics') { renderAnalytics(); return; }
     else { renderOrders(); return; }
     if (!state[tab].length) {
       listEl.appendChild(el('div', 'empty', 'Nothing here yet — hit + ADD.'));
@@ -794,6 +997,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
       render();
       if (tab === 'messages' && inbox === null) loadInbox();
       if (tab === 'orders' && orders === null) loadOrders();
+      if (tab === 'analytics' && stats === null) loadStats();
     };
   });
 
@@ -824,6 +1028,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
   document.getElementById('reloadBtn').onclick = function () {
     if (tab === 'messages') { inbox = null; render(); loadInbox(); return; }
     if (tab === 'orders') { orders = null; render(); loadOrders(); return; }
+    if (tab === 'analytics') { stats = null; render(); loadStats(); return; }
     if (dirty && !confirm('Throw away unsaved changes and reload?')) return;
     load();
   };
@@ -860,13 +1065,15 @@ export const ADMIN_HTML = `<!DOCTYPE html>
       .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, status: r.status, d: d }; }); })
       .then(function (out) {
         if (!out.ok) {
-          if (out.status === 401) document.getElementById('loginOverlay').style.display = 'flex';
-          else toast(out.d.error || 'Backend not ready', true);
+          if (out.status === 401) {
+            document.getElementById('loginOverlay').style.display = 'flex';
+            setupGoogleButton();
+          } else toast(out.d.error || 'Backend not ready', true);
           return;
         }
         document.getElementById('whoami').textContent =
           'logged in' + (out.d.email && out.d.email !== 'owner' ? ' as ' + out.d.email : '') +
-          (out.d.mode === 'access' ? ' via Cloudflare Access' : '');
+          (out.d.mode === 'access' ? ' via Cloudflare Access' : out.d.mode === 'google' ? ' via Google' : '');
         load();
       })
       .catch(function () { toast('Cannot reach the backend', true); });

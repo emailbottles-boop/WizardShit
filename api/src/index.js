@@ -151,6 +151,106 @@ async function verifyAccessJwt(token, env) {
   return { email: payload.email || 'access-user' };
 }
 
+/* ---- Google sign-in: verify an ID token, issue our own session token ---- */
+
+let googleKeyCache = { keys: null, fetchedAt: 0 };
+
+async function getGoogleKeys() {
+  const now = Date.now();
+  if (googleKeyCache.keys && now - googleKeyCache.fetchedAt < 60 * 60 * 1000) {
+    return googleKeyCache.keys;
+  }
+  const res = await fetch('https://www.googleapis.com/oauth2/v3/certs');
+  if (!res.ok) throw new Error('could not fetch Google signing keys');
+  const data = await res.json();
+  googleKeyCache = { keys: data.keys || [], fetchedAt: now };
+  return googleKeyCache.keys;
+}
+
+function founderEmails(env) {
+  return (env.FOUNDER_EMAILS || '')
+    .split(',')
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+async function verifyGoogleIdToken(token, env) {
+  const parts = token.split('.');
+  if (parts.length !== 3) return null;
+  let header, payload;
+  try {
+    header = b64urlToJSON(parts[0]);
+    payload = b64urlToJSON(parts[1]);
+  } catch {
+    return null;
+  }
+  const keys = await getGoogleKeys();
+  const jwk = keys.find((k) => k.kid === header.kid);
+  if (!jwk) return null;
+  const key = await crypto.subtle.importKey(
+    'jwk',
+    jwk,
+    { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
+    false,
+    ['verify'],
+  );
+  const ok = await crypto.subtle.verify(
+    'RSASSA-PKCS1-v1_5',
+    key,
+    b64urlDecode(parts[2]),
+    new TextEncoder().encode(parts[0] + '.' + parts[1]),
+  );
+  if (!ok) return null;
+  const now = Math.floor(Date.now() / 1000);
+  if (payload.aud !== env.GOOGLE_CLIENT_ID) return null;
+  if (payload.iss !== 'https://accounts.google.com' && payload.iss !== 'accounts.google.com') return null;
+  if (typeof payload.exp !== 'number' || payload.exp < now) return null;
+  if (!payload.email || payload.email_verified !== true) return null;
+  return { email: String(payload.email).toLowerCase() };
+}
+
+// Session tokens are signed with a key derived from ADMIN_PASSWORD, so no
+// extra secret needs configuring; changing the password logs everyone out.
+async function sessionKey(env) {
+  const digest = await crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode('wiz-session-v1:' + (env.ADMIN_PASSWORD || '')),
+  );
+  return crypto.subtle.importKey('raw', digest, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify']);
+}
+
+function b64urlEncode(bytes) {
+  let bin = '';
+  for (const b of new Uint8Array(bytes)) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+async function makeSessionToken(email, env) {
+  const exp = Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60;
+  const payload = email + '|' + exp;
+  const key = await sessionKey(env);
+  const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(payload));
+  return 'wiztok.' + b64urlEncode(new TextEncoder().encode(payload)) + '.' + b64urlEncode(sig);
+}
+
+async function verifySessionToken(token, env) {
+  const parts = token.split('.');
+  if (parts.length !== 3 || parts[0] !== 'wiztok') return null;
+  let payload;
+  try {
+    payload = new TextDecoder().decode(b64urlDecode(parts[1]));
+  } catch {
+    return null;
+  }
+  const key = await sessionKey(env);
+  const ok = await crypto.subtle.verify('HMAC', key, b64urlDecode(parts[2]), new TextEncoder().encode(payload));
+  if (!ok) return null;
+  const [email, expStr] = payload.split('|');
+  if (!email || Number(expStr) < Math.floor(Date.now() / 1000)) return null;
+  if (!founderEmails(env).includes(email)) return null; // removed founders lose access immediately
+  return { email };
+}
+
 async function timingSafeEqualStr(a, b) {
   const enc = new TextEncoder();
   const [da, db] = await Promise.all([
@@ -183,6 +283,11 @@ async function checkAuth(request, env) {
   if (env.ADMIN_PASSWORD) {
     const auth = request.headers.get('Authorization') || '';
     const given = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+    if (given.startsWith('wiztok.')) {
+      const who = await verifySessionToken(given, env);
+      if (who) return { ok: true, mode: 'google', email: who.email };
+      return { ok: false, status: 401, error: 'Session expired — sign in again' };
+    }
     if (given && (await timingSafeEqualStr(given, env.ADMIN_PASSWORD))) {
       return { ok: true, mode: 'password', email: 'owner' };
     }
@@ -234,6 +339,10 @@ async function receiveMessage(request, env) {
   if (str(data.website, 50)) return json({ ok: true }, 200, PUBLIC_CORS);
   const body = str(data.message, 4000);
   if (!body) return json({ error: 'Message is empty' }, 400, PUBLIC_CORS);
+  const email = str(data.email, 200);
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return json({ error: 'Add your email so the wizards can reply' }, 400, PUBLIC_CORS);
+  }
   // The honeypot only stops naive bots -- it is a field anyone can read in our
   // own JS. This is the guard that actually protects D1's daily write quota,
   // so it sits immediately before the only public INSERT in the worker.
@@ -312,12 +421,13 @@ async function printfulProxy(env, apiPath) {
 
 /* -------------------------------------------------------------- upload --- */
 
+// No SVG: an uploaded SVG can carry scripts, and /img/* serves from the same
+// origin as the admin panel — raster formats only keeps that door closed.
 const IMAGE_TYPES = {
   'image/png': 'png',
   'image/jpeg': 'jpg',
   'image/gif': 'gif',
   'image/webp': 'webp',
-  'image/svg+xml': 'svg',
 };
 
 async function handleUpload(request, env, origin) {
@@ -348,6 +458,8 @@ async function serveImage(env, key) {
     headers: {
       'Content-Type': obj.httpMetadata?.contentType || 'application/octet-stream',
       'Cache-Control': 'public, max-age=31536000, immutable',
+      'X-Content-Type-Options': 'nosniff',
+      'Content-Security-Policy': "default-src 'none'",
       ...PUBLIC_CORS,
     },
   });
@@ -409,6 +521,33 @@ export default {
       if (method === 'POST' && path === '/api/messages') {
         return receiveMessage(request, env);
       }
+      if (method === 'POST' && path === '/api/hit') {
+        // pageview beacon: a text/plain path, counted per UTC day
+        const p = (await request.text()).slice(0, 100) || '/';
+        const day = new Date().toISOString().slice(0, 10);
+        await env.DB.prepare(
+          'INSERT INTO page_hits (day, path, hits) VALUES (?, ?, 1) ON CONFLICT(day, path) DO UPDATE SET hits = hits + 1',
+        ).bind(day, p).run();
+        return json({ ok: true }, 200, PUBLIC_CORS);
+      }
+      if (method === 'GET' && path === '/api/login-config') {
+        return json({ google_client_id: env.GOOGLE_CLIENT_ID || '' }, 200, { 'Cache-Control': 'public, max-age=300' });
+      }
+      if (method === 'POST' && path === '/api/glogin') {
+        if (!env.GOOGLE_CLIENT_ID) return json({ error: 'Google sign-in is not configured' }, 501);
+        let body;
+        try {
+          body = await request.json();
+        } catch {
+          return json({ error: 'Body must be JSON' }, 400);
+        }
+        const who = await verifyGoogleIdToken(String(body.credential || ''), env);
+        if (!who) return json({ error: 'Google sign-in failed — try again' }, 401);
+        if (!founderEmails(env).includes(who.email)) {
+          return json({ error: who.email + ' is not on the founders list' }, 403);
+        }
+        return json({ ok: true, token: await makeSessionToken(who.email, env), email: who.email });
+      }
       if (method === 'GET' && (path === '/' || path === '/admin/' || path === '/login/')) {
         return Response.redirect(url.origin + '/login', 302);
       }
@@ -460,6 +599,20 @@ export default {
             await env.DB.prepare('DELETE FROM messages WHERE id = ?').bind(Number(m[1])).run();
             return json({ ok: true });
           }
+        }
+        if (method === 'GET' && path === '/api/admin/analytics') {
+          const days = await env.DB.prepare(
+            "SELECT day, SUM(hits) AS hits FROM page_hits WHERE day >= date('now', '-29 days') GROUP BY day ORDER BY day",
+          ).all();
+          const months = await env.DB.prepare(
+            "SELECT substr(day, 1, 7) AS month, SUM(hits) AS hits FROM page_hits WHERE day >= date('now', '-365 days') GROUP BY month ORDER BY month",
+          ).all();
+          const totals = await env.DB.prepare('SELECT SUM(hits) AS all_time FROM page_hits').first();
+          return json(
+            { days: days.results, months: months.results, all_time: (totals && totals.all_time) || 0 },
+            200,
+            { 'Cache-Control': 'no-store' },
+          );
         }
         if (method === 'GET' && path === '/api/admin/orders') {
           return printfulProxy(env, '/orders?limit=50');
