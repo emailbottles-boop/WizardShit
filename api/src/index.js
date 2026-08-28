@@ -286,10 +286,10 @@ export default {
       if (method === 'GET' && path.startsWith('/img/')) {
         return serveImage(env, path.slice('/img/'.length));
       }
-      if (method === 'GET' && (path === '/' || path === '/admin/')) {
-        return Response.redirect(url.origin + '/admin', 302);
+      if (method === 'GET' && (path === '/' || path === '/admin/' || path === '/login/')) {
+        return Response.redirect(url.origin + '/login', 302);
       }
-      if (method === 'GET' && path === '/admin') {
+      if (method === 'GET' && (path === '/admin' || path === '/login')) {
         return new Response(ADMIN_HTML, {
           headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' },
         });
