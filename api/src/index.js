@@ -307,10 +307,24 @@ async function serveImage(env, key) {
   });
 }
 
+/**
+ * Drop the cached /api/content response so a SAVE shows up immediately rather
+ * than after the 60s max-age. Both hostnames are purged because the panel can
+ * be reached on either, and each is a separate cache key.
+ */
+async function purgeContentCache() {
+  const cache = caches.default;
+  const urls = [
+    'https://wizardshit.store/api/content',
+    'https://wizardshit-api.wizardshit-api.workers.dev/api/content',
+  ];
+  await Promise.all(urls.map((u) => cache.delete(new Request(u)).catch(() => {})));
+}
+
 /* -------------------------------------------------------------- router --- */
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const path = url.pathname;
     const method = request.method;
@@ -330,8 +344,18 @@ export default {
     try {
       // ---- public ----
       if (method === 'GET' && path === '/api/content') {
+        // Every page view calls this, so serve it from the edge cache where we
+        // can. Cache-Control alone only helps a repeat visitor's own browser;
+        // this shares one copy per colo, which keeps the D1 read count flat as
+        // traffic grows instead of rising with it. SAVE & PUBLISH purges it.
+        const cache = caches.default;
+        const hit = await cache.match(request);
+        if (hit) return hit;
+
         const data = await readCollections(env, false);
-        return json(data, 200, { ...PUBLIC_CORS, 'Cache-Control': 'public, max-age=60' });
+        const res = json(data, 200, { ...PUBLIC_CORS, 'Cache-Control': 'public, max-age=60' });
+        ctx.waitUntil(cache.put(request, res.clone()));
+        return res;
       }
       if (method === 'GET' && path.startsWith('/img/')) {
         return serveImage(env, path.slice('/img/'.length));
@@ -370,6 +394,7 @@ export default {
             return json({ error: 'Body must be JSON' }, 400);
           }
           await replaceCollection(env, name, items);
+          await purgeContentCache();
           return json({ ok: true, saved: items.length });
         }
         if (method === 'POST' && path === '/api/admin/upload') {
