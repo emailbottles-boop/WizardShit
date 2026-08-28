@@ -59,7 +59,7 @@ ALLOWED_ORIGINS = "https://wizardshit.store,https://www.wizardshit.store,http://
 #    SECRET so personal emails never sit in this public repo:
 #      npx wrangler secret put FOUNDER_EMAILS
 #    (comma-separated, e.g.: wizardshitofficial@gmail.com,someone@else.com)
-GOOGLE_CLIENT_ID = ""
+GOOGLE_CLIENT_ID = "260370337802-lur9o4i2jtplgfldo4khqs7j6lbvq7r5.apps.googleusercontent.com"
 
 ACCESS_TEAM_DOMAIN = ""
 ACCESS_AUD = ""
