@@ -4,6 +4,7 @@
  * Public endpoints (called by the GitHub Pages site):
  *   GET /api/content     -> { merch, credits, donators } (visible items only)
  *   GET /img/<key>       -> images uploaded through the admin panel (R2)
+ *   POST /api/messages   -> the site's message bubble drops mail in the inbox
  *
  * Owner endpoints (require auth — Cloudflare Access, or ADMIN_PASSWORD):
  *   GET /admin                        -> the admin panel UI
@@ -11,6 +12,11 @@
  *   GET /api/admin/content            -> all rows, hidden ones included
  *   PUT /api/admin/collection/<name>  -> replace a collection (merch|credits|donators)
  *   POST /api/admin/upload            -> upload an image to R2
+ *   GET /api/admin/messages           -> the inbox, newest first
+ *   POST /api/admin/messages/<id>/read -> toggle read
+ *   DELETE /api/admin/messages/<id>   -> delete a message
+ *   GET /api/admin/orders             -> recent Printful orders (needs PRINTFUL_TOKEN)
+ *   GET /api/admin/printful/products  -> Printful store products (needs PRINTFUL_TOKEN)
  */
 
 import { ADMIN_HTML } from './admin.js';
@@ -214,6 +220,50 @@ async function replaceCollection(env, name, items) {
   await env.DB.batch(stmts); // D1 batches run as a single transaction
 }
 
+/* ------------------------------------------------------------ messages --- */
+
+async function receiveMessage(request, env) {
+  let data;
+  try {
+    data = await request.json();
+  } catch {
+    return json({ error: 'Body must be JSON' }, 400, PUBLIC_CORS);
+  }
+  // Honeypot: real visitors never fill the hidden "website" field. Pretend
+  // success so bots don't learn they were caught.
+  if (str(data.website, 50)) return json({ ok: true }, 200, PUBLIC_CORS);
+  const body = str(data.message, 4000);
+  if (!body) return json({ error: 'Message is empty' }, 400, PUBLIC_CORS);
+  await env.DB.prepare('INSERT INTO messages (name, email, body) VALUES (?, ?, ?)')
+    .bind(str(data.name, 200), str(data.email, 200), body)
+    .run();
+  return json({ ok: true }, 200, PUBLIC_CORS);
+}
+
+/* ------------------------------------------------------------ printful --- */
+
+async function printfulProxy(env, apiPath) {
+  if (!env.PRINTFUL_TOKEN) {
+    return json(
+      { error: 'Printful is not connected yet. Run: npx wrangler secret put PRINTFUL_TOKEN (from the api/ folder) with a token from https://developers.printful.com' },
+      501,
+    );
+  }
+  const res = await fetch('https://api.printful.com' + apiPath, {
+    headers: { Authorization: 'Bearer ' + env.PRINTFUL_TOKEN },
+  });
+  let data;
+  try {
+    data = await res.json();
+  } catch {
+    return json({ error: 'Printful returned a non-JSON response (HTTP ' + res.status + ')' }, 502);
+  }
+  if (!res.ok) {
+    return json({ error: 'Printful: ' + (data?.error?.message || 'HTTP ' + res.status) }, res.status >= 500 ? 502 : res.status);
+  }
+  return json({ result: data.result ?? data, paging: data.paging }, 200, { 'Cache-Control': 'no-store' });
+}
+
 /* -------------------------------------------------------------- upload --- */
 
 const IMAGE_TYPES = {
@@ -286,6 +336,9 @@ export default {
       if (method === 'GET' && path.startsWith('/img/')) {
         return serveImage(env, path.slice('/img/'.length));
       }
+      if (method === 'POST' && path === '/api/messages') {
+        return receiveMessage(request, env);
+      }
       if (method === 'GET' && (path === '/' || path === '/admin/' || path === '/login/')) {
         return Response.redirect(url.origin + '/login', 302);
       }
@@ -321,6 +374,27 @@ export default {
         }
         if (method === 'POST' && path === '/api/admin/upload') {
           return handleUpload(request, env, url.origin);
+        }
+        if (method === 'GET' && path === '/api/admin/messages') {
+          const rows = await env.DB.prepare('SELECT * FROM messages ORDER BY id DESC LIMIT 500').all();
+          return json({ messages: rows.results }, 200, { 'Cache-Control': 'no-store' });
+        }
+        {
+          const m = path.match(/^\/api\/admin\/messages\/(\d+)(\/read)?$/);
+          if (m && method === 'POST' && m[2]) {
+            await env.DB.prepare('UPDATE messages SET read = 1 - read WHERE id = ?').bind(Number(m[1])).run();
+            return json({ ok: true });
+          }
+          if (m && method === 'DELETE' && !m[2]) {
+            await env.DB.prepare('DELETE FROM messages WHERE id = ?').bind(Number(m[1])).run();
+            return json({ ok: true });
+          }
+        }
+        if (method === 'GET' && path === '/api/admin/orders') {
+          return printfulProxy(env, '/orders?limit=50');
+        }
+        if (method === 'GET' && path === '/api/admin/printful/products') {
+          return printfulProxy(env, '/store/products?limit=100');
         }
       }
 

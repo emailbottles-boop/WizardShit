@@ -31,3 +31,12 @@ CREATE TABLE IF NOT EXISTS donators (
   visible INTEGER NOT NULL DEFAULT 1,
   sort    INTEGER NOT NULL DEFAULT 0
 );
+
+CREATE TABLE IF NOT EXISTS messages (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  name       TEXT NOT NULL DEFAULT '',
+  email      TEXT NOT NULL DEFAULT '',
+  body       TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  read       INTEGER NOT NULL DEFAULT 0
+);

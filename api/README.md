@@ -119,3 +119,17 @@ managed in Printful's own dashboard as always.
 - Local development → `npx wrangler dev` (uses a local database; load
   `schema.sql`/`seed.sql` with the same commands as step 3 but `--local`,
   and put a test password in `.dev.vars`: `ADMIN_PASSWORD=whatever`).
+
+## Upgrade: messages inbox, orders, Printful import (2026-08)
+
+One-time steps when deploying this upgrade:
+
+1. Add the messages table to the live database:
+   `npx wrangler d1 execute wizardshit --remote --file=upgrade-messages.sql`
+2. (Optional, enables ORDERS + product import) Connect Printful: create a
+   token at https://developers.printful.com for the wizard store, then
+   `npx wrangler secret put PRINTFUL_TOKEN`
+3. Redeploy: `npx wrangler deploy`
+
+The site's floating message bubble goes live when GitHub Pages picks up the
+merge — no extra steps. Formspree keeps handling the email-signup box.
