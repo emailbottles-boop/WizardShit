@@ -52,8 +52,8 @@ ALLOWED_ORIGINS = "https://wizardshit.store,https://www.wizardshit.store,http://
 # paths, then fill these in (see README step 5).
 #   ACCESS_TEAM_DOMAIN = "yourteam.cloudflareaccess.com"
 #   ACCESS_AUD         = "the Access application's Audience (AUD) tag"
-ACCESS_TEAM_DOMAIN = "wizardshit.cloudflareaccess.com"
-ACCESS_AUD = "e237a57a4191a21ed17b9439984774f1d3a269d63310aa0dff284a861b11ec07"
+ACCESS_TEAM_DOMAIN = ""
+ACCESS_AUD = ""
 
 # --- Admin auth, option B (simpler): shared password ---
 # Only used when Access is NOT configured above. Set it as a secret so it
