@@ -234,6 +234,20 @@ async function receiveMessage(request, env) {
   if (str(data.website, 50)) return json({ ok: true }, 200, PUBLIC_CORS);
   const body = str(data.message, 4000);
   if (!body) return json({ error: 'Message is empty' }, 400, PUBLIC_CORS);
+  // The honeypot only stops naive bots -- it is a field anyone can read in our
+  // own JS. This is the guard that actually protects D1's daily write quota,
+  // so it sits immediately before the only public INSERT in the worker.
+  if (env.MSG_LIMIT) {
+    const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
+    const { success } = await env.MSG_LIMIT.limit({ key: ip });
+    if (!success) {
+      return json(
+        { error: "That's a lot of messages at once — give it a minute and try again." },
+        429,
+        PUBLIC_CORS,
+      );
+    }
+  }
   await env.DB.prepare('INSERT INTO messages (name, email, body) VALUES (?, ?, ?)')
     .bind(str(data.name, 200), str(data.email, 200), body)
     .run();

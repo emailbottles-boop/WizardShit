@@ -56,3 +56,14 @@ ACCESS_AUD = ""
 # Only used when Access is NOT configured above. Set it as a secret so it
 # never lives in this file:
 #   npx wrangler secret put ADMIN_PASSWORD
+
+# Rate limit for the public POST /api/messages endpoint. Anyone can call that
+# one without a password, and D1's free tier caps daily writes — so an
+# unthrottled flood would exhaust the write quota and break SAVE & PUBLISH,
+# which matters far more than a junk inbox. 10 messages per minute per IP is
+# far above any real person and far below what a script needs to do damage.
+# Costs nothing: this is a built-in Workers binding, not a billable add-on.
+[[ratelimits]]
+name = "MSG_LIMIT"
+namespace_id = "1001"
+simple = { limit = 10, period = 60 }
