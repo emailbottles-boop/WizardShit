@@ -47,3 +47,9 @@ CREATE TABLE IF NOT EXISTS page_hits (
   hits INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (day, path)
 );
+
+CREATE TABLE IF NOT EXISTS signups (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  email      TEXT NOT NULL UNIQUE,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);

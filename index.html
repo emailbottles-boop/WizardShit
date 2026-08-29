@@ -1216,6 +1216,9 @@ input:focus-visible {
     <div class="email-section">
       <form id="emailForm" novalidate>
         <input id="emailInput" type="email" name="email" placeholder="EMAIL FOR UPDATES">
+        <!-- Honeypot: invisible to people, tempting to bots. The worker drops
+             any submission that fills it. -->
+        <input type="text" name="website" id="signupHp" value="" tabindex="-1" autocomplete="off" aria-hidden="true" style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0">
         <div class="form-error" id="emailError">PLEASE ENTER A VALID EMAIL</div>
         <button class="btn" type="submit">SUBMIT</button>
       </form>
@@ -1773,12 +1776,15 @@ bioCards.forEach(card => {
   });
 });
 
-/* Formspree AJAX submit */
+/* Email signup — posts to our own Cloudflare Worker (same backend as the
+   message bubble), so the signup list lives in the Control Room's SIGNUPS
+   tab instead of a third-party service. */
 form.addEventListener("submit", async e => {
   e.preventDefault();
 
   if (!emailInput.validity.valid) {
     emailInput.classList.add("invalid");
+    emailError.textContent = "PLEASE ENTER A VALID EMAIL";
     emailError.style.display = "block";
     return;
   }
@@ -1786,18 +1792,26 @@ form.addEventListener("submit", async e => {
   emailInput.classList.remove("invalid");
   emailError.style.display = "none";
 
-  const data = new FormData(form);
+  let ok = false;
+  try {
+    const res = await fetch((window.WIZ_API_BASE || "") + "/api/signup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email: emailInput.value.trim(),
+        website: document.getElementById("signupHp").value
+      })
+    });
+    ok = res.ok;
+  } catch (_) { /* network hiccup — fall through to the error message */ }
 
-  const res = await fetch("https://formspree.io/f/mrelgwzp", {
-    method: "POST",
-    body: data,
-    headers: { "Accept": "application/json" }
-  });
-
-  if (res.status === 200 || res.status === 201) {
+  if (ok) {
     form.reset();
     successMsg.style.display = "block";
     setTimeout(() => { successMsg.style.display = "none"; }, 3000);
+  } else {
+    emailError.textContent = "COULDN'T SUBSCRIBE — TRY AGAIN IN A MINUTE";
+    emailError.style.display = "block";
   }
 });
 

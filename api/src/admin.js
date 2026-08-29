@@ -267,6 +267,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
     <button class="tab" data-tab="credits">Credits</button>
     <button class="tab" data-tab="donators">Donators</button>
     <button class="tab" data-tab="messages">Messages</button>
+    <button class="tab" data-tab="signups">Signups</button>
     <button class="tab" data-tab="orders">Orders</button>
     <button class="tab" data-tab="analytics">Analytics</button>
   </nav>
@@ -291,6 +292,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
 
   var state = { merch: [], credits: [], donators: [] };
   var inbox = null;        // fetched on first visit to MESSAGES
+  var signups = null;      // fetched on first visit to SIGNUPS
   var orders = null;       // fetched on first visit to ORDERS
   var stats = null;        // fetched on first visit to ANALYTICS
   var statRange = '30d';   // '30d' | '12m'
@@ -746,6 +748,55 @@ export const ADMIN_HTML = `<!DOCTYPE html>
     });
   }
 
+  /* ---- email signups ---- */
+  function loadSignups() {
+    api('/api/admin/signups')
+      .then(function (d) { signups = d.signups; render(); })
+      .catch(function (e) { if (e.message !== 'login required') toast(e.message, true); });
+  }
+
+  function renderSignups() {
+    if (signups === null) {
+      listEl.appendChild(el('div', 'empty', 'Fetching the list\\u2026'));
+      return;
+    }
+    if (!signups.length) {
+      listEl.appendChild(el('div', 'empty', 'No signups yet. The EMAIL FOR UPDATES box on the site delivers here.'));
+      return;
+    }
+    var barCard = el('div', 'item');
+    var bar = el('div', 'item-head');
+    bar.appendChild(el('strong', 'grow', signups.length + ' subscriber' + (signups.length === 1 ? '' : 's')));
+    var copyB = el('button', 'btn', 'Copy all');
+    copyB.title = 'Copy every email, comma-separated \\u2014 ready to paste into BCC';
+    copyB.onclick = function () {
+      var all = signups.map(function (s) { return s.email; }).join(', ');
+      navigator.clipboard.writeText(all).then(
+        function () { toast('Copied ' + signups.length + ' email' + (signups.length === 1 ? '' : 's')); },
+        function () { window.prompt('Copy the list:', all); }
+      );
+    };
+    bar.appendChild(copyB);
+    barCard.appendChild(bar);
+    listEl.appendChild(barCard);
+    signups.forEach(function (s) {
+      var card = el('div', 'item');
+      var head = el('div', 'item-head');
+      head.appendChild(el('strong', 'grow', s.email));
+      head.appendChild(el('span', 'msg-meta', (s.created_at || '').slice(0, 16)));
+      var delB = el('button', 'icon-btn danger', '\\uD83D\\uDDD1');
+      delB.title = 'Remove (unsubscribe)';
+      delB.onclick = function () {
+        if (!confirm('Remove ' + s.email + ' from the list?')) return;
+        api('/api/admin/signups/' + s.id, { method: 'DELETE' }).then(loadSignups)
+          .catch(function (e) { toast(e.message, true); });
+      };
+      head.appendChild(delB);
+      card.appendChild(head);
+      listEl.appendChild(card);
+    });
+  }
+
   /* ---- printful orders ---- */
   function loadOrders() {
     ordersError = '';
@@ -980,6 +1031,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
     } else if (tab === 'credits') renderCredits();
     else if (tab === 'donators') renderDonators();
     else if (tab === 'messages') { renderMessages(); return; }
+    else if (tab === 'signups') { renderSignups(); return; }
     else if (tab === 'analytics') { renderAnalytics(); return; }
     else { renderOrders(); return; }
     if (!state[tab].length) {
@@ -995,6 +1047,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
       tab = btn.dataset.tab;
       render();
       if (tab === 'messages' && inbox === null) loadInbox();
+      if (tab === 'signups' && signups === null) loadSignups();
       if (tab === 'orders' && orders === null) loadOrders();
       if (tab === 'analytics' && stats === null) loadStats();
     };
@@ -1026,6 +1079,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
 
   document.getElementById('reloadBtn').onclick = function () {
     if (tab === 'messages') { inbox = null; render(); loadInbox(); return; }
+    if (tab === 'signups') { signups = null; render(); loadSignups(); return; }
     if (tab === 'orders') { orders = null; render(); loadOrders(); return; }
     if (tab === 'analytics') { stats = null; render(); loadStats(); return; }
     if (dirty && !confirm('Throw away unsaved changes and reload?')) return;
