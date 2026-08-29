@@ -189,3 +189,21 @@ Founder access to the tab is the Control Room's existing login (the shared
 ADMIN_PASSWORD secret, or Google sign-in for emails in FOUNDER_EMAILS).
 The password is a secret on purpose — it must never be written into this
 repo or the madamstudio repo, since both are public.
+
+## Upgrade: creator-page panels (2026-08)
+
+Each creator on the madamstudio site gets a page of square clickable
+panels (a picture, a title, an optional link), plus a shared
+"recent projects" column that shows on every creator's page. Panels are
+edited in the Control Room's new PANELS tab — set the panel's "creator"
+to the credit card name it belongs to, or to the word `shared` to put it
+in the projects column. Pictures upload to R2 through the same
+drag-and-drop widget as merch images. One-time steps:
+
+1. Add the panels table to the live database:
+   `npx wrangler d1 execute wizardshit --remote --file=upgrade-panels.sql`
+2. Redeploy: `npx wrangler deploy`
+
+The public /api/content response gains a `panels` key (visible panels
+only); until the table exists the worker serves an empty list rather
+than erroring, so deploy order doesn't matter for the rest of the site.

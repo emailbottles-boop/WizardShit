@@ -54,6 +54,16 @@ CREATE TABLE IF NOT EXISTS signups (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS panels (
+  id      INTEGER PRIMARY KEY AUTOINCREMENT,
+  creator TEXT NOT NULL,            -- credit card name, or "shared" for the projects column
+  title   TEXT NOT NULL DEFAULT '',
+  url     TEXT NOT NULL DEFAULT '', -- optional link the panel opens
+  image   TEXT NOT NULL DEFAULT '', -- optional picture (uploaded via the panel editor)
+  visible INTEGER NOT NULL DEFAULT 1,
+  sort    INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE TABLE IF NOT EXISTS claims (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   credit_name TEXT NOT NULL,               -- which credit card they clicked

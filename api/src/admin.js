@@ -266,6 +266,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
     <button class="tab active" data-tab="merch">Merch</button>
     <button class="tab" data-tab="credits">Credits</button>
     <button class="tab" data-tab="donators">Donators</button>
+    <button class="tab" data-tab="panels">Panels</button>
     <button class="tab" data-tab="messages">Messages</button>
     <button class="tab" data-tab="signups">Signups</button>
     <button class="tab" data-tab="claims">Wizard IDs</button>
@@ -291,7 +292,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
 (function () {
   'use strict';
 
-  var state = { merch: [], credits: [], donators: [] };
+  var state = { merch: [], credits: [], donators: [], panels: [] };
   var inbox = null;        // fetched on first visit to MESSAGES
   var signups = null;      // fetched on first visit to SIGNUPS
   var claims = null;       // fetched on first visit to WIZARD IDS
@@ -699,6 +700,20 @@ export const ADMIN_HTML = `<!DOCTYPE html>
     });
   }
 
+  // Square panels for the madamstudio creator pages. "creator" must match a
+  // credit card name exactly; the word "shared" puts the panel in the
+  // recent-projects column that every creator's page shows on the right.
+  function renderPanels() {
+    state.panels.forEach(function (item, i) {
+      var body = el('div', 'fields');
+      body.appendChild(field('Creator (credit card name, or "shared")', item.creator, function (v) { item.creator = v; }));
+      body.appendChild(field('Title', item.title, function (v) { item.title = v; }));
+      body.appendChild(field('Link (optional \\u2014 where clicking the panel goes)', item.url, function (v) { item.url = v; }, true));
+      body.appendChild(imageField('Picture', item, 'image'));
+      listEl.appendChild(itemShell(state.panels, i, (item.creator || '?') + ' \\u2014 ' + (item.title || '(untitled)'), body));
+    });
+  }
+
   function renderDonators() {
     state.donators.forEach(function (item, i) {
       var body = el('div', 'fields');
@@ -1073,7 +1088,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
 
   function render() {
     listEl.innerHTML = '';
-    var editable = tab === 'merch' || tab === 'credits' || tab === 'donators';
+    var editable = tab === 'merch' || tab === 'credits' || tab === 'donators' || tab === 'panels';
     document.getElementById('addBtn').style.display = editable ? '' : 'none';
     document.getElementById('saveBtn').style.display = editable ? '' : 'none';
     document.getElementById('printfulBtn').style.display = tab === 'merch' ? '' : 'none';
@@ -1082,6 +1097,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
       renderMerch();
     } else if (tab === 'credits') renderCredits();
     else if (tab === 'donators') renderDonators();
+    else if (tab === 'panels') renderPanels();
     else if (tab === 'messages') { renderMessages(); return; }
     else if (tab === 'signups') { renderSignups(); return; }
     else if (tab === 'claims') { renderClaims(); return; }
@@ -1125,6 +1141,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
     var fresh;
     if (tab === 'merch') fresh = { title: '', url: 'https://wizard.printful.me/product/', image: '', sticker: 0, row_break: 0, visible: 1 };
     else if (tab === 'credits') fresh = { name: '', roles: '', photo: '', photo_css: '', back_text: '', back_quote: 0, back_show_name: 0, visible: 1 };
+    else if (tab === 'panels') fresh = { creator: '', title: '', url: '', image: '', visible: 1 };
     else fresh = { name: '', visible: 1 };
     state[tab].unshift(fresh);
     setDirty(true);

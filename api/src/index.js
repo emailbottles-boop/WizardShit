@@ -2,7 +2,7 @@
  * Wizard Shit backend — a single Cloudflare Worker.
  *
  * Public endpoints (called by the GitHub Pages site):
- *   GET /api/content     -> { merch, credits, donators } (visible items only)
+ *   GET /api/content     -> { merch, credits, donators, panels } (visible only)
  *   GET /img/<key>       -> images uploaded through the admin panel (R2)
  *   POST /api/messages   -> the site's message bubble drops mail in the inbox
  *   POST /api/signup     -> the email-for-updates box adds to the signup list
@@ -72,6 +72,23 @@ const COLLECTIONS = {
       const name = str(item.name, 200);
       if (!name) throw new BadInput('donator ' + (i + 1) + ': name is required');
       return [name, bool(item.visible), i];
+    },
+  },
+  // Square panels on the madamstudio creator pages. `creator` is the credit
+  // card name the panel belongs to, or the literal word "shared" for the
+  // recent-projects column that shows on every creator's page.
+  panels: {
+    table: 'panels',
+    columns: ['creator', 'title', 'url', 'image', 'visible', 'sort'],
+    clean(item, i) {
+      const creator = str(item.creator, 200);
+      const title = str(item.title, 300);
+      const url = str(item.url, 1000);
+      const image = str(item.image, 1000);
+      if (!creator) throw new BadInput('panel ' + (i + 1) + ': creator is required (a credit card name, or "shared")');
+      if (!title && !image) throw new BadInput('panel ' + (i + 1) + ' (' + creator + '): give it a title or an image');
+      if (url && !/^https?:\/\//i.test(url)) throw new BadInput('panel "' + (title || creator) + '": link must start with http(s)://');
+      return [creator, title, url, image, bool(item.visible), i];
     },
   },
 };
@@ -313,12 +330,15 @@ async function checkAuth(request, env) {
 
 async function readCollections(env, includeHidden) {
   const where = includeHidden ? '' : ' WHERE visible = 1';
-  const [merch, credits, donators] = await Promise.all([
+  const [merch, credits, donators, panels] = await Promise.all([
     env.DB.prepare('SELECT * FROM merch_items' + where + ' ORDER BY sort').all(),
     env.DB.prepare('SELECT * FROM credits' + where + ' ORDER BY sort').all(),
     env.DB.prepare('SELECT * FROM donators' + where + ' ORDER BY sort').all(),
+    // Missing until upgrade-panels.sql has run — never let that take down
+    // /api/content for the whole site.
+    env.DB.prepare('SELECT * FROM panels' + where + ' ORDER BY sort').all().catch(() => ({ results: [] })),
   ]);
-  return { merch: merch.results, credits: credits.results, donators: donators.results };
+  return { merch: merch.results, credits: credits.results, donators: donators.results, panels: panels.results };
 }
 
 async function replaceCollection(env, name, items) {
