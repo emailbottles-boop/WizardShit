@@ -207,3 +207,16 @@ drag-and-drop widget as merch images. One-time steps:
 The public /api/content response gains a `panels` key (visible panels
 only); until the table exists the worker serves an empty list rather
 than erroring, so deploy order doesn't matter for the rest of the site.
+
+## Upgrade: creator work uploads (2026-08)
+
+Creators upload work from their madamstudio page (an Upload button in the
+middle column). Files go to R2, image types only, 8MB max, throttled per
+IP, and only for creator names that exist in the credits. Each upload
+carries a mark — NEW, SEEN, VERIFIED, PAID — that producers set in the
+Control Room's UPLOADS tab; the mark shows next to the upload on the
+creator's page. One-time steps:
+
+1. Add the uploads table:
+   `npx wrangler d1 execute wizardshit --remote --file=upgrade-uploads.sql`
+2. Redeploy: `npx wrangler deploy`

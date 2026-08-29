@@ -270,6 +270,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
     <button class="tab" data-tab="messages">Messages</button>
     <button class="tab" data-tab="signups">Signups</button>
     <button class="tab" data-tab="claims">Wizard IDs</button>
+    <button class="tab" data-tab="uploads">Uploads</button>
     <button class="tab" data-tab="orders">Orders</button>
     <button class="tab" data-tab="analytics">Analytics</button>
   </nav>
@@ -296,6 +297,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
   var inbox = null;        // fetched on first visit to MESSAGES
   var signups = null;      // fetched on first visit to SIGNUPS
   var claims = null;       // fetched on first visit to WIZARD IDS
+  var uploads = null;      // fetched on first visit to UPLOADS
   var orders = null;       // fetched on first visit to ORDERS
   var stats = null;        // fetched on first visit to ANALYTICS
   var statRange = '30d';   // '30d' | '12m'
@@ -864,6 +866,60 @@ export const ADMIN_HTML = `<!DOCTYPE html>
     });
   }
 
+  /* ---- creator work uploads ---- */
+  function loadUploads() {
+    api('/api/admin/uploads')
+      .then(function (d) { uploads = d.uploads; render(); })
+      .catch(function (e) { if (e.message !== 'login required') toast(e.message, true); });
+  }
+
+  function uploadAction(id, pathSuffix, method) {
+    api('/api/admin/uploads/' + id + pathSuffix, { method: method }).then(loadUploads)
+      .catch(function (e) { toast(e.message, true); });
+  }
+
+  function renderUploads() {
+    if (uploads === null) {
+      listEl.appendChild(el('div', 'empty', 'Fetching uploads\\u2026'));
+      return;
+    }
+    if (!uploads.length) {
+      listEl.appendChild(el('div', 'empty', 'No uploads yet. Creators send work from their madamstudio page; it lands here to be marked seen, verified, and paid.'));
+      return;
+    }
+    uploads.forEach(function (u) {
+      var card = el('div', 'item' + (u.status === 'new' ? ' unread' : ''));
+      var head = el('div', 'item-head');
+      var thumb = el('a', 'thumb');
+      thumb.href = u.image;
+      thumb.target = '_blank';
+      thumb.style.width = '52px';
+      thumb.style.height = '52px';
+      thumb.style.flexShrink = '0';
+      thumb.style.backgroundImage = 'url("' + (u.image || '').replace(/"/g, '%22') + '")';
+      thumb.title = 'Open full size';
+      head.appendChild(thumb);
+      head.appendChild(el('strong', 'grow', u.creator + (u.title ? ' \\u2014 ' + u.title : '')));
+      head.appendChild(el('span', 'msg-meta', u.status.toUpperCase() + ' \\u00B7 ' + (u.created_at || '').slice(0, 16)));
+      ['seen', 'verified', 'paid'].forEach(function (s) {
+        if (u.status === s) return;
+        var b = el('button', 'btn', s);
+        b.style.textTransform = 'uppercase';
+        b.onclick = function () { uploadAction(u.id, '/' + s, 'POST'); };
+        head.appendChild(b);
+      });
+      var delB = el('button', 'icon-btn danger', '\\uD83D\\uDDD1');
+      delB.title = 'Delete (also removes the image)';
+      delB.onclick = function () {
+        if (!confirm('Delete this upload forever?')) return;
+        uploadAction(u.id, '', 'DELETE');
+      };
+      head.appendChild(delB);
+      card.appendChild(head);
+      listEl.appendChild(card);
+    });
+  }
+
   /* ---- printful orders ---- */
   function loadOrders() {
     ordersError = '';
@@ -1101,6 +1157,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
     else if (tab === 'messages') { renderMessages(); return; }
     else if (tab === 'signups') { renderSignups(); return; }
     else if (tab === 'claims') { renderClaims(); return; }
+    else if (tab === 'uploads') { renderUploads(); return; }
     else if (tab === 'analytics') { renderAnalytics(); return; }
     else { renderOrders(); return; }
     if (!state[tab].length) {
@@ -1118,6 +1175,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
       if (tab === 'messages' && inbox === null) loadInbox();
       if (tab === 'signups' && signups === null) loadSignups();
       if (tab === 'claims' && claims === null) loadClaims();
+      if (tab === 'uploads' && uploads === null) loadUploads();
       if (tab === 'orders' && orders === null) loadOrders();
       if (tab === 'analytics' && stats === null) loadStats();
     };
@@ -1152,6 +1210,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
     if (tab === 'messages') { inbox = null; render(); loadInbox(); return; }
     if (tab === 'signups') { signups = null; render(); loadSignups(); return; }
     if (tab === 'claims') { claims = null; render(); loadClaims(); return; }
+    if (tab === 'uploads') { uploads = null; render(); loadUploads(); return; }
     if (tab === 'orders') { orders = null; render(); loadOrders(); return; }
     if (tab === 'analytics') { stats = null; render(); loadStats(); return; }
     if (dirty && !confirm('Throw away unsaved changes and reload?')) return;

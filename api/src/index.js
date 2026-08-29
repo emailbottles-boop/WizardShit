@@ -8,6 +8,8 @@
  *   POST /api/signup     -> the email-for-updates box adds to the signup list
  *   POST /api/claim      -> a crew member claims their credit card identity
  *   GET /api/claims-public -> names with a verified claim (for the crew page)
+ *   POST /api/upload-work  -> a creator uploads work from their page
+ *   GET /api/uploads-public -> a creator's uploads with their marks
  *
  * Owner endpoints (require auth — Cloudflare Access, or ADMIN_PASSWORD):
  *   GET /admin                        -> the admin panel UI
@@ -20,6 +22,9 @@
  *   DELETE /api/admin/messages/<id>   -> delete a message
  *   GET /api/admin/signups            -> the signup list, newest first
  *   DELETE /api/admin/signups/<id>    -> remove a signup (unsubscribe)
+ *   GET /api/admin/uploads            -> all work uploads, newest first
+ *   POST /api/admin/uploads/<id>/seen|verified|paid -> set an upload's mark
+ *   DELETE /api/admin/uploads/<id>    -> delete an upload (and its R2 image)
  *   GET /api/admin/claims             -> all wizard ID claims, newest first
  *   POST /api/admin/claims/<id>/verify -> mark a claim verified
  *   POST /api/admin/claims/<id>/deny  -> mark a claim denied
@@ -454,6 +459,50 @@ async function receiveClaim(request, env) {
   return json({ ok: true }, 200, PUBLIC_CORS);
 }
 
+/* --------------------------------------------------------- work uploads --- */
+
+// The Upload button on a creator's madamstudio page: raw image body, creator
+// and title in the query string. Guarded like every public write (per-IP
+// throttle) plus two upload-specific checks: image types only, and the
+// creator must actually exist in the credits so strangers can't park files
+// under made-up names. New uploads land with status "new"; producers move
+// them to seen / verified / paid in the Control Room's UPLOADS tab.
+async function receiveWorkUpload(request, env, origin) {
+  const url = new URL(request.url);
+  const creator = str(url.searchParams.get('creator'), 200);
+  const title = str(url.searchParams.get('title'), 300);
+  if (!creator) return json({ error: 'Missing creator' }, 400, PUBLIC_CORS);
+
+  const known = await env.DB.prepare('SELECT 1 AS ok FROM credits WHERE name = ?').bind(creator).first();
+  if (!known) return json({ error: 'Unknown creator' }, 400, PUBLIC_CORS);
+
+  const type = (request.headers.get('Content-Type') || '').split(';')[0].trim().toLowerCase();
+  const ext = IMAGE_TYPES[type];
+  if (!ext) return json({ error: 'Images only (png, jpg, gif, webp)' }, 415, PUBLIC_CORS);
+  const body = await request.arrayBuffer();
+  if (body.byteLength === 0) return json({ error: 'Empty upload' }, 400, PUBLIC_CORS);
+  if (body.byteLength > MAX_UPLOAD_BYTES) return json({ error: 'Image too large (8MB max)' }, 413, PUBLIC_CORS);
+
+  if (!(await allowPublicWrite(request, 'upwork'))) {
+    return json({ error: 'One upload at a time — give it a minute.' }, 429, PUBLIC_CORS);
+  }
+
+  const key = 'upload-' + Date.now().toString(36) + '-' + crypto.randomUUID().slice(0, 8) + '.' + ext;
+  await env.IMAGES.put(key, body, { httpMetadata: { contentType: type } });
+  await env.DB.prepare('INSERT INTO uploads (creator, title, image) VALUES (?, ?, ?)')
+    .bind(creator, title, origin + '/img/' + key)
+    .run();
+  return json({ ok: true }, 200, PUBLIC_CORS);
+}
+
+// A creator's uploads with their marks, for the middle of their page.
+async function publicUploads(env, name) {
+  const rows = await env.DB.prepare(
+    'SELECT title, image, status, created_at FROM uploads WHERE creator = ? ORDER BY id DESC LIMIT 100',
+  ).bind(str(name, 200)).all();
+  return json({ uploads: rows.results }, 200, { ...PUBLIC_CORS, 'Cache-Control': 'no-store' });
+}
+
 // Names with at least one verified claim, so the crew page can show a badge.
 // Emails deliberately never leave the admin endpoints.
 async function verifiedClaims(env) {
@@ -638,6 +687,12 @@ export default {
       if (method === 'GET' && path === '/api/claims-public') {
         return verifiedClaims(env);
       }
+      if (method === 'POST' && path === '/api/upload-work') {
+        return receiveWorkUpload(request, env, url.origin);
+      }
+      if (method === 'GET' && path === '/api/uploads-public') {
+        return publicUploads(env, url.searchParams.get('name') || '');
+      }
       if (method === 'POST' && path === '/api/hit') {
         // pageview beacon, counted per UTC day. The label is caller-controlled,
         // so it is folded into a tiny fixed set: junk requests can nudge counts
@@ -732,6 +787,26 @@ export default {
           const m = path.match(/^\/api\/admin\/signups\/(\d+)$/);
           if (m && method === 'DELETE') {
             await env.DB.prepare('DELETE FROM signups WHERE id = ?').bind(Number(m[1])).run();
+            return json({ ok: true });
+          }
+        }
+        if (method === 'GET' && path === '/api/admin/uploads') {
+          const rows = await env.DB.prepare('SELECT * FROM uploads ORDER BY id DESC LIMIT 500').all();
+          return json({ uploads: rows.results }, 200, { 'Cache-Control': 'no-store' });
+        }
+        {
+          const m = path.match(/^\/api\/admin\/uploads\/(\d+)(?:\/(seen|verified|paid))?$/);
+          if (m && method === 'POST' && m[2]) {
+            await env.DB.prepare('UPDATE uploads SET status = ? WHERE id = ?').bind(m[2], Number(m[1])).run();
+            return json({ ok: true });
+          }
+          if (m && method === 'DELETE' && !m[2]) {
+            const row = await env.DB.prepare('SELECT image FROM uploads WHERE id = ?').bind(Number(m[1])).first();
+            if (row && row.image) {
+              const key = row.image.split('/img/').pop();
+              if (key) await env.IMAGES.delete(key).catch(() => {});
+            }
+            await env.DB.prepare('DELETE FROM uploads WHERE id = ?').bind(Number(m[1])).run();
             return json({ ok: true });
           }
         }
