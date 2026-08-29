@@ -6,6 +6,8 @@
  *   GET /img/<key>       -> images uploaded through the admin panel (R2)
  *   POST /api/messages   -> the site's message bubble drops mail in the inbox
  *   POST /api/signup     -> the email-for-updates box adds to the signup list
+ *   POST /api/claim      -> a crew member claims their credit card identity
+ *   GET /api/claims-public -> names with a verified claim (for the crew page)
  *
  * Owner endpoints (require auth — Cloudflare Access, or ADMIN_PASSWORD):
  *   GET /admin                        -> the admin panel UI
@@ -18,6 +20,10 @@
  *   DELETE /api/admin/messages/<id>   -> delete a message
  *   GET /api/admin/signups            -> the signup list, newest first
  *   DELETE /api/admin/signups/<id>    -> remove a signup (unsubscribe)
+ *   GET /api/admin/claims             -> all wizard ID claims, newest first
+ *   POST /api/admin/claims/<id>/verify -> mark a claim verified
+ *   POST /api/admin/claims/<id>/deny  -> mark a claim denied
+ *   DELETE /api/admin/claims/<id>     -> delete a claim
  *   GET /api/admin/orders             -> recent Printful orders (needs PRINTFUL_TOKEN)
  *   GET /api/admin/printful/products  -> Printful store products (needs PRINTFUL_TOKEN)
  */
@@ -395,6 +401,52 @@ async function receiveSignup(request, env) {
   return json({ ok: true }, 200, PUBLIC_CORS);
 }
 
+/* -------------------------------------------------------- wizard claims --- */
+
+// The Wizard ID page on madamstudio: a crew member clicks their credit card,
+// enters their gmail, and the claim lands here as "pending". A founder then
+// verifies or denies it in the Control Room's WIZARD IDS tab — the human
+// review IS the verification, so nothing here trusts the typed email.
+async function receiveClaim(request, env) {
+  let data;
+  try {
+    data = await request.json();
+  } catch {
+    return json({ error: 'Body must be JSON' }, 400, PUBLIC_CORS);
+  }
+  if (str(data.website, 50)) return json({ ok: true }, 200, PUBLIC_CORS);
+  const name = str(data.name, 200);
+  if (!name) return json({ error: 'Pick your credit card first' }, 400, PUBLIC_CORS);
+  const email = str(data.email, 200);
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return json({ error: 'Please enter a valid email' }, 400, PUBLIC_CORS);
+  }
+  if (!(await allowPublicWrite(request, 'claim'))) {
+    return json(
+      { error: 'Too many claims at once — give it a minute and try again.' },
+      429,
+      PUBLIC_CORS,
+    );
+  }
+  await env.DB.prepare('INSERT OR IGNORE INTO claims (credit_name, email) VALUES (?, ?)')
+    .bind(name, email.toLowerCase())
+    .run();
+  return json({ ok: true }, 200, PUBLIC_CORS);
+}
+
+// Names with at least one verified claim, so the crew page can show a badge.
+// Emails deliberately never leave the admin endpoints.
+async function verifiedClaims(env) {
+  const rows = await env.DB.prepare(
+    "SELECT DISTINCT credit_name FROM claims WHERE status = 'verified'",
+  ).all();
+  return json(
+    { verified: rows.results.map((r) => r.credit_name) },
+    200,
+    { ...PUBLIC_CORS, 'Cache-Control': 'public, max-age=60' },
+  );
+}
+
 /**
  * Throttle for the public write endpoints (messages, signups): at most one
  * write per IP per MESSAGE_MIN_SECONDS, counted separately per bucket.
@@ -560,6 +612,12 @@ export default {
       if (method === 'POST' && path === '/api/signup') {
         return receiveSignup(request, env);
       }
+      if (method === 'POST' && path === '/api/claim') {
+        return receiveClaim(request, env);
+      }
+      if (method === 'GET' && path === '/api/claims-public') {
+        return verifiedClaims(env);
+      }
       if (method === 'POST' && path === '/api/hit') {
         // pageview beacon, counted per UTC day. The label is caller-controlled,
         // so it is folded into a tiny fixed set: junk requests can nudge counts
@@ -654,6 +712,22 @@ export default {
           const m = path.match(/^\/api\/admin\/signups\/(\d+)$/);
           if (m && method === 'DELETE') {
             await env.DB.prepare('DELETE FROM signups WHERE id = ?').bind(Number(m[1])).run();
+            return json({ ok: true });
+          }
+        }
+        if (method === 'GET' && path === '/api/admin/claims') {
+          const rows = await env.DB.prepare('SELECT * FROM claims ORDER BY id DESC LIMIT 500').all();
+          return json({ claims: rows.results }, 200, { 'Cache-Control': 'no-store' });
+        }
+        {
+          const m = path.match(/^\/api\/admin\/claims\/(\d+)(?:\/(verify|deny))?$/);
+          if (m && method === 'POST' && m[2]) {
+            const status = m[2] === 'verify' ? 'verified' : 'denied';
+            await env.DB.prepare('UPDATE claims SET status = ? WHERE id = ?').bind(status, Number(m[1])).run();
+            return json({ ok: true });
+          }
+          if (m && method === 'DELETE' && !m[2]) {
+            await env.DB.prepare('DELETE FROM claims WHERE id = ?').bind(Number(m[1])).run();
             return json({ ok: true });
           }
         }

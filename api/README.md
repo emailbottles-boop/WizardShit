@@ -171,3 +171,21 @@ subscribers live in the Formspree dashboard — export them there (Forms →
 submissions → export CSV) before closing the account, and keep the emails
 somewhere safe; there is deliberately no bulk-import endpoint, but a one-off
 `INSERT` via `npx wrangler d1 execute` gets them into the table.
+
+## Upgrade: wizard ID claims (2026-08)
+
+The madamstudio site has a crew page where an artist clicks their credit
+identity card and enters their gmail. The claim lands in the Control Room's
+WIZARD IDS tab as PENDING; a founder verifies or denies it there — the
+founder's judgement IS the verification, nothing trusts the typed email.
+Verified names get a badge on the crew page (via /api/claims-public, which
+only ever exposes names, never emails). One-time steps:
+
+1. Add the claims table to the live database:
+   `npx wrangler d1 execute wizardshit --remote --file=upgrade-claims.sql`
+2. Redeploy: `npx wrangler deploy`
+
+Founder access to the tab is the Control Room's existing login (the shared
+ADMIN_PASSWORD secret, or Google sign-in for emails in FOUNDER_EMAILS).
+The password is a secret on purpose — it must never be written into this
+repo or the madamstudio repo, since both are public.

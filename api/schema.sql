@@ -53,3 +53,12 @@ CREATE TABLE IF NOT EXISTS signups (
   email      TEXT NOT NULL UNIQUE,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS claims (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  credit_name TEXT NOT NULL,               -- which credit card they clicked
+  email       TEXT NOT NULL,               -- the gmail they entered
+  status      TEXT NOT NULL DEFAULT 'pending', -- pending | verified | denied
+  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (credit_name, email)
+);

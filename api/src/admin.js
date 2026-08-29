@@ -268,6 +268,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
     <button class="tab" data-tab="donators">Donators</button>
     <button class="tab" data-tab="messages">Messages</button>
     <button class="tab" data-tab="signups">Signups</button>
+    <button class="tab" data-tab="claims">Wizard IDs</button>
     <button class="tab" data-tab="orders">Orders</button>
     <button class="tab" data-tab="analytics">Analytics</button>
   </nav>
@@ -293,6 +294,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
   var state = { merch: [], credits: [], donators: [] };
   var inbox = null;        // fetched on first visit to MESSAGES
   var signups = null;      // fetched on first visit to SIGNUPS
+  var claims = null;       // fetched on first visit to WIZARD IDS
   var orders = null;       // fetched on first visit to ORDERS
   var stats = null;        // fetched on first visit to ANALYTICS
   var statRange = '30d';   // '30d' | '12m'
@@ -797,6 +799,56 @@ export const ADMIN_HTML = `<!DOCTYPE html>
     });
   }
 
+  /* ---- wizard ID claims ---- */
+  function loadClaims() {
+    api('/api/admin/claims')
+      .then(function (d) { claims = d.claims; render(); })
+      .catch(function (e) { if (e.message !== 'login required') toast(e.message, true); });
+  }
+
+  function claimAction(id, pathSuffix, method) {
+    api('/api/admin/claims/' + id + pathSuffix, { method: method }).then(loadClaims)
+      .catch(function (e) { toast(e.message, true); });
+  }
+
+  function renderClaims() {
+    if (claims === null) {
+      listEl.appendChild(el('div', 'empty', 'Fetching claims\\u2026'));
+      return;
+    }
+    if (!claims.length) {
+      listEl.appendChild(el('div', 'empty', 'No claims yet. Crew members claim their credit card on the madamstudio site, and each claim lands here for you to verify.'));
+      return;
+    }
+    claims.forEach(function (c) {
+      var card = el('div', 'item' + (c.status === 'pending' ? ' unread' : ''));
+      var head = el('div', 'item-head');
+      head.appendChild(el('strong', 'grow', c.credit_name + ' \\u2014 ' + c.email));
+      head.appendChild(el('span', 'msg-meta', c.status.toUpperCase() + ' \\u00B7 ' + (c.created_at || '').slice(0, 16)));
+      if (c.status !== 'verified') {
+        var okB = el('button', 'icon-btn', '\\u2713');
+        okB.title = 'Verify \\u2014 yes, this is really them';
+        okB.onclick = function () { claimAction(c.id, '/verify', 'POST'); };
+        head.appendChild(okB);
+      }
+      if (c.status !== 'denied') {
+        var noB = el('button', 'icon-btn', '\\u2715');
+        noB.title = 'Deny';
+        noB.onclick = function () { claimAction(c.id, '/deny', 'POST'); };
+        head.appendChild(noB);
+      }
+      var delB = el('button', 'icon-btn danger', '\\uD83D\\uDDD1');
+      delB.title = 'Delete';
+      delB.onclick = function () {
+        if (!confirm('Delete this claim forever?')) return;
+        claimAction(c.id, '', 'DELETE');
+      };
+      head.appendChild(delB);
+      card.appendChild(head);
+      listEl.appendChild(card);
+    });
+  }
+
   /* ---- printful orders ---- */
   function loadOrders() {
     ordersError = '';
@@ -1032,6 +1084,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
     else if (tab === 'donators') renderDonators();
     else if (tab === 'messages') { renderMessages(); return; }
     else if (tab === 'signups') { renderSignups(); return; }
+    else if (tab === 'claims') { renderClaims(); return; }
     else if (tab === 'analytics') { renderAnalytics(); return; }
     else { renderOrders(); return; }
     if (!state[tab].length) {
@@ -1048,6 +1101,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
       render();
       if (tab === 'messages' && inbox === null) loadInbox();
       if (tab === 'signups' && signups === null) loadSignups();
+      if (tab === 'claims' && claims === null) loadClaims();
       if (tab === 'orders' && orders === null) loadOrders();
       if (tab === 'analytics' && stats === null) loadStats();
     };
@@ -1080,6 +1134,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
   document.getElementById('reloadBtn').onclick = function () {
     if (tab === 'messages') { inbox = null; render(); loadInbox(); return; }
     if (tab === 'signups') { signups = null; render(); loadSignups(); return; }
+    if (tab === 'claims') { claims = null; render(); loadClaims(); return; }
     if (tab === 'orders') { orders = null; render(); loadOrders(); return; }
     if (tab === 'analytics') { stats = null; render(); loadStats(); return; }
     if (dirty && !confirm('Throw away unsaved changes and reload?')) return;
