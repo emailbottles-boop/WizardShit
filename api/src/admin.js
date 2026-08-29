@@ -157,23 +157,23 @@ export const ADMIN_HTML = `<!DOCTYPE html>
 
   #loginOverlay {
     position: fixed; inset: 0; z-index: 40;
-    background: radial-gradient(620px 420px at 50% 42%, rgba(245, 179, 1, 0.07), transparent 65%), rgba(10, 6, 18, 0.94);
+    background: var(--bg);
     display: none; align-items: center; justify-content: center; padding: 1.5rem;
   }
   #loginOverlay .box {
     width: min(370px, 92vw);
-    border: 1px solid var(--border-strong);
-    border-top: 3px solid var(--accent);
+    border: 1px solid var(--border);
     border-radius: 14px;
     background: var(--card);
     padding: 2.1rem 1.8rem 1.9rem;
     text-align: center;
-    box-shadow: 0 24px 70px rgba(0,0,0,0.55);
+    animation: rise 0.35s cubic-bezier(0.16, 1, 0.3, 1);
   }
-  .login-logo {
-    width: 116px; display: block; margin: 0 auto 1rem;
-    filter: drop-shadow(0 6px 22px rgba(245, 179, 1, 0.28));
+  @keyframes rise {
+    from { transform: translateY(28px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
   }
+  .login-logo { width: 112px; display: block; margin: 0 auto 1rem; }
   #loginOverlay h2 { font-size: 1.05rem; font-weight: 700; margin-bottom: 0.3rem; }
   #loginOverlay h2 .at { color: var(--accent); }
   #loginOverlay p { font-size: 0.8rem; color: var(--muted); margin-bottom: 1.1rem; }
