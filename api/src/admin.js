@@ -267,6 +267,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
     <button class="tab" data-tab="donators">Donators</button>
     <button class="tab" data-tab="messages">Messages</button>
     <button class="tab" data-tab="signups">Signups</button>
+    <button class="tab" data-tab="claims">Claims</button>
     <button class="tab" data-tab="orders">Orders</button>
     <button class="tab" data-tab="analytics">Analytics</button>
   </nav>
@@ -292,6 +293,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
   var state = { merch: [], credits: [], donators: [] };
   var inbox = null;        // fetched on first visit to MESSAGES
   var signups = null;      // fetched on first visit to SIGNUPS
+  var claims = null;       // fetched on first visit to CLAIMS
   var orders = null;       // fetched on first visit to ORDERS
   var stats = null;        // fetched on first visit to ANALYTICS
   var statRange = '30d';   // '30d' | '12m'
@@ -796,6 +798,50 @@ export const ADMIN_HTML = `<!DOCTYPE html>
     });
   }
 
+  /* ---- wizard id claims ---- */
+  function loadClaims() {
+    api('/api/admin/claims')
+      .then(function (d) { claims = d.claims; render(); })
+      .catch(function (e) { if (e.message !== 'login required') toast(e.message, true); });
+  }
+
+  function renderClaims() {
+    if (claims === null) {
+      listEl.appendChild(el('div', 'empty', 'Checking the guest list\\u2026'));
+      return;
+    }
+    if (!claims.length) {
+      listEl.appendChild(el('div', 'empty', 'No claims yet. Crew claim their cards on the Madam Studio site.'));
+      return;
+    }
+    claims.forEach(function (c) {
+      var isVerified = c.status === 'verified';
+      var card = el('div', 'item' + (isVerified ? '' : ' unread'));
+      var head = el('div', 'item-head');
+      head.appendChild(el('strong', 'grow', c.name));
+      head.appendChild(el('span', 'msg-meta', (c.created_at || '').slice(0, 16)));
+      var verB = el('button', 'btn', isVerified ? 'Verified \\u2713' : 'Verify');
+      verB.title = isVerified ? 'Click to un-verify' : 'Confirm this is really them';
+      if (isVerified) verB.classList.add('primary');
+      verB.onclick = function () {
+        api('/api/admin/claims/' + c.id + '/verify', { method: 'POST' }).then(loadClaims)
+          .catch(function (e) { toast(e.message, true); });
+      };
+      var delB = el('button', 'icon-btn danger', '\\uD83D\\uDDD1');
+      delB.title = 'Reject and delete this claim';
+      delB.onclick = function () {
+        if (!confirm('Reject the claim on "' + c.name + '" by ' + c.email + '?')) return;
+        api('/api/admin/claims/' + c.id, { method: 'DELETE' }).then(loadClaims)
+          .catch(function (e) { toast(e.message, true); });
+      };
+      head.appendChild(verB);
+      head.appendChild(delB);
+      card.appendChild(head);
+      card.appendChild(el('div', 'msg-meta', 'claimed by ' + c.email + (isVerified ? ' \\u00B7 shows the \\u2713 Verified wizard badge' : ' \\u00B7 pending your check')));
+      listEl.appendChild(card);
+    });
+  }
+
   /* ---- printful orders ---- */
   function loadOrders() {
     ordersError = '';
@@ -1031,6 +1077,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
     else if (tab === 'donators') renderDonators();
     else if (tab === 'messages') { renderMessages(); return; }
     else if (tab === 'signups') { renderSignups(); return; }
+    else if (tab === 'claims') { renderClaims(); return; }
     else if (tab === 'analytics') { renderAnalytics(); return; }
     else { renderOrders(); return; }
     if (!state[tab].length) {
@@ -1047,6 +1094,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
       render();
       if (tab === 'messages' && inbox === null) loadInbox();
       if (tab === 'signups' && signups === null) loadSignups();
+      if (tab === 'claims' && claims === null) loadClaims();
       if (tab === 'orders' && orders === null) loadOrders();
       if (tab === 'analytics' && stats === null) loadStats();
     };
@@ -1079,6 +1127,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
   document.getElementById('reloadBtn').onclick = function () {
     if (tab === 'messages') { inbox = null; render(); loadInbox(); return; }
     if (tab === 'signups') { signups = null; render(); loadSignups(); return; }
+    if (tab === 'claims') { claims = null; render(); loadClaims(); return; }
     if (tab === 'orders') { orders = null; render(); loadOrders(); return; }
     if (tab === 'analytics') { stats = null; render(); loadStats(); return; }
     if (dirty && !confirm('Throw away unsaved changes and reload?')) return;
