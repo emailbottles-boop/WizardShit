@@ -9,7 +9,8 @@
  *   POST /api/claim      -> a crew member claims their credit card identity
  *   GET /api/claims-public -> names with a verified claim (for the crew page)
  *   POST /api/upload-work  -> a creator uploads work from their page
- *   GET /api/uploads-public -> a creator's uploads with their marks
+ *   GET /api/uploads-public -> a creator's uploads (or everyone's latest)
+ *   POST /api/apply        -> apply to work on the show (admin-only to read)
  *
  * Owner endpoints (require auth — Cloudflare Access, or ADMIN_PASSWORD):
  *   GET /admin                        -> the admin panel UI
@@ -459,6 +460,41 @@ async function receiveClaim(request, env) {
   return json({ ok: true }, 200, PUBLIC_CORS);
 }
 
+/* -------------------------------------------------------- applications --- */
+
+// Apply-to-Wizard-Shit form on madamstudio: name, email, portfolio link,
+// message. Applications are private — readable only through the admin
+// endpoints, never exposed publicly, so applicants can't be doxed. Same
+// honeypot + per-IP throttle as every other public write.
+async function receiveApplication(request, env) {
+  let data;
+  try {
+    data = await request.json();
+  } catch {
+    return json({ error: 'Body must be JSON' }, 400, PUBLIC_CORS);
+  }
+  if (str(data.website, 50)) return json({ ok: true }, 200, PUBLIC_CORS);
+  const email = str(data.email, 200);
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return json({ error: 'Please enter a valid email' }, 400, PUBLIC_CORS);
+  }
+  const portfolio = str(data.portfolio, 1000);
+  if (portfolio && !/^https?:\/\//i.test(portfolio)) {
+    return json({ error: 'Portfolio link must start with http(s)://' }, 400, PUBLIC_CORS);
+  }
+  const message = str(data.message, 4000);
+  if (!portfolio && !message) {
+    return json({ error: 'Add a portfolio link or a message' }, 400, PUBLIC_CORS);
+  }
+  if (!(await allowPublicWrite(request, 'apply'))) {
+    return json({ error: 'One application at a time — give it a minute.' }, 429, PUBLIC_CORS);
+  }
+  await env.DB.prepare('INSERT INTO applications (name, email, portfolio, message) VALUES (?, ?, ?, ?)')
+    .bind(str(data.name, 200), email.toLowerCase(), portfolio, message)
+    .run();
+  return json({ ok: true }, 200, PUBLIC_CORS);
+}
+
 /* --------------------------------------------------------- work uploads --- */
 
 // The Upload button on a creator's madamstudio page: raw image body, creator
@@ -496,10 +532,18 @@ async function receiveWorkUpload(request, env, origin) {
 }
 
 // A creator's uploads with their marks, for the middle of their page.
+// Without a name: the latest uploads across the whole crew, so members can
+// see what everyone is working on. Never includes anything but the credit
+// name, title, image, mark, and date.
 async function publicUploads(env, name) {
-  const rows = await env.DB.prepare(
-    'SELECT title, image, status, created_at FROM uploads WHERE creator = ? ORDER BY id DESC LIMIT 100',
-  ).bind(str(name, 200)).all();
+  const who = str(name, 200);
+  const rows = who
+    ? await env.DB.prepare(
+        'SELECT creator, title, image, status, created_at FROM uploads WHERE creator = ? ORDER BY id DESC LIMIT 100',
+      ).bind(who).all()
+    : await env.DB.prepare(
+        'SELECT creator, title, image, status, created_at FROM uploads ORDER BY id DESC LIMIT 30',
+      ).all();
   return json({ uploads: rows.results }, 200, { ...PUBLIC_CORS, 'Cache-Control': 'no-store' });
 }
 
@@ -687,6 +731,9 @@ export default {
       if (method === 'GET' && path === '/api/claims-public') {
         return verifiedClaims(env);
       }
+      if (method === 'POST' && path === '/api/apply') {
+        return receiveApplication(request, env);
+      }
       if (method === 'POST' && path === '/api/upload-work') {
         return receiveWorkUpload(request, env, url.origin);
       }
@@ -787,6 +834,21 @@ export default {
           const m = path.match(/^\/api\/admin\/signups\/(\d+)$/);
           if (m && method === 'DELETE') {
             await env.DB.prepare('DELETE FROM signups WHERE id = ?').bind(Number(m[1])).run();
+            return json({ ok: true });
+          }
+        }
+        if (method === 'GET' && path === '/api/admin/applications') {
+          const rows = await env.DB.prepare('SELECT * FROM applications ORDER BY id DESC LIMIT 500').all();
+          return json({ applications: rows.results }, 200, { 'Cache-Control': 'no-store' });
+        }
+        {
+          const m = path.match(/^\/api\/admin\/applications\/(\d+)(\/read)?$/);
+          if (m && method === 'POST' && m[2]) {
+            await env.DB.prepare('UPDATE applications SET read = 1 - read WHERE id = ?').bind(Number(m[1])).run();
+            return json({ ok: true });
+          }
+          if (m && method === 'DELETE' && !m[2]) {
+            await env.DB.prepare('DELETE FROM applications WHERE id = ?').bind(Number(m[1])).run();
             return json({ ok: true });
           }
         }

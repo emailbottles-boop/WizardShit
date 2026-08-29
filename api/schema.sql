@@ -64,6 +64,16 @@ CREATE TABLE IF NOT EXISTS panels (
   sort    INTEGER NOT NULL DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS applications (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  name       TEXT NOT NULL DEFAULT '',
+  email      TEXT NOT NULL,
+  portfolio  TEXT NOT NULL DEFAULT '',  -- link to their work
+  message    TEXT NOT NULL DEFAULT '',
+  read       INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS uploads (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   creator    TEXT NOT NULL,                 -- credit card name it belongs to

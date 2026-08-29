@@ -220,3 +220,18 @@ creator's page. One-time steps:
 1. Add the uploads table:
    `npx wrangler d1 execute wizardshit --remote --file=upgrade-uploads.sql`
 2. Redeploy: `npx wrangler deploy`
+
+## Upgrade: applications (2026-08)
+
+The Apply page on madamstudio lets people apply to work on the show:
+name, email, portfolio link, message. Applications are stored privately
+and readable only in the Control Room's APPS tab — no public endpoint
+ever returns them, so applicants can't be doxed. Same honeypot and
+per-IP throttle as the other public forms. GET /api/uploads-public
+without a name now also returns the crew's latest uploads (name, title,
+image, mark only) so members can see what everyone is working on.
+One-time steps:
+
+1. Add the applications table:
+   `npx wrangler d1 execute wizardshit --remote --file=upgrade-apply.sql`
+2. Redeploy: `npx wrangler deploy`

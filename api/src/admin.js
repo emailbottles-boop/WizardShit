@@ -271,6 +271,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
     <button class="tab" data-tab="signups">Signups</button>
     <button class="tab" data-tab="claims">Wizard IDs</button>
     <button class="tab" data-tab="uploads">Uploads</button>
+    <button class="tab" data-tab="apps">Apps</button>
     <button class="tab" data-tab="orders">Orders</button>
     <button class="tab" data-tab="analytics">Analytics</button>
   </nav>
@@ -298,6 +299,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
   var signups = null;      // fetched on first visit to SIGNUPS
   var claims = null;       // fetched on first visit to WIZARD IDS
   var uploads = null;      // fetched on first visit to UPLOADS
+  var apps = null;         // fetched on first visit to APPS
   var orders = null;       // fetched on first visit to ORDERS
   var stats = null;        // fetched on first visit to ANALYTICS
   var statRange = '30d';   // '30d' | '12m'
@@ -866,6 +868,57 @@ export const ADMIN_HTML = `<!DOCTYPE html>
     });
   }
 
+  /* ---- applications ---- */
+  function loadApps() {
+    api('/api/admin/applications')
+      .then(function (d) { apps = d.applications; render(); })
+      .catch(function (e) { if (e.message !== 'login required') toast(e.message, true); });
+  }
+
+  function renderApps() {
+    if (apps === null) {
+      listEl.appendChild(el('div', 'empty', 'Fetching applications\\u2026'));
+      return;
+    }
+    if (!apps.length) {
+      listEl.appendChild(el('div', 'empty', 'No applications yet. The Apply page on madamstudio delivers here \\u2014 and only here.'));
+      return;
+    }
+    apps.forEach(function (a) {
+      var card = el('div', 'item' + (a.read ? '' : ' unread'));
+      var head = el('div', 'item-head');
+      head.appendChild(el('strong', 'grow', (a.name || 'anonymous') + ' \\u2014 ' + a.email));
+      head.appendChild(el('span', 'msg-meta', (a.created_at || '').slice(0, 16)));
+      var readB = el('button', 'icon-btn', a.read ? '\\u21BA' : '\\u2713');
+      readB.title = a.read ? 'Mark unread' : 'Mark read';
+      readB.onclick = function () {
+        api('/api/admin/applications/' + a.id + '/read', { method: 'POST' }).then(loadApps)
+          .catch(function (e) { toast(e.message, true); });
+      };
+      var delB = el('button', 'icon-btn danger', '\\uD83D\\uDDD1');
+      delB.title = 'Delete';
+      delB.onclick = function () {
+        if (!confirm('Delete this application forever?')) return;
+        api('/api/admin/applications/' + a.id, { method: 'DELETE' }).then(loadApps)
+          .catch(function (e) { toast(e.message, true); });
+      };
+      head.appendChild(readB);
+      head.appendChild(delB);
+      card.appendChild(head);
+      if (a.portfolio) {
+        var link = el('div', 'msg-body');
+        var aEl = el('a', '', a.portfolio);
+        aEl.href = a.portfolio;
+        aEl.target = '_blank';
+        aEl.rel = 'noopener';
+        link.appendChild(aEl);
+        card.appendChild(link);
+      }
+      if (a.message) card.appendChild(el('div', 'msg-body', a.message));
+      listEl.appendChild(card);
+    });
+  }
+
   /* ---- creator work uploads ---- */
   function loadUploads() {
     api('/api/admin/uploads')
@@ -1158,6 +1211,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
     else if (tab === 'signups') { renderSignups(); return; }
     else if (tab === 'claims') { renderClaims(); return; }
     else if (tab === 'uploads') { renderUploads(); return; }
+    else if (tab === 'apps') { renderApps(); return; }
     else if (tab === 'analytics') { renderAnalytics(); return; }
     else { renderOrders(); return; }
     if (!state[tab].length) {
@@ -1176,6 +1230,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
       if (tab === 'signups' && signups === null) loadSignups();
       if (tab === 'claims' && claims === null) loadClaims();
       if (tab === 'uploads' && uploads === null) loadUploads();
+      if (tab === 'apps' && apps === null) loadApps();
       if (tab === 'orders' && orders === null) loadOrders();
       if (tab === 'analytics' && stats === null) loadStats();
     };
@@ -1211,6 +1266,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
     if (tab === 'signups') { signups = null; render(); loadSignups(); return; }
     if (tab === 'claims') { claims = null; render(); loadClaims(); return; }
     if (tab === 'uploads') { uploads = null; render(); loadUploads(); return; }
+    if (tab === 'apps') { apps = null; render(); loadApps(); return; }
     if (tab === 'orders') { orders = null; render(); loadOrders(); return; }
     if (tab === 'analytics') { stats = null; render(); loadStats(); return; }
     if (dirty && !confirm('Throw away unsaved changes and reload?')) return;
