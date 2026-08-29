@@ -235,3 +235,26 @@ One-time steps:
 1. Add the applications table:
    `npx wrangler d1 execute wizardshit --remote --file=upgrade-apply.sql`
 2. Redeploy: `npx wrangler deploy`
+
+## Security hardening (2026-08)
+
+An adversarial audit pass; no schema change, so deploying is just
+`npx wrangler deploy`. What changed in the worker:
+
+- Admin login is now brute-force throttled per IP (10 failed guesses
+  per 10 min → 429). Still: use a strong ADMIN_PASSWORD, or Cloudflare
+  Access. This is the main guard on applicant/crew data.
+- `/api/hit` is throttled like every other write, so it can't be looped
+  to exhaust the daily D1 write quota.
+- Uploads and claims are moderated before they go public: an upload
+  shows on a creator's page only after a founder marks it seen/verified/
+  paid, and a claim must name a real credit card. New uploads are also
+  capped per creator so R2 can't be flooded.
+- Image pixel budget tightened (8000px / 25MP) and the admin Uploads
+  tab loads fewer rows, so a crafted image can't crash a viewer.
+- `/api/uploads-public` is briefly cached instead of hitting D1 every
+  call; state-changing POSTs are locked to ALLOWED_ORIGINS at the CORS
+  preflight; 500s no longer echo internal error text.
+
+Set `ALLOWED_ORIGINS` in wrangler.toml to the madamstudio + wizardshit
+origins (it already lists them) — if unset, CORS falls back to open.

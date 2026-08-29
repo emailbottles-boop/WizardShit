@@ -115,7 +115,27 @@ function json(data, status = 200, headers = {}) {
   });
 }
 
+// Public GETs return data that is public anyway, so they keep a wildcard.
 const PUBLIC_CORS = { 'Access-Control-Allow-Origin': '*' };
+
+// The state-changing public POSTs (signup, message, claim, apply, upload) are
+// locked to the site's own origins so another website can't silently drive
+// them from its visitors' browsers. ALLOWED_ORIGINS is a comma-separated list
+// in wrangler.toml; if it is unset we fall back to the wildcard rather than
+// break the site. (A non-browser client ignores CORS entirely — the real
+// abuse guards are the throttles and caps, not this.)
+function writeCors(request, env) {
+  const allowed = (env.ALLOWED_ORIGINS || '')
+    .split(',')
+    .map((o) => o.trim())
+    .filter(Boolean);
+  const origin = request.headers.get('Origin') || '';
+  if (!allowed.length) return { 'Access-Control-Allow-Origin': '*' };
+  if (origin && allowed.includes(origin)) {
+    return { 'Access-Control-Allow-Origin': origin, Vary: 'Origin' };
+  }
+  return { 'Access-Control-Allow-Origin': allowed[0], Vary: 'Origin' };
+}
 
 /* ---------------------------------------------------------------- auth --- */
 
@@ -308,7 +328,8 @@ async function checkAuth(request, env) {
       const who = await verifyAccessJwt(token, env);
       if (who) return { ok: true, mode: 'access', email: who.email };
     } catch (e) {
-      return { ok: false, status: 503, error: 'Could not verify Access token: ' + e.message };
+      console.error('Access verify failed:', e);
+      return { ok: false, status: 503, error: 'Could not verify Access token' };
     }
     return { ok: false, status: 401, error: 'Invalid Cloudflare Access token' };
   }
@@ -443,6 +464,11 @@ async function receiveClaim(request, env) {
   if (str(data.website, 50)) return json({ ok: true }, 200, PUBLIC_CORS);
   const name = str(data.name, 200);
   if (!name) return json({ error: 'Pick your credit card first' }, 400, PUBLIC_CORS);
+  // The claim must name a real credit card, so the WIZARD IDS queue can't be
+  // flooded with made-up names. It still needs a founder to verify — the typed
+  // email is never trusted — but this keeps the queue to actual crew cards.
+  const known = await env.DB.prepare('SELECT 1 AS ok FROM credits WHERE name = ?').bind(name).first();
+  if (!known) return json({ error: 'Pick your credit card first' }, 400, PUBLIC_CORS);
   const email = str(data.email, 200);
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     return json({ error: 'Please enter a valid email' }, 400, PUBLIC_CORS);
@@ -525,6 +551,16 @@ async function receiveWorkUpload(request, env, origin) {
     return json({ error: 'One upload at a time — give it a minute.' }, 429, PUBLIC_CORS);
   }
 
+  // Cap un-reviewed uploads per creator so the fail-open per-colo throttle
+  // can't be turned into an R2 storage bomb: at most MAX_PENDING_UPLOADS files
+  // can pile up before a founder has to clear them (mark or delete).
+  const pending = await env.DB.prepare("SELECT COUNT(*) AS n FROM uploads WHERE creator = ? AND status = 'new'")
+    .bind(creator)
+    .first();
+  if (pending && pending.n >= MAX_PENDING_UPLOADS) {
+    return json({ error: 'Too many uploads waiting for review — hang tight.' }, 429, PUBLIC_CORS);
+  }
+
   const key = 'upload-' + Date.now().toString(36) + '-' + crypto.randomUUID().slice(0, 8) + '.' + ext;
   await env.IMAGES.put(key, body, { httpMetadata: { contentType: type } });
   await env.DB.prepare('INSERT INTO uploads (creator, title, image) VALUES (?, ?, ?)')
@@ -537,16 +573,23 @@ async function receiveWorkUpload(request, env, origin) {
 // Without a name: the latest uploads across the whole crew, so members can
 // see what everyone is working on. Never includes anything but the credit
 // name, title, image, mark, and date.
+//
+// MODERATION GATE: only uploads a founder has acknowledged (status != 'new')
+// are shown publicly. A brand-new upload is private until a founder marks it
+// seen/verified/paid in the Control Room. This is what stops someone posting
+// under a real creator's name (uploads are attributed by a URL param today)
+// from dumping content straight onto that creator's public page — a founder
+// sees it first. Cached briefly so looping the endpoint can't amplify D1 reads.
 async function publicUploads(env, name) {
   const who = str(name, 200);
   const rows = who
     ? await env.DB.prepare(
-        'SELECT creator, title, image, status, created_at FROM uploads WHERE creator = ? ORDER BY id DESC LIMIT 100',
+        "SELECT creator, title, image, status, created_at FROM uploads WHERE creator = ? AND status != 'new' ORDER BY id DESC LIMIT 100",
       ).bind(who).all()
     : await env.DB.prepare(
-        'SELECT creator, title, image, status, created_at FROM uploads ORDER BY id DESC LIMIT 30',
+        "SELECT creator, title, image, status, created_at FROM uploads WHERE status != 'new' ORDER BY id DESC LIMIT 30",
       ).all();
-  return json({ uploads: rows.results }, 200, { ...PUBLIC_CORS, 'Cache-Control': 'no-store' });
+  return json({ uploads: rows.results }, 200, { ...PUBLIC_CORS, 'Cache-Control': 'public, max-age=30' });
 }
 
 // Names with at least one verified claim, so the crew page can show a badge.
@@ -598,6 +641,52 @@ async function allowPublicWrite(request, bucket) {
   }
 }
 
+/**
+ * Brute-force guard for admin login. The password branch of checkAuth does a
+ * constant-time compare with no attempt limit, and the endpoint + token format
+ * are documented in this public repo, so without this an attacker could guess
+ * unlimited passwords per second and, on success, read every applicant and
+ * crew email. This caps failed attempts per IP over a rolling window using the
+ * edge cache as the counter (same reason as allowPublicWrite: it doesn't burn
+ * D1 quota). Only FAILURES are counted, so a legitimate owner is never locked
+ * out by their own successful logins. Fails open on cache error — the point is
+ * to defeat high-rate guessing, not to be a perfect limiter.
+ */
+const AUTH_FAIL_WINDOW = 600; // seconds a failure is remembered
+const AUTH_FAIL_MAX = 10; // failures per window before we start refusing
+
+function authFailKey(request) {
+  const ip = request.headers.get('CF-Connecting-IP') || 'noip';
+  return new Request('https://ratelimit.invalid/authfail/' + encodeURIComponent(ip));
+}
+async function authFailCount(request) {
+  try {
+    const hit = await caches.default.match(authFailKey(request));
+    return hit ? Number(await hit.text()) || 0 : 0;
+  } catch {
+    return 0;
+  }
+}
+async function recordAuthFail(request) {
+  try {
+    const n = (await authFailCount(request)) + 1;
+    await caches.default.put(
+      authFailKey(request),
+      new Response(String(n), { headers: { 'Cache-Control': 'max-age=' + AUTH_FAIL_WINDOW } }),
+    );
+  } catch {
+    /* fail open */
+  }
+}
+
+/**
+ * Hard cap on how many un-reviewed uploads one creator can accumulate, so the
+ * per-IP throttle (which is per-colo and fails open) can't be sidestepped into
+ * an R2 storage bomb. Once a founder marks an upload seen/verified/paid it no
+ * longer counts, so this only ever blocks an unreviewed backlog.
+ */
+const MAX_PENDING_UPLOADS = 25;
+
 /* ------------------------------------------------------------ printful --- */
 
 async function printfulProxy(env, apiPath) {
@@ -633,10 +722,13 @@ const IMAGE_TYPES = {
   'image/webp': 'webp',
 };
 
-// Big enough for a 48MP phone photo or a large art scan; small enough that a
-// pixel bomb (tiny file, colossal decoded image) is refused.
-const MAX_IMAGE_DIM = 12000;
-const MAX_IMAGE_PIXELS = 60 * 1000 * 1000;
+// Room for a big art scan or a high-MP phone photo, but tight enough that a
+// pixel bomb (tiny file, colossal decoded image) is refused before it can
+// blow up a viewer's browser: a flat-color 8000px image is a few KB on disk
+// yet decodes to hundreds of MB of RGBA, so the pixel budget — not the byte
+// size — is the real guard here.
+const MAX_IMAGE_DIM = 8000;
+const MAX_IMAGE_PIXELS = 25 * 1000 * 1000;
 
 function be32(b, o) {
   return ((b[o] << 24) | (b[o + 1] << 16) | (b[o + 2] << 8) | b[o + 3]) >>> 0;
@@ -753,10 +845,15 @@ export default {
     const method = request.method;
 
     if (method === 'OPTIONS') {
+      // These POSTs all send a non-simple Content-Type (application/json or
+      // image/*), so the browser always preflights here first. Restricting the
+      // preflight origin to the site's own origins is what actually stops a
+      // third-party page from driving the write endpoints via a visitor's
+      // browser — the actual POST never fires if this preflight refuses it.
       return new Response(null, {
         status: 204,
         headers: {
-          ...PUBLIC_CORS,
+          ...writeCors(request, env),
           'Access-Control-Allow-Methods': 'GET, POST, PUT, OPTIONS',
           'Access-Control-Allow-Headers': 'Content-Type, Authorization, Cf-Access-Jwt-Assertion',
           'Access-Control-Max-Age': '86400',
@@ -807,7 +904,11 @@ export default {
       if (method === 'POST' && path === '/api/hit') {
         // pageview beacon, counted per UTC day. The label is caller-controlled,
         // so it is folded into a tiny fixed set: junk requests can nudge counts
-        // but can never grow the table with garbage rows.
+        // but can never grow the table with garbage rows. Throttled per IP like
+        // every other write — without this one guard a single client could loop
+        // this endpoint and exhaust the day's D1 write quota, taking every other
+        // write (signups, claims, uploads, admin edits) offline.
+        if (!(await allowPublicWrite(request, 'hit'))) return json({ ok: true }, 200, PUBLIC_CORS);
         const raw = (await request.text()).slice(0, 100);
         let p;
         if (raw === '/' || raw === '/index.html') p = '/';
@@ -849,8 +950,16 @@ export default {
 
       // ---- owner-only ----
       if (path === '/api/admin/login' || path.startsWith('/api/admin/')) {
+        if ((await authFailCount(request)) >= AUTH_FAIL_MAX) {
+          return json({ error: 'Too many attempts — wait a few minutes and try again.' }, 429);
+        }
         const auth = await checkAuth(request, env);
-        if (!auth.ok) return json({ error: auth.error }, auth.status);
+        if (!auth.ok) {
+          // Count only real credential rejections, so brute force is throttled
+          // but a legitimate owner is never locked out by their own logins.
+          if (auth.status === 401) await recordAuthFail(request);
+          return json({ error: auth.error }, auth.status);
+        }
 
         if (method === 'POST' && path === '/api/admin/login') {
           return json({ ok: true, mode: auth.mode, email: auth.email });
@@ -917,7 +1026,9 @@ export default {
           }
         }
         if (method === 'GET' && path === '/api/admin/uploads') {
-          const rows = await env.DB.prepare('SELECT * FROM uploads ORDER BY id DESC LIMIT 500').all();
+          // Capped low: the tab renders every row's image as a thumbnail, so a
+          // huge page would decode a lot of pixels in the owner's browser.
+          const rows = await env.DB.prepare('SELECT * FROM uploads ORDER BY id DESC LIMIT 100').all();
           return json({ uploads: rows.results }, 200, { 'Cache-Control': 'no-store' });
         }
         {
@@ -977,8 +1088,10 @@ export default {
       return json({ error: 'Not found' }, 404, PUBLIC_CORS);
     } catch (e) {
       if (e instanceof BadInput) return json({ error: e.message }, 400);
+      // Log the real error server-side; return a generic message so raw
+      // exception text (SQL fragments, binding names) never reaches a caller.
       console.error(e);
-      return json({ error: 'Server error: ' + e.message }, 500);
+      return json({ error: 'Something went wrong. Please try again.' }, 500);
     }
   },
 };
