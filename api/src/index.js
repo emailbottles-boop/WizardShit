@@ -518,6 +518,8 @@ async function receiveWorkUpload(request, env, origin) {
   const body = await request.arrayBuffer();
   if (body.byteLength === 0) return json({ error: 'Empty upload' }, 400, PUBLIC_CORS);
   if (body.byteLength > MAX_UPLOAD_BYTES) return json({ error: 'Image too large (8MB max)' }, 413, PUBLIC_CORS);
+  const bad = checkImageBytes(body, type);
+  if (bad) return json({ error: bad }, 415, PUBLIC_CORS);
 
   if (!(await allowPublicWrite(request, 'upwork'))) {
     return json({ error: 'One upload at a time — give it a minute.' }, 429, PUBLIC_CORS);
@@ -631,6 +633,66 @@ const IMAGE_TYPES = {
   'image/webp': 'webp',
 };
 
+// Big enough for a 48MP phone photo or a large art scan; small enough that a
+// pixel bomb (tiny file, colossal decoded image) is refused.
+const MAX_IMAGE_DIM = 12000;
+const MAX_IMAGE_PIXELS = 60 * 1000 * 1000;
+
+function be32(b, o) {
+  return ((b[o] << 24) | (b[o + 1] << 16) | (b[o + 2] << 8) | b[o + 3]) >>> 0;
+}
+
+/**
+ * Returns null when the bytes are genuinely the declared image format with
+ * sane dimensions, else a short error string. The Content-Type header is
+ * caller-controlled, so this is what actually keeps a renamed executable,
+ * an HTML file, or a decompression bomb out of the bucket: magic numbers
+ * first, then the pixel size straight from the format's own header.
+ */
+function checkImageBytes(buf, type) {
+  const b = new Uint8Array(buf);
+  let dims = null;
+  if (type === 'image/png') {
+    if (b.length < 24 || b[0] !== 0x89 || b[1] !== 0x50 || b[2] !== 0x4e || b[3] !== 0x47) return 'Not a real PNG';
+    dims = [be32(b, 16), be32(b, 20)];
+  } else if (type === 'image/jpeg') {
+    if (b.length < 4 || b[0] !== 0xff || b[1] !== 0xd8 || b[2] !== 0xff) return 'Not a real JPEG';
+    let i = 2;
+    while (i + 9 < b.length) {
+      if (b[i] !== 0xff) { i++; continue; }
+      const t = b[i + 1];
+      if (t === 0xff || t === 0x01 || t === 0xd8 || (t >= 0xd0 && t <= 0xd9)) { i += t === 0xff ? 1 : 2; continue; }
+      if (t >= 0xc0 && t <= 0xcf && t !== 0xc4 && t !== 0xc8 && t !== 0xcc) {
+        dims = [(b[i + 7] << 8) | b[i + 8], (b[i + 5] << 8) | b[i + 6]];
+        break;
+      }
+      i += 2 + ((b[i + 2] << 8) | b[i + 3]);
+    }
+    if (!dims) return 'Could not read JPEG size';
+  } else if (type === 'image/gif') {
+    if (b.length < 10 || b[0] !== 0x47 || b[1] !== 0x49 || b[2] !== 0x46) return 'Not a real GIF';
+    dims = [b[6] | (b[7] << 8), b[8] | (b[9] << 8)];
+  } else if (type === 'image/webp') {
+    if (b.length < 30 || b[0] !== 0x52 || b[1] !== 0x49 || b[2] !== 0x46 || b[3] !== 0x46 ||
+        b[8] !== 0x57 || b[9] !== 0x45 || b[10] !== 0x42 || b[11] !== 0x50) return 'Not a real WebP';
+    const fourcc = String.fromCharCode(b[12], b[13], b[14], b[15]);
+    if (fourcc === 'VP8X') {
+      dims = [1 + (b[24] | (b[25] << 8) | (b[26] << 16)), 1 + (b[27] | (b[28] << 8) | (b[29] << 16))];
+    } else if (fourcc === 'VP8 ') {
+      if (b[23] !== 0x9d || b[24] !== 0x01 || b[25] !== 0x2a) return 'Could not read WebP size';
+      dims = [(b[26] | (b[27] << 8)) & 0x3fff, (b[28] | (b[29] << 8)) & 0x3fff];
+    } else if (fourcc === 'VP8L') {
+      if (b[20] !== 0x2f) return 'Could not read WebP size';
+      const n = b[21] | (b[22] << 8) | (b[23] << 16) | (b[24] << 24);
+      dims = [1 + (n & 0x3fff), 1 + ((n >> 14) & 0x3fff)];
+    } else return 'Could not read WebP size';
+  } else return 'Unsupported image type';
+  const w = dims[0], h = dims[1];
+  if (!(w > 0 && h > 0)) return 'Broken image';
+  if (w > MAX_IMAGE_DIM || h > MAX_IMAGE_DIM || w * h > MAX_IMAGE_PIXELS) return 'Image dimensions too large';
+  return null;
+}
+
 async function handleUpload(request, env, origin) {
   const type = (request.headers.get('Content-Type') || '').split(';')[0].trim().toLowerCase();
   const ext = IMAGE_TYPES[type];
@@ -640,6 +702,8 @@ async function handleUpload(request, env, origin) {
   const body = await request.arrayBuffer();
   if (body.byteLength === 0) return json({ error: 'Empty upload' }, 400);
   if (body.byteLength > MAX_UPLOAD_BYTES) return json({ error: 'Image too large (8MB max)' }, 413);
+  const bad = checkImageBytes(body, type);
+  if (bad) return json({ error: bad }, 415);
 
   const given = (new URL(request.url).searchParams.get('name') || 'image')
     .toLowerCase()
