@@ -5,6 +5,7 @@
  *   GET /api/content     -> { merch, credits, donators } (visible items only)
  *   GET /img/<key>       -> images uploaded through the admin panel (R2)
  *   POST /api/messages   -> the site's message bubble drops mail in the inbox
+ *   POST /api/signup     -> the email-for-updates box adds to the signup list
  *
  * Owner endpoints (require auth — Cloudflare Access, or ADMIN_PASSWORD):
  *   GET /admin                        -> the admin panel UI
@@ -15,6 +16,8 @@
  *   GET /api/admin/messages           -> the inbox, newest first
  *   POST /api/admin/messages/<id>/read -> toggle read
  *   DELETE /api/admin/messages/<id>   -> delete a message
+ *   GET /api/admin/signups            -> the signup list, newest first
+ *   DELETE /api/admin/signups/<id>    -> remove a signup (unsubscribe)
  *   GET /api/admin/orders             -> recent Printful orders (needs PRINTFUL_TOKEN)
  *   GET /api/admin/printful/products  -> Printful store products (needs PRINTFUL_TOKEN)
  */
@@ -346,7 +349,7 @@ async function receiveMessage(request, env) {
   // The honeypot only stops naive bots -- it is a field anyone can read in our
   // own JS. This is the guard that actually protects D1's daily write quota,
   // so it sits immediately before the only public INSERT in the worker.
-  if (!(await allowMessage(request))) {
+  if (!(await allowPublicWrite(request, 'msg'))) {
     return json(
       { error: "That's a lot of messages at once — give it a minute and try again." },
       429,
@@ -359,9 +362,42 @@ async function receiveMessage(request, env) {
   return json({ ok: true }, 200, PUBLIC_CORS);
 }
 
+/* ------------------------------------------------------------- signups --- */
+
+// The email-for-updates box. This used to post to Formspree; it now lands in
+// our own D1 table so the whole stack stays on Cloudflare. Duplicates are
+// silently absorbed (UNIQUE + OR IGNORE) so a repeat subscriber just sees
+// success again and the list stays clean.
+async function receiveSignup(request, env) {
+  let data;
+  try {
+    data = await request.json();
+  } catch {
+    return json({ error: 'Body must be JSON' }, 400, PUBLIC_CORS);
+  }
+  // Same honeypot idea as messages: the form ships a hidden "website" field
+  // real visitors never see. Pretend success so bots don't learn they missed.
+  if (str(data.website, 50)) return json({ ok: true }, 200, PUBLIC_CORS);
+  const email = str(data.email, 200);
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return json({ error: 'Please enter a valid email' }, 400, PUBLIC_CORS);
+  }
+  if (!(await allowPublicWrite(request, 'signup'))) {
+    return json(
+      { error: 'Too many signups at once — give it a minute and try again.' },
+      429,
+      PUBLIC_CORS,
+    );
+  }
+  await env.DB.prepare('INSERT OR IGNORE INTO signups (email) VALUES (?)')
+    .bind(email.toLowerCase())
+    .run();
+  return json({ ok: true }, 200, PUBLIC_CORS);
+}
+
 /**
- * Throttle for the public message endpoint: at most one message per IP per
- * MESSAGE_MIN_SECONDS.
+ * Throttle for the public write endpoints (messages, signups): at most one
+ * write per IP per MESSAGE_MIN_SECONDS, counted separately per bucket.
  *
  * This is deliberately NOT Cloudflare's [[ratelimits]] binding. That binding
  * is present at runtime on this account but never enforces -- limit() was
@@ -378,10 +414,10 @@ async function receiveMessage(request, env) {
  */
 const MESSAGE_MIN_SECONDS = 6;
 
-async function allowMessage(request) {
+async function allowPublicWrite(request, bucket) {
   const ip = request.headers.get('CF-Connecting-IP');
   if (!ip) return true;
-  const key = new Request('https://ratelimit.invalid/msg/' + encodeURIComponent(ip));
+  const key = new Request('https://ratelimit.invalid/' + bucket + '/' + encodeURIComponent(ip));
   try {
     const cache = caches.default;
     if (await cache.match(key)) return false;
@@ -521,6 +557,9 @@ export default {
       if (method === 'POST' && path === '/api/messages') {
         return receiveMessage(request, env);
       }
+      if (method === 'POST' && path === '/api/signup') {
+        return receiveSignup(request, env);
+      }
       if (method === 'POST' && path === '/api/hit') {
         // pageview beacon, counted per UTC day. The label is caller-controlled,
         // so it is folded into a tiny fixed set: junk requests can nudge counts
@@ -604,6 +643,17 @@ export default {
           }
           if (m && method === 'DELETE' && !m[2]) {
             await env.DB.prepare('DELETE FROM messages WHERE id = ?').bind(Number(m[1])).run();
+            return json({ ok: true });
+          }
+        }
+        if (method === 'GET' && path === '/api/admin/signups') {
+          const rows = await env.DB.prepare('SELECT * FROM signups ORDER BY id DESC LIMIT 1000').all();
+          return json({ signups: rows.results }, 200, { 'Cache-Control': 'no-store' });
+        }
+        {
+          const m = path.match(/^\/api\/admin\/signups\/(\d+)$/);
+          if (m && method === 'DELETE') {
+            await env.DB.prepare('DELETE FROM signups WHERE id = ?').bind(Number(m[1])).run();
             return json({ ok: true });
           }
         }

@@ -2,8 +2,8 @@
 //
 // Nothing is added to the page until a visitor starts typing their email
 // into the existing signup field — then an optional message box unfolds
-// right under the form. The email signup itself still goes to Formspree,
-// untouched; the message lands in the Control Room's MESSAGES tab.
+// right under the form. The email signup posts to the same worker backend
+// (SIGNUPS tab); the message lands in the Control Room's MESSAGES tab.
 // If no backend is configured, this script does nothing at all.
 (function () {
   'use strict';

@@ -132,7 +132,8 @@ One-time steps when deploying this upgrade:
 3. Redeploy: `npx wrangler deploy`
 
 The site's floating message bubble goes live when GitHub Pages picks up the
-merge — no extra steps. Formspree keeps handling the email-signup box.
+merge — no extra steps. (Formspree kept handling the email-signup box at the
+time; see the email-signups upgrade below, which moved that here too.)
 
 ## Upgrade: Google sign-in + analytics (2026-08)
 
@@ -154,3 +155,19 @@ Founders on the list can then log in with one click if they're signed into
 Google in their browser; the shared password keeps working alongside.
 Google sessions last a week and are revoked by re-running the
 FOUNDER_EMAILS secret without that email.
+
+## Upgrade: email signups off Formspree (2026-08)
+
+The EMAIL FOR UPDATES box now posts to this worker instead of Formspree, so
+the whole stack is Cloudflare and the list shows up in the Control Room's
+SIGNUPS tab (with a "Copy all" button for pasting into BCC). One-time steps:
+
+1. Add the signups table to the live database:
+   `npx wrangler d1 execute wizardshit --remote --file=upgrade-signups.sql`
+2. Redeploy: `npx wrangler deploy`
+
+The form switches over when GitHub Pages picks up the merge. Existing
+subscribers live in the Formspree dashboard — export them there (Forms →
+submissions → export CSV) before closing the account, and keep the emails
+somewhere safe; there is deliberately no bulk-import endpoint, but a one-off
+`INSERT` via `npx wrangler d1 execute` gets them into the table.
