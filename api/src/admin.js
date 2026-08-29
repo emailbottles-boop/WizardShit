@@ -9,236 +9,229 @@ export const ADMIN_HTML = `<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="robots" content="noindex, nofollow">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <title>Wizard Shit — Control Room</title>
 <style>
+  :root {
+    --bg: #100b1d;
+    --card: #191327;
+    --card2: #201936;
+    --border: rgba(255,255,255,0.09);
+    --border-strong: rgba(255,255,255,0.16);
+    --text: #ece9f1;
+    --muted: #9b94ad;
+    --accent: #f5b301;
+    --accent-ink: #2b1a00;
+    --danger: #ff6b6b;
+    --radius: 10px;
+  }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { min-height: 100%; }
   body {
-    background: #0e0520;
-    color: #fff;
-    font-family: system-ui, sans-serif;
-    padding-bottom: 6rem;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+    padding-bottom: 5rem;
+    -webkit-font-smoothing: antialiased;
   }
-  body::before {
-    content: '';
-    position: fixed; inset: 0; pointer-events: none; z-index: 0;
-    background-image:
-      radial-gradient(1px 1px at 10% 15%, rgba(255,255,255,0.6) 0%, transparent 100%),
-      radial-gradient(1px 1px at 30% 60%, rgba(255,255,255,0.4) 0%, transparent 100%),
-      radial-gradient(1px 1px at 55% 25%, rgba(255,255,255,0.5) 0%, transparent 100%),
-      radial-gradient(1px 1px at 75% 70%, rgba(255,255,255,0.3) 0%, transparent 100%),
-      radial-gradient(1px 1px at 85% 10%, rgba(255,255,255,0.6) 0%, transparent 100%),
-      radial-gradient(1px 1px at 20% 85%, rgba(255,255,255,0.4) 0%, transparent 100%),
-      radial-gradient(1px 1px at 65% 50%, rgba(255,255,255,0.3) 0%, transparent 100%),
-      radial-gradient(1px 1px at 92% 45%, rgba(255,255,255,0.4) 0%, transparent 100%);
-  }
-  .wrap { position: relative; z-index: 1; max-width: 880px; margin: 0 auto; padding: 2rem 1.2rem; }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 1.5rem 1.2rem; }
 
-  header { text-align: center; margin-bottom: 2rem; }
-  header h1 {
-    font-size: clamp(1.6rem, 5vw, 2.4rem);
-    font-weight: 900;
-    letter-spacing: 0.08em;
-    color: rgb(255, 210, 60);
-    text-shadow: 0 0 25px rgba(255, 190, 40, 0.55);
-  }
-  header .sub { margin-top: 0.4rem; font-size: 0.8rem; letter-spacing: 0.25em; text-transform: uppercase; color: rgba(255,255,255,0.55); }
-  #whoami { margin-top: 0.6rem; font-size: 0.75rem; color: rgba(180, 80, 255, 0.9); }
+  header { display: flex; align-items: baseline; gap: 0.75rem; padding: 0.4rem 0 1.4rem; }
+  header h1 { font-size: 1.05rem; font-weight: 700; letter-spacing: 0.01em; }
+  header h1 .at { color: var(--accent); }
+  header .sub { font-size: 0.8rem; color: var(--muted); font-weight: 500; }
+  #whoami { margin-left: auto; font-size: 0.78rem; color: var(--muted); }
 
-  .tabs { display: flex; gap: 0.6rem; justify-content: center; flex-wrap: wrap; margin-bottom: 1.6rem; }
+  .tabs { display: flex; gap: 0.25rem; flex-wrap: wrap; border-bottom: 1px solid var(--border); margin-bottom: 1.1rem; }
   .tab {
-    padding: 0.7rem 1.4rem;
-    border: 2px solid rgba(180, 80, 255, 0.4);
-    border-radius: 12px;
-    background: rgba(255,255,255,0.06);
-    color: #fff;
-    font-weight: 800;
-    letter-spacing: 0.12em;
+    padding: 0.55rem 0.9rem;
+    border: none;
+    border-bottom: 2px solid transparent;
+    background: none;
+    color: var(--muted);
+    font: inherit;
+    font-weight: 600;
+    font-size: 0.86rem;
     cursor: pointer;
-    transition: all 0.15s ease;
-    font-size: 0.85rem;
   }
-  .tab:hover { border-color: rgba(255, 220, 120, 0.6); transform: scale(1.04); }
-  .tab.active {
-    background: linear-gradient(160deg, rgb(255, 210, 60) 0%, rgb(255, 170, 30) 100%);
-    color: #2a0550;
-    border-color: transparent;
-    box-shadow: 0 0 30px rgba(255, 190, 40, 0.45);
-  }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--text); border-bottom-color: var(--accent); }
 
-  .toolbar { display: flex; gap: 0.6rem; align-items: center; margin-bottom: 1.2rem; flex-wrap: wrap; }
+  .toolbar { display: flex; gap: 0.5rem; align-items: center; margin-bottom: 1rem; flex-wrap: wrap; }
   .btn {
-    padding: 0.55rem 1.1rem;
-    border-radius: 10px;
-    border: 2px solid rgba(180, 80, 255, 0.45);
-    background: rgba(255,255,255,0.07);
-    color: #fff;
-    font-weight: 700;
-    letter-spacing: 0.06em;
+    padding: 0.45rem 0.9rem;
+    border-radius: 8px;
+    border: 1px solid var(--border-strong);
+    background: var(--card2);
+    color: var(--text);
+    font: inherit;
+    font-weight: 600;
+    font-size: 0.82rem;
     cursor: pointer;
-    font-size: 0.8rem;
-    transition: all 0.15s ease;
   }
-  .btn:hover { border-color: rgba(255, 220, 120, 0.6); }
-  .btn.primary {
-    background: linear-gradient(160deg, rgb(255, 210, 60) 0%, rgb(255, 170, 30) 100%);
-    color: #2a0550;
-    border-color: transparent;
-  }
-  .btn.primary:hover { box-shadow: 0 0 25px rgba(255, 190, 40, 0.5); }
+  .btn:hover { border-color: rgba(255,255,255,0.3); }
+  .btn.primary { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
+  .btn.primary:hover { filter: brightness(1.06); }
   .btn:disabled { opacity: 0.45; cursor: not-allowed; }
-  #dirtyFlag { font-size: 0.75rem; color: rgb(255, 160, 120); display: none; letter-spacing: 0.08em; }
+  #dirtyFlag { font-size: 0.78rem; color: var(--accent); display: none; font-weight: 500; }
 
   .item {
-    border: 2px solid rgba(180, 80, 255, 0.3);
-    border-radius: 14px;
-    background: rgba(255,255,255,0.06);
-    backdrop-filter: blur(8px);
-    padding: 1rem;
-    margin-bottom: 0.9rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--card);
+    padding: 1rem 1.1rem;
+    margin-bottom: 0.8rem;
   }
-  .item.hidden-item { opacity: 0.45; border-style: dashed; }
-  .item-head { display: flex; gap: 0.5rem; align-items: center; margin-bottom: 0.8rem; }
-  .item-head .grow { flex: 1; }
+  .item.hidden-item { opacity: 0.55; border-style: dashed; }
+  .item-head { display: flex; gap: 0.4rem; align-items: center; margin-bottom: 0.8rem; }
+  .item-head .grow { flex: 1; font-weight: 600; font-size: 0.95rem; }
   .icon-btn {
-    width: 32px; height: 32px;
-    border-radius: 8px;
-    border: 1.5px solid rgba(180, 80, 255, 0.4);
-    background: rgba(255,255,255,0.06);
-    color: #fff; cursor: pointer; font-size: 0.85rem;
+    width: 30px; height: 30px;
+    border-radius: 7px;
+    border: 1px solid var(--border);
+    background: var(--card2);
+    color: var(--muted); cursor: pointer; font-size: 0.8rem;
     display: inline-flex; align-items: center; justify-content: center;
   }
-  .icon-btn:hover { border-color: rgba(255, 220, 120, 0.7); }
-  .icon-btn.danger:hover { border-color: rgba(255, 90, 90, 0.8); color: rgb(255, 120, 120); }
+  .icon-btn:hover { color: var(--text); border-color: var(--border-strong); }
+  .icon-btn.danger:hover { border-color: var(--danger); color: var(--danger); }
 
-  .fields { display: grid; grid-template-columns: 1fr 1fr; gap: 0.7rem; }
+  .fields { display: grid; grid-template-columns: 1fr 1fr; gap: 0.8rem; }
   .fields .full { grid-column: 1 / -1; }
   @media (max-width: 620px) { .fields { grid-template-columns: 1fr; } }
-  label { display: block; font-size: 0.62rem; letter-spacing: 0.18em; text-transform: uppercase; color: rgba(255,255,255,0.5); margin-bottom: 0.3rem; }
-  input[type=text], textarea {
+  label { display: block; font-size: 0.76rem; font-weight: 500; color: var(--muted); margin-bottom: 0.3rem; }
+  input[type=text], input[type=password], textarea {
     width: 100%;
-    background: rgba(0,0,0,0.35);
-    border: 1.5px solid rgba(180, 80, 255, 0.3);
+    background: var(--bg);
+    border: 1px solid var(--border-strong);
     border-radius: 8px;
-    color: #fff;
-    padding: 0.55rem 0.7rem;
-    font-size: 0.85rem;
-    font-family: inherit;
+    color: var(--text);
+    padding: 0.5rem 0.65rem;
+    font: inherit;
+    font-size: 0.88rem;
   }
-  input[type=text]:focus, textarea:focus { outline: none; border-color: rgb(255, 210, 60); }
+  input[type=text]:focus, input[type=password]:focus, textarea:focus { outline: none; border-color: var(--accent); }
   textarea { resize: vertical; min-height: 70px; }
-  .check { display: inline-flex; align-items: center; gap: 0.45rem; font-size: 0.72rem; letter-spacing: 0.1em; text-transform: uppercase; color: rgba(255,255,255,0.75); cursor: pointer; }
-  .check input { width: 16px; height: 16px; accent-color: rgb(255, 210, 60); }
-  .checks { display: flex; gap: 1.2rem; align-items: center; flex-wrap: wrap; padding-top: 0.4rem; }
+  .check { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.8rem; color: var(--muted); cursor: pointer; }
+  .check input { width: 15px; height: 15px; accent-color: var(--accent); }
+  .checks { display: flex; gap: 1.1rem; align-items: center; flex-wrap: wrap; padding-top: 0.2rem; }
 
   .thumb {
-    width: 64px; height: 64px; border-radius: 10px; flex-shrink: 0;
+    width: 64px; height: 64px; border-radius: 8px; flex-shrink: 0;
     background-size: cover; background-position: center;
-    border: 2px solid rgba(255, 220, 120, 0.4);
-    background-color: rgba(0,0,0,0.4);
+    border: 1px solid var(--border-strong);
+    background-color: var(--bg);
   }
   .thumb.round { border-radius: 50%; }
   .img-row { display: flex; gap: 0.7rem; align-items: flex-end; }
   .img-row .grow { flex: 1; }
   .dropzone {
     display: flex; gap: 0.9rem; align-items: center;
-    border: 2px dashed rgba(180, 80, 255, 0.35);
-    border-radius: 12px;
-    padding: 0.7rem 0.9rem;
+    border: 1px dashed var(--border-strong);
+    border-radius: 8px;
+    padding: 0.65rem 0.85rem;
     transition: border-color 0.15s ease, background 0.15s ease;
   }
-  .dropzone.dragging { border-color: rgb(255, 210, 60); background: rgba(255, 210, 60, 0.08); }
-  .drop-hint { flex: 1; font-size: 0.72rem; color: rgba(255,255,255,0.45); letter-spacing: 0.08em; text-align: right; }
+  .dropzone.dragging { border-color: var(--accent); background: rgba(245, 179, 1, 0.06); }
+  .drop-hint { flex: 1; font-size: 0.78rem; color: var(--muted); text-align: right; }
 
   #toast {
-    position: fixed; left: 50%; bottom: 1.6rem; transform: translateX(-50%);
-    background: rgba(20, 6, 40, 0.95);
-    border: 2px solid rgb(255, 210, 60);
-    color: #fff;
-    border-radius: 12px;
-    padding: 0.8rem 1.4rem;
+    position: fixed; left: 50%; bottom: 1.4rem; transform: translateX(-50%);
+    background: var(--card2);
+    border: 1px solid var(--border-strong);
+    border-left: 3px solid var(--accent);
+    color: var(--text);
+    border-radius: 8px;
+    padding: 0.65rem 1.1rem;
     font-size: 0.85rem;
     z-index: 50;
     display: none;
     max-width: 90vw;
-    box-shadow: 0 0 35px rgba(255, 190, 40, 0.35);
+    box-shadow: 0 8px 30px rgba(0,0,0,0.45);
   }
-  #toast.error { border-color: rgb(255, 90, 90); box-shadow: 0 0 35px rgba(255, 60, 60, 0.35); }
+  #toast.error { border-left-color: var(--danger); }
 
   #loginOverlay {
     position: fixed; inset: 0; z-index: 40;
-    background: rgba(7, 0, 15, 0.92);
+    background: rgba(10, 6, 18, 0.9);
     display: none; align-items: center; justify-content: center; padding: 1.5rem;
   }
   #loginOverlay .box {
     width: min(360px, 92vw);
-    border: 2px solid rgba(180, 80, 255, 0.5);
-    border-radius: 16px;
-    background: #140628;
-    padding: 2rem 1.6rem;
+    border: 1px solid var(--border-strong);
+    border-radius: 14px;
+    background: var(--card);
+    padding: 2rem 1.7rem;
     text-align: center;
-    box-shadow: 0 0 60px rgba(140, 40, 255, 0.4);
+    box-shadow: 0 20px 60px rgba(0,0,0,0.5);
   }
-  #loginOverlay h2 { color: rgb(255, 210, 60); letter-spacing: 0.1em; margin-bottom: 0.4rem; }
-  #loginOverlay p { font-size: 0.75rem; color: rgba(255,255,255,0.6); margin-bottom: 1.2rem; }
-  #loginOverlay input { margin-bottom: 0.9rem; text-align: center; }
-  #loginErr { color: rgb(255, 120, 120); font-size: 0.75rem; margin-top: 0.7rem; display: none; }
+  #loginOverlay h2 { font-size: 1.05rem; font-weight: 700; margin-bottom: 0.3rem; }
+  #loginOverlay h2 .at { color: var(--accent); }
+  #loginOverlay p { font-size: 0.8rem; color: var(--muted); margin-bottom: 1.1rem; }
+  #loginOverlay input { margin-bottom: 0.8rem; text-align: center; }
+  #loginErr { color: var(--danger); font-size: 0.78rem; margin-top: 0.7rem; display: none; }
 
-  .empty { text-align: center; color: rgba(255,255,255,0.45); padding: 2.5rem 1rem; font-size: 0.85rem; letter-spacing: 0.08em; }
+  .empty { text-align: center; color: var(--muted); padding: 2.5rem 1rem; font-size: 0.85rem; }
 
   /* photo framing sliders */
   .framing { display: flex; gap: 1rem; align-items: center; }
   .framing .sliders { flex: 1; display: grid; grid-template-columns: auto 1fr; gap: 0.35rem 0.7rem; align-items: center; }
-  .framing .sliders span { font-size: 0.6rem; letter-spacing: 0.15em; color: rgba(255,255,255,0.5); text-transform: uppercase; }
-  input[type=range] { width: 100%; accent-color: rgb(255, 210, 60); }
-  .css-link { font-size: 0.65rem; color: rgba(180, 80, 255, 0.9); cursor: pointer; text-decoration: underline; letter-spacing: 0.08em; }
+  .framing .sliders span { font-size: 0.74rem; color: var(--muted); }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  .css-link { font-size: 0.74rem; color: var(--muted); cursor: pointer; text-decoration: underline; }
+  .css-link:hover { color: var(--text); }
 
   /* messages inbox */
-  .item.unread { border-color: rgba(255, 210, 60, 0.65); }
-  .msg-meta { font-size: 0.7rem; color: rgba(255,255,255,0.55); }
-  .msg-body { white-space: pre-wrap; font-size: 0.85rem; line-height: 1.5; }
+  .item.unread { border-left: 3px solid var(--accent); }
+  .msg-meta { font-size: 0.74rem; color: var(--muted); }
+  .msg-body { white-space: pre-wrap; font-size: 0.88rem; line-height: 1.55; }
 
   /* orders + printful import */
-  .order-line { font-size: 0.8rem; color: rgba(255,255,255,0.8); line-height: 1.6; }
-  .order-line a { color: rgb(255, 210, 60); }
-  .pf-panel { border: 2px dashed rgba(255, 220, 120, 0.45); border-radius: 14px; padding: 1rem; margin-bottom: 1rem; }
-  .pf-row { display: flex; gap: 0.8rem; align-items: center; padding: 0.45rem 0; border-bottom: 1px solid rgba(255,255,255,0.08); }
+  .order-line { font-size: 0.84rem; color: var(--muted); line-height: 1.6; }
+  .order-line a { color: var(--accent); }
+  .pf-panel { border: 1px dashed var(--border-strong); border-radius: var(--radius); padding: 1rem 1.1rem; margin-bottom: 1rem; background: var(--card); }
+  .pf-row { display: flex; gap: 0.8rem; align-items: center; padding: 0.45rem 0; border-bottom: 1px solid var(--border); }
   .pf-row:last-child { border-bottom: none; }
-  .pf-row .thumb { width: 44px; height: 44px; }
-  .pf-row .grow { flex: 1; font-size: 0.85rem; }
-  .pf-note { font-size: 0.68rem; color: rgba(255,255,255,0.5); margin-top: 0.6rem; }
+  .pf-row .thumb { width: 40px; height: 40px; }
+  .pf-row .grow { flex: 1; font-size: 0.86rem; }
+  .pf-note { font-size: 0.74rem; color: var(--muted); margin-top: 0.6rem; }
 
   /* analytics */
-  .stat-tiles { display: flex; gap: 0.9rem; flex-wrap: wrap; margin-bottom: 1.2rem; }
+  .stat-tiles { display: flex; gap: 0.8rem; flex-wrap: wrap; margin-bottom: 1rem; }
   .tile {
-    flex: 1; min-width: 140px;
-    border: 2px solid rgba(180, 80, 255, 0.3); border-radius: 14px;
-    background: rgba(255,255,255,0.06); padding: 1rem; text-align: center;
+    flex: 1; min-width: 130px;
+    border: 1px solid var(--border); border-radius: var(--radius);
+    background: var(--card); padding: 0.9rem 1rem;
   }
-  .tile .num { font-size: 1.9rem; font-weight: 900; color: rgb(255, 210, 60); }
-  .tile .lbl { font-size: 0.62rem; letter-spacing: 0.18em; text-transform: uppercase; color: rgba(255,255,255,0.5); margin-top: 0.3rem; }
-  .chart-card { border: 2px solid rgba(180, 80, 255, 0.3); border-radius: 14px; background: rgba(255,255,255,0.06); padding: 1rem; }
+  .tile .num { font-size: 1.7rem; font-weight: 700; letter-spacing: -0.02em; }
+  .tile .lbl { font-size: 0.76rem; color: var(--muted); margin-top: 0.15rem; }
+  .chart-card { border: 1px solid var(--border); border-radius: var(--radius); background: var(--card); padding: 1rem 1.1rem; }
   .chart { display: flex; align-items: flex-end; gap: 2px; height: 140px; }
-  .chart .bar { flex: 1; background: rgb(255, 210, 60); border-radius: 4px 4px 0 0; min-height: 2px; opacity: 0.85; }
+  .chart .bar { flex: 1; background: var(--accent); border-radius: 3px 3px 0 0; min-height: 2px; opacity: 0.9; }
   .chart .bar:hover { opacity: 1; }
-  .chart .bar.zero { background: rgba(255,255,255,0.12); }
-  .chart-x { display: flex; justify-content: space-between; font-size: 0.62rem; color: rgba(255,255,255,0.45); margin-top: 0.4rem; letter-spacing: 0.06em; }
-  .range-row { display: flex; gap: 0.5rem; margin-bottom: 0.9rem; }
-  .range-btn { padding: 0.4rem 0.9rem; font-size: 0.7rem; }
-  .range-btn.on { background: linear-gradient(160deg, rgb(255, 210, 60) 0%, rgb(255, 170, 30) 100%); color: #2a0550; border-color: transparent; }
+  .chart .bar.zero { background: rgba(255,255,255,0.1); }
+  .chart-x { display: flex; justify-content: space-between; font-size: 0.72rem; color: var(--muted); margin-top: 0.45rem; }
+  .range-row { display: flex; gap: 0.4rem; margin-bottom: 0.9rem; }
+  .range-btn { padding: 0.35rem 0.8rem; font-size: 0.78rem; }
+  .range-btn.on { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
   .chart.monthly { height: 170px; }
   .bar-col { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 0.25rem; height: 100%; }
   .bar-col .bar { width: 100%; flex: none; }
-  .bar-num { font-size: 0.68rem; color: rgba(255,255,255,0.85); font-weight: 700; }
-  .bar-mon { font-size: 0.6rem; color: rgba(255,255,255,0.45); margin-top: 0.25rem; letter-spacing: 0.04em; }
+  .bar-num { font-size: 0.72rem; color: var(--text); font-weight: 600; }
+  .bar-mon { font-size: 0.68rem; color: var(--muted); margin-top: 0.25rem; }
   .month-list { margin-top: 1rem; }
-  .month-row { display: flex; justify-content: space-between; padding: 0.4rem 0.2rem; border-bottom: 1px solid rgba(255,255,255,0.08); font-size: 0.8rem; }
+  .month-row { display: flex; justify-content: space-between; padding: 0.4rem 0.1rem; border-bottom: 1px solid var(--border); font-size: 0.84rem; }
   .month-row:last-child { border-bottom: none; }
-  .month-row .v { color: rgb(255, 210, 60); font-weight: 700; }
+  .month-row .v { font-weight: 600; }
   #barTip {
     position: fixed; z-index: 60; display: none; pointer-events: none;
-    background: rgba(20, 6, 40, 0.97); border: 1.5px solid rgb(255, 210, 60);
-    border-radius: 8px; padding: 0.35rem 0.6rem; font-size: 0.72rem; color: #fff;
+    background: var(--card2); border: 1px solid var(--border-strong);
+    border-radius: 7px; padding: 0.3rem 0.6rem; font-size: 0.76rem; color: var(--text);
+    box-shadow: 0 6px 20px rgba(0,0,0,0.4);
   }
 </style>
 </head>
@@ -246,11 +239,11 @@ export const ADMIN_HTML = `<!DOCTYPE html>
 
 <div id="loginOverlay">
   <div class="box">
-    <h2>CONTROL ROOM</h2>
+    <h2>Wiz<span class="at">@</span>rd Shit</h2>
     <p>Owners only — enter the admin password.</p>
     <input type="password" id="pwInput" placeholder="password" autocomplete="current-password">
-    <button class="btn primary" id="pwBtn" style="width:100%">ENTER</button>
-    <div id="gDivider" style="display:none;margin:0.9rem 0 0.7rem;font-size:0.7rem;letter-spacing:0.2em;color:rgba(255,255,255,0.4)">&mdash; OR &mdash;</div>
+    <button class="btn primary" id="pwBtn" style="width:100%">Enter</button>
+    <div id="gDivider" style="display:none;margin:0.9rem 0 0.7rem;font-size:0.78rem;color:var(--muted)">or</div>
     <div id="gBtn" style="display:flex;justify-content:center"></div>
     <div id="loginErr"></div>
   </div>
@@ -258,27 +251,27 @@ export const ADMIN_HTML = `<!DOCTYPE html>
 
 <div class="wrap">
   <header>
-    <h1>WIZ@RD SHIT</h1>
+    <h1>Wiz<span class="at">@</span>rd Shit</h1>
     <div class="sub">Control Room</div>
     <div id="whoami"></div>
   </header>
 
   <nav class="tabs">
-    <button class="tab active" data-tab="merch">MERCH</button>
-    <button class="tab" data-tab="credits">CREDITS</button>
-    <button class="tab" data-tab="donators">DONATORS</button>
-    <button class="tab" data-tab="messages">MESSAGES</button>
-    <button class="tab" data-tab="orders">ORDERS</button>
-    <button class="tab" data-tab="analytics">ANALYTICS</button>
+    <button class="tab active" data-tab="merch">Merch</button>
+    <button class="tab" data-tab="credits">Credits</button>
+    <button class="tab" data-tab="donators">Donators</button>
+    <button class="tab" data-tab="messages">Messages</button>
+    <button class="tab" data-tab="orders">Orders</button>
+    <button class="tab" data-tab="analytics">Analytics</button>
   </nav>
 
   <div class="toolbar">
-    <button class="btn" id="addBtn">+ ADD</button>
-    <button class="btn" id="printfulBtn" style="display:none">&#8681; IMPORT FROM PRINTFUL</button>
+    <button class="btn" id="addBtn">+ Add</button>
+    <button class="btn" id="printfulBtn" style="display:none">Import from Printful</button>
     <span id="dirtyFlag">● unsaved changes</span>
     <span style="flex:1"></span>
-    <button class="btn" id="reloadBtn">RELOAD</button>
-    <button class="btn primary" id="saveBtn">SAVE &amp; PUBLISH</button>
+    <button class="btn" id="reloadBtn">Reload</button>
+    <button class="btn primary" id="saveBtn">Save &amp; publish</button>
   </div>
 
   <div id="list"></div>
@@ -466,7 +459,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
     }
     refresh();
     var hint = el('div', 'drop-hint', 'drag a picture here, or');
-    var up = el('button', 'btn', item[key] ? 'CHANGE IMAGE' : 'UPLOAD IMAGE');
+    var up = el('button', 'btn', item[key] ? 'Change image' : 'Upload image');
     up.type = 'button';
     var file = el('input');
     file.type = 'file';
@@ -493,7 +486,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
         .catch(function (e) { toast(e.message, true); })
         .then(function () {
           up.disabled = false;
-          up.textContent = item[key] ? 'CHANGE IMAGE' : 'UPLOAD IMAGE';
+          up.textContent = item[key] ? 'Change image' : 'Upload image';
         });
     }
 
@@ -836,7 +829,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
 
     // range toggle: last 30 days (daily) or last 12 months (monthly)
     var rangeRow = el('div', 'range-row');
-    [['30d', '30 DAYS'], ['12m', '12 MONTHS']].forEach(function (r) {
+    [['30d', '30 days'], ['12m', '12 months']].forEach(function (r) {
       var b = el('button', 'btn range-btn' + (statRange === r[0] ? ' on' : ''), r[1]);
       b.onclick = function () { statRange = r[0]; render(); };
       rangeRow.appendChild(b);
@@ -925,7 +918,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
   function renderPfPanel() {
     var panel = el('div', 'pf-panel');
     var head = el('div', 'item-head');
-    head.appendChild(el('strong', 'grow', 'PRINTFUL PRODUCTS'));
+    head.appendChild(el('strong', 'grow', 'Printful products'));
     var closeB = el('button', 'icon-btn', '\\u2716');
     closeB.onclick = function () { pfOpen = false; render(); };
     head.appendChild(closeB);
@@ -947,7 +940,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
       row.appendChild(thumb);
       row.appendChild(el('div', 'grow', p.name));
       var slug = slugify(p.name);
-      var addB = el('button', 'btn', existing[slug] ? 'ON SITE' : '+ ADD');
+      var addB = el('button', 'btn', existing[slug] ? 'On site' : '+ Add');
       addB.disabled = !!existing[slug];
       addB.onclick = function () {
         state.merch.unshift({
