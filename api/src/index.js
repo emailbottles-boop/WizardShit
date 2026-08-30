@@ -9,7 +9,8 @@
  *   POST /api/claim      -> a crew member claims their credit card identity
  *   GET /api/claims-public -> names with a verified claim (for the crew page)
  *   POST /api/upload-work  -> a creator uploads work from their page
- *   GET /api/uploads-public -> a creator's uploads (or everyone's latest)
+ *   GET /api/portal/uploads -> crew-only: a creator's uploads (or crew feed)
+ *   GET /api/portal/panels  -> crew-only: creator work panels
  *   POST /api/apply        -> apply to work on the show (admin-only to read)
  *
  * Owner endpoints (require auth — Cloudflare Access, or ADMIN_PASSWORD):
@@ -406,6 +407,18 @@ async function accountHasCreator(env, accountId, creatorName) {
     "SELECT 1 AS ok FROM claims WHERE account_id = ? AND credit_name = ? AND status = 'verified'",
   ).bind(accountId, creatorName).first();
   return !!row;
+}
+// The gate for the inner work portal: a valid member token AND at least one
+// founder-approved claim. Verified crew see all crew work; everyone else —
+// logged out or a plain fan — is refused, so the work can't be scraped from
+// outside. Returns the account or null.
+async function checkCrew(request, env) {
+  const acct = await checkAccount(request, env);
+  if (!acct) return null;
+  const row = await env.DB.prepare(
+    "SELECT 1 AS ok FROM claims WHERE account_id = ? AND status = 'verified' LIMIT 1",
+  ).bind(acct.id).first();
+  return row ? acct : null;
 }
 
 /**
@@ -888,22 +901,20 @@ async function receiveWorkUpload(request, env, origin) {
 // see what everyone is working on. Never includes anything but the credit
 // name, title, image, mark, and date.
 //
-// MODERATION GATE: only uploads a founder has acknowledged (status != 'new')
-// are shown publicly. A brand-new upload is private until a founder marks it
-// seen/verified/paid in the Control Room. This is what stops someone posting
-// under a real creator's name (uploads are attributed by a URL param today)
-// from dumping content straight onto that creator's public page — a founder
-// sees it first. Cached briefly so looping the endpoint can't amplify D1 reads.
-async function publicUploads(env, name) {
+// Crew work portal feed. This is gated (checkCrew in the router), so it can
+// show works-in-progress across the crew — verified members see each other's
+// work. With a name: that creator's uploads; without: the whole crew's latest.
+// no-store because it's private per-request, never cached at the edge.
+async function portalUploads(env, name) {
   const who = str(name, 200);
   const rows = who
     ? await env.DB.prepare(
-        "SELECT creator, title, image, status, created_at FROM uploads WHERE creator = ? AND status != 'new' ORDER BY id DESC LIMIT 100",
+        'SELECT creator, title, image, status, created_at FROM uploads WHERE creator = ? ORDER BY id DESC LIMIT 100',
       ).bind(who).all()
     : await env.DB.prepare(
-        "SELECT creator, title, image, status, created_at FROM uploads WHERE status != 'new' ORDER BY id DESC LIMIT 30",
+        'SELECT creator, title, image, status, created_at FROM uploads ORDER BY id DESC LIMIT 40',
       ).all();
-  return json({ uploads: rows.results }, 200, { ...PUBLIC_CORS, 'Cache-Control': 'public, max-age=30' });
+  return json({ uploads: rows.results }, 200, { 'Cache-Control': 'no-store' });
 }
 
 // Names with at least one verified claim, so the crew page can show a badge.
@@ -1187,6 +1198,10 @@ export default {
         if (hit) return hit;
 
         const data = await readCollections(env, false);
+        // Panels are creator WORK — they live behind the crew portal, not in
+        // the public feed. Merch/credits/donators stay public (the storefront
+        // and the public crew directory need names/roles/photos).
+        delete data.panels;
         const res = json(data, 200, { ...PUBLIC_CORS, 'Cache-Control': 'public, max-age=60' });
         ctx.waitUntil(cache.put(request, res.clone()));
         return res;
@@ -1230,8 +1245,15 @@ export default {
       if (method === 'POST' && path === '/api/upload-work') {
         return receiveWorkUpload(request, env, url.origin);
       }
-      if (method === 'GET' && path === '/api/uploads-public') {
-        return publicUploads(env, url.searchParams.get('name') || '');
+      // ---- crew work portal (verified crew only) ----
+      if (method === 'GET' && (path === '/api/portal/uploads' || path === '/api/portal/panels')) {
+        const crew = await checkCrew(request, env);
+        if (!crew) return json({ error: 'Crew only — sign in with a verified account.' }, 403, PUBLIC_CORS);
+        if (path === '/api/portal/uploads') {
+          return portalUploads(env, url.searchParams.get('name') || '');
+        }
+        const data = await readCollections(env, false);
+        return json({ panels: data.panels }, 200, { 'Cache-Control': 'no-store' });
       }
       if (method === 'POST' && path === '/api/hit') {
         // pageview beacon, counted per UTC day. The label is caller-controlled,
