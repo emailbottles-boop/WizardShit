@@ -45,7 +45,7 @@ bucket_name = "wizardshit-images"
 
 [vars]
 # Origins allowed to call the public API from a browser.
-ALLOWED_ORIGINS = "https://wizardshit.store,https://www.wizardshit.store,http://localhost:8080,http://127.0.0.1:8080"
+ALLOWED_ORIGINS = "https://wizardshit.store,https://www.wizardshit.store,https://madamwizzy.com,https://www.madamwizzy.com,http://localhost:8080,http://127.0.0.1:8080"
 
 # --- Admin auth, option A (recommended): Cloudflare Access ---
 # Put an Access application in front of this worker's /admin and /api/admin
