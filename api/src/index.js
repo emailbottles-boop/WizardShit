@@ -582,8 +582,9 @@ async function receiveClaim(request, env) {
 
 const USERNAME_RE = /^[a-zA-Z0-9_.-]{3,32}$/;
 
-function accountInfo(id, username, email) {
-  return { id, username, email: email || '' };
+const ROLES = ['fan', 'applicant', 'crew'];
+function accountInfo(id, username, email, role) {
+  return { id, username, email: email || '', role: ROLES.includes(role) ? role : 'fan' };
 }
 
 async function accountSignup(request, env) {
@@ -607,10 +608,11 @@ async function accountSignup(request, env) {
   const uname = username.toLowerCase();
   const exists = await env.DB.prepare('SELECT 1 AS ok FROM accounts WHERE username = ?').bind(uname).first();
   if (exists) return json({ error: 'That username is taken' }, 409, PUBLIC_CORS);
+  const role = ROLES.includes(data.role) ? data.role : 'fan';
   const pass = await hashPassword(password);
-  const res = await env.DB.prepare('INSERT INTO accounts (username, pass_hash) VALUES (?, ?)').bind(uname, pass).run();
+  const res = await env.DB.prepare('INSERT INTO accounts (username, pass_hash, role) VALUES (?, ?, ?)').bind(uname, pass, role).run();
   const id = res.meta && res.meta.last_row_id;
-  return json({ ok: true, token: await makeAccountToken(id, uname, env), account: accountInfo(id, uname, '') }, 200, PUBLIC_CORS);
+  return json({ ok: true, token: await makeAccountToken(id, uname, env), account: accountInfo(id, uname, '', role) }, 200, PUBLIC_CORS);
 }
 
 async function accountLogin(request, env) {
@@ -625,14 +627,14 @@ async function accountLogin(request, env) {
   }
   const uname = str(data.username, 32).toLowerCase();
   const password = typeof data.password === 'string' ? data.password : '';
-  const row = await env.DB.prepare('SELECT id, username, pass_hash, email FROM accounts WHERE username = ?').bind(uname).first();
+  const row = await env.DB.prepare('SELECT id, username, pass_hash, email, role FROM accounts WHERE username = ?').bind(uname).first();
   const ok = row && (await verifyPassword(password, row.pass_hash));
   if (!ok) {
     await recordAuthFail(request, 'acct');
     return json({ error: 'Wrong username or password' }, 401, PUBLIC_CORS);
   }
   return json(
-    { ok: true, token: await makeAccountToken(row.id, row.username, env), account: accountInfo(row.id, row.username, row.email) },
+    { ok: true, token: await makeAccountToken(row.id, row.username, env), account: accountInfo(row.id, row.username, row.email, row.role) },
     200,
     PUBLIC_CORS,
   );
@@ -641,16 +643,43 @@ async function accountLogin(request, env) {
 // Everything the logged-in member's account page needs: who they are, the
 // email tied to the account, the creators they can access, and pending claims.
 async function accountMe(env, acct) {
-  const row = await env.DB.prepare('SELECT id, username, email FROM accounts WHERE id = ?').bind(acct.id).first();
+  const row = await env.DB.prepare('SELECT id, username, email, role FROM accounts WHERE id = ?').bind(acct.id).first();
   if (!row) return json({ error: 'Account not found' }, 404, PUBLIC_CORS);
   const claims = await env.DB.prepare('SELECT credit_name, status FROM claims WHERE account_id = ?').bind(acct.id).all();
   const verified = [];
-  const pending = [];
+  const pending = []; // anything not yet green (requested/red or staged/yellow), still in review
   for (const c of claims.results) {
     if (c.status === 'verified') verified.push(c.credit_name);
-    else if (c.status === 'pending') pending.push(c.credit_name);
+    else if (c.status === 'pending' || c.status === 'staged') pending.push(c.credit_name);
   }
-  return json({ account: accountInfo(row.id, row.username, row.email), creators: verified, pending }, 200, PUBLIC_CORS);
+  // Payments the creator can see: everything paid to a card they're verified on.
+  let payments = [];
+  let paidTotal = 0;
+  if (verified.length) {
+    const marks = verified.map(() => '?').join(',');
+    const rows = await env.DB.prepare(
+      'SELECT creator, amount, note, created_at FROM payments WHERE creator IN (' + marks + ') ORDER BY id DESC LIMIT 200',
+    ).bind(...verified).all();
+    payments = rows.results;
+    paidTotal = payments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+  }
+  return json(
+    { account: accountInfo(row.id, row.username, row.email, row.role), creators: verified, pending, payments, paidTotal },
+    200,
+    PUBLIC_CORS,
+  );
+}
+
+async function accountSetRole(request, env, acct) {
+  let data;
+  try {
+    data = await request.json();
+  } catch {
+    return json({ error: 'Body must be JSON' }, 400, PUBLIC_CORS);
+  }
+  if (!ROLES.includes(data.role)) return json({ error: 'Unknown role' }, 400, PUBLIC_CORS);
+  await env.DB.prepare('UPDATE accounts SET role = ? WHERE id = ?').bind(data.role, acct.id).run();
+  return json({ ok: true, role: data.role }, 200, PUBLIC_CORS);
 }
 
 async function accountSetEmail(request, env, acct) {
@@ -1111,12 +1140,13 @@ export default {
       if (method === 'POST' && path === '/api/account/login') {
         return accountLogin(request, env);
       }
-      if (path === '/api/account/me' || path === '/api/account/email' || path === '/api/account/claim') {
+      if (path === '/api/account/me' || path === '/api/account/email' || path === '/api/account/claim' || path === '/api/account/role') {
         const acct = await checkAccount(request, env);
         if (!acct) return json({ error: 'Sign in first' }, 401, PUBLIC_CORS);
         if (method === 'GET' && path === '/api/account/me') return accountMe(env, acct);
         if (method === 'POST' && path === '/api/account/email') return accountSetEmail(request, env, acct);
         if (method === 'POST' && path === '/api/account/claim') return accountClaim(request, env, acct);
+        if (method === 'POST' && path === '/api/account/role') return accountSetRole(request, env, acct);
       }
       if (method === 'GET' && path === '/api/claims-public') {
         return verifiedClaims(env);
@@ -1285,14 +1315,49 @@ export default {
           return json({ claims: rows.results }, 200, { 'Cache-Control': 'no-store' });
         }
         {
-          const m = path.match(/^\/api\/admin\/claims\/(\d+)(?:\/(verify|deny))?$/);
+          // Verify board lights: pending(red) -> staged(yellow) -> verified(green).
+          // Only verified/green grants creator-hub access (see accountHasCreator).
+          // 'deny' parks it; 'stage' is also how you switch a green one back off.
+          const m = path.match(/^\/api\/admin\/claims\/(\d+)(?:\/(stage|verify|deny))?$/);
           if (m && method === 'POST' && m[2]) {
-            const status = m[2] === 'verify' ? 'verified' : 'denied';
+            const status = { stage: 'staged', verify: 'verified', deny: 'denied' }[m[2]];
             await env.DB.prepare('UPDATE claims SET status = ? WHERE id = ?').bind(status, Number(m[1])).run();
             return json({ ok: true });
           }
           if (m && method === 'DELETE' && !m[2]) {
             await env.DB.prepare('DELETE FROM claims WHERE id = ?').bind(Number(m[1])).run();
+            return json({ ok: true });
+          }
+        }
+        if (method === 'GET' && path === '/api/admin/payments') {
+          const rows = await env.DB.prepare('SELECT * FROM payments ORDER BY id DESC LIMIT 500').all();
+          return json({ payments: rows.results }, 200, { 'Cache-Control': 'no-store' });
+        }
+        if (method === 'POST' && path === '/api/admin/payments') {
+          let body;
+          try {
+            body = await request.json();
+          } catch {
+            return json({ error: 'Body must be JSON' }, 400);
+          }
+          const creator = str(body.creator, 200);
+          const amount = Number(body.amount);
+          const note = str(body.note, 500);
+          if (!creator) return json({ error: 'Pick a creator' }, 400);
+          const known = await env.DB.prepare('SELECT 1 AS ok FROM credits WHERE name = ?').bind(creator).first();
+          if (!known) return json({ error: 'Unknown creator' }, 400);
+          if (!Number.isFinite(amount) || amount <= 0 || amount > 1000000) {
+            return json({ error: 'Enter a valid amount' }, 400);
+          }
+          await env.DB.prepare('INSERT INTO payments (creator, amount, note) VALUES (?, ?, ?)')
+            .bind(creator, Math.round(amount * 100) / 100, note)
+            .run();
+          return json({ ok: true });
+        }
+        {
+          const m = path.match(/^\/api\/admin\/payments\/(\d+)$/);
+          if (m && method === 'DELETE') {
+            await env.DB.prepare('DELETE FROM payments WHERE id = ?').bind(Number(m[1])).run();
             return json({ ok: true });
           }
         }

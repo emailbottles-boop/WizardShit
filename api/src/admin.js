@@ -271,6 +271,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
     <button class="tab" data-tab="signups">Signups</button>
     <button class="tab" data-tab="claims">Wizard IDs</button>
     <button class="tab" data-tab="uploads">Uploads</button>
+    <button class="tab" data-tab="payments">Payments</button>
     <button class="tab" data-tab="apps">Apps</button>
     <button class="tab" data-tab="orders">Orders</button>
     <button class="tab" data-tab="analytics">Analytics</button>
@@ -299,6 +300,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
   var signups = null;      // fetched on first visit to SIGNUPS
   var claims = null;       // fetched on first visit to WIZARD IDS
   var uploads = null;      // fetched on first visit to UPLOADS
+  var payments = null;     // fetched on first visit to PAYMENTS
   var apps = null;         // fetched on first visit to APPS
   var orders = null;       // fetched on first visit to ORDERS
   var stats = null;        // fetched on first visit to ANALYTICS
@@ -830,25 +832,40 @@ export const ADMIN_HTML = `<!DOCTYPE html>
       .catch(function (e) { toast(e.message, true); });
   }
 
+  // Verify board. Each claim is a light: red = requested, yellow = staged,
+  // green = on (this account can now use the creator hub). Deny parks it.
+  var LIGHT = { pending: ['\\uD83D\\uDD34', 'Requested'], staged: ['\\uD83D\\uDFE1', 'Staged'], verified: ['\\uD83D\\uDFE2', 'On'], denied: ['\\u26AB', 'Denied'] };
   function renderClaims() {
     if (claims === null) {
-      listEl.appendChild(el('div', 'empty', 'Fetching claims\\u2026'));
+      listEl.appendChild(el('div', 'empty', 'Fetching the verify board\\u2026'));
       return;
     }
     if (!claims.length) {
-      listEl.appendChild(el('div', 'empty', 'No claims yet. Crew members claim their credit card on the madamstudio site, and each claim lands here for you to verify.'));
+      listEl.appendChild(el('div', 'empty', 'No claims yet. When someone signs in and claims their crew card on madamstudio, they land here: red \\u2192 stage to yellow \\u2192 turn on to green to open their hub.'));
       return;
     }
     claims.forEach(function (c) {
+      var light = LIGHT[c.status] || LIGHT.pending;
       var card = el('div', 'item' + (c.status === 'pending' ? ' unread' : ''));
       var head = el('div', 'item-head');
-      head.appendChild(el('strong', 'grow', c.credit_name + ' \\u2014 ' + c.email));
-      head.appendChild(el('span', 'msg-meta', c.status.toUpperCase() + ' \\u00B7 ' + (c.created_at || '').slice(0, 16)));
+      var who = c.credit_name + ' \\u2014 ' + c.email + (c.account_username ? ' (@' + c.account_username + ')' : '');
+      head.appendChild(el('strong', 'grow', light[0] + ' ' + who));
+      head.appendChild(el('span', 'msg-meta', light[1].toUpperCase() + ' \\u00B7 ' + (c.created_at || '').slice(0, 16)));
+      if (c.status !== 'staged' && c.status !== 'verified') {
+        var stageB = el('button', 'btn', 'Stage');
+        stageB.onclick = function () { claimAction(c.id, '/stage', 'POST'); };
+        head.appendChild(stageB);
+      }
       if (c.status !== 'verified') {
-        var okB = el('button', 'icon-btn', '\\u2713');
-        okB.title = 'Verify \\u2014 yes, this is really them';
-        okB.onclick = function () { claimAction(c.id, '/verify', 'POST'); };
-        head.appendChild(okB);
+        var onB = el('button', 'btn', 'Turn on');
+        onB.title = 'Verify \\u2014 opens their creator hub';
+        onB.onclick = function () { claimAction(c.id, '/verify', 'POST'); };
+        head.appendChild(onB);
+      } else {
+        var offB = el('button', 'btn', 'Turn off');
+        offB.title = 'Back to staged \\u2014 closes their hub';
+        offB.onclick = function () { claimAction(c.id, '/stage', 'POST'); };
+        head.appendChild(offB);
       }
       if (c.status !== 'denied') {
         var noB = el('button', 'icon-btn', '\\u2715');
@@ -966,6 +983,89 @@ export const ADMIN_HTML = `<!DOCTYPE html>
       delB.onclick = function () {
         if (!confirm('Delete this upload forever?')) return;
         uploadAction(u.id, '', 'DELETE');
+      };
+      head.appendChild(delB);
+      card.appendChild(head);
+      listEl.appendChild(card);
+    });
+  }
+
+  /* ---- payments ---- */
+  function loadPayments() {
+    api('/api/admin/payments')
+      .then(function (d) { payments = d.payments; render(); })
+      .catch(function (e) { if (e.message !== 'login required') toast(e.message, true); });
+  }
+
+  function money(n) { return '$' + (Number(n) || 0).toFixed(2); }
+
+  function renderPayments() {
+    if (payments === null) {
+      listEl.appendChild(el('div', 'empty', 'Fetching payments\\u2026'));
+      return;
+    }
+    // "Record a payment" form: creator dropdown from credits, amount, note.
+    var form = el('div', 'item');
+    var fields = el('div', 'fields');
+    var creatorNames = state.credits.map(function (c) { return c.name; }).filter(Boolean);
+    var selWrap = el('div', 'full');
+    selWrap.appendChild(el('label', '', 'Creator'));
+    var sel = el('select');
+    sel.appendChild(new Option('Select a creator\\u2026', ''));
+    creatorNames.forEach(function (n) { sel.appendChild(new Option(n, n)); });
+    selWrap.appendChild(sel);
+    fields.appendChild(selWrap);
+    var amtWrap = el('div');
+    amtWrap.appendChild(el('label', '', 'Amount ($)'));
+    var amt = el('input'); amt.type = 'number'; amt.min = '0'; amt.step = '0.01';
+    amtWrap.appendChild(amt);
+    fields.appendChild(amtWrap);
+    var noteWrap = el('div');
+    noteWrap.appendChild(el('label', '', 'Note (what for)'));
+    var note = el('input'); note.type = 'text';
+    noteWrap.appendChild(note);
+    fields.appendChild(noteWrap);
+    var payBtn = el('button', 'btn primary', 'Record payment');
+    payBtn.onclick = function () {
+      if (!sel.value) { toast('Pick a creator', true); return; }
+      if (!(Number(amt.value) > 0)) { toast('Enter an amount', true); return; }
+      payBtn.disabled = true;
+      api('/api/admin/payments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ creator: sel.value, amount: Number(amt.value), note: note.value }),
+      }).then(function () { toast('Payment recorded'); payments = null; loadPayments(); })
+        .catch(function (e) { toast(e.message, true); payBtn.disabled = false; });
+    };
+    fields.appendChild(payBtn);
+    form.appendChild(fields);
+    listEl.appendChild(form);
+
+    if (!payments.length) {
+      listEl.appendChild(el('div', 'empty', 'No payments recorded yet.'));
+      return;
+    }
+    // Per-creator totals.
+    var totals = {};
+    payments.forEach(function (p) { totals[p.creator] = (totals[p.creator] || 0) + (Number(p.amount) || 0); });
+    var grand = payments.reduce(function (s, p) { return s + (Number(p.amount) || 0); }, 0);
+    var sum = el('div', 'item');
+    sum.appendChild(el('strong', '', 'Paid out: ' + money(grand)));
+    var byLine = Object.keys(totals).map(function (k) { return k + ' ' + money(totals[k]); }).join('  \\u00B7  ');
+    sum.appendChild(el('div', 'msg-meta', byLine));
+    listEl.appendChild(sum);
+
+    payments.forEach(function (p) {
+      var card = el('div', 'item');
+      var head = el('div', 'item-head');
+      head.appendChild(el('strong', 'grow', p.creator + ' \\u2014 ' + money(p.amount) + (p.note ? '  (' + p.note + ')' : '')));
+      head.appendChild(el('span', 'msg-meta', (p.created_at || '').slice(0, 16)));
+      var delB = el('button', 'icon-btn danger', '\\uD83D\\uDDD1');
+      delB.title = 'Delete';
+      delB.onclick = function () {
+        if (!confirm('Delete this payment record?')) return;
+        api('/api/admin/payments/' + p.id, { method: 'DELETE' }).then(function () { payments = null; loadPayments(); })
+          .catch(function (e) { toast(e.message, true); });
       };
       head.appendChild(delB);
       card.appendChild(head);
@@ -1211,6 +1311,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
     else if (tab === 'signups') { renderSignups(); return; }
     else if (tab === 'claims') { renderClaims(); return; }
     else if (tab === 'uploads') { renderUploads(); return; }
+    else if (tab === 'payments') { renderPayments(); return; }
     else if (tab === 'apps') { renderApps(); return; }
     else if (tab === 'analytics') { renderAnalytics(); return; }
     else { renderOrders(); return; }
@@ -1230,6 +1331,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
       if (tab === 'signups' && signups === null) loadSignups();
       if (tab === 'claims' && claims === null) loadClaims();
       if (tab === 'uploads' && uploads === null) loadUploads();
+      if (tab === 'payments' && payments === null) loadPayments();
       if (tab === 'apps' && apps === null) loadApps();
       if (tab === 'orders' && orders === null) loadOrders();
       if (tab === 'analytics' && stats === null) loadStats();
@@ -1266,6 +1368,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
     if (tab === 'signups') { signups = null; render(); loadSignups(); return; }
     if (tab === 'claims') { claims = null; render(); loadClaims(); return; }
     if (tab === 'uploads') { uploads = null; render(); loadUploads(); return; }
+    if (tab === 'payments') { payments = null; render(); loadPayments(); return; }
     if (tab === 'apps') { apps = null; render(); loadApps(); return; }
     if (tab === 'orders') { orders = null; render(); loadOrders(); return; }
     if (tab === 'analytics') { stats = null; render(); loadStats(); return; }

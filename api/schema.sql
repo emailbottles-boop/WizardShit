@@ -88,6 +88,16 @@ CREATE TABLE IF NOT EXISTS accounts (
   username   TEXT NOT NULL UNIQUE,           -- stored lowercased
   pass_hash  TEXT NOT NULL,                  -- pbkdf2$iters$salt$hash
   email      TEXT NOT NULL DEFAULT '',       -- optional, tied later
+  role       TEXT NOT NULL DEFAULT 'fan',    -- fan | applicant | crew (self-selected funnel)
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Payments a founder records to a creator; shown in that creator's hub.
+CREATE TABLE IF NOT EXISTS payments (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  creator    TEXT NOT NULL,                 -- credit card name
+  amount     REAL NOT NULL,                 -- in dollars
+  note       TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
