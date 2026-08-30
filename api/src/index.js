@@ -581,6 +581,13 @@ async function receiveClaim(request, env) {
 /* --------------------------------------------------- account endpoints --- */
 
 const USERNAME_RE = /^[a-zA-Z0-9_.-]{3,32}$/;
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// Gmail (and Google's alias domain) users are steered to Sign in with Google
+// so they don't end up with both a password account and a Google account on
+// the same address.
+function isGmail(s) {
+  return /@(gmail|googlemail)\.com$/i.test(s || '');
+}
 
 const ROLES = ['fan', 'applicant', 'crew'];
 function accountInfo(id, username, email, role) {
@@ -594,10 +601,20 @@ async function accountSignup(request, env) {
   } catch {
     return json({ error: 'Body must be JSON' }, 400, PUBLIC_CORS);
   }
-  const username = str(data.username, 32);
+  const uname = str(data.username, 254).toLowerCase();
   const password = typeof data.password === 'string' ? data.password : '';
-  if (!USERNAME_RE.test(username)) {
-    return json({ error: 'Username: 3–32 letters, numbers, _ . -' }, 400, PUBLIC_CORS);
+  const asEmail = EMAIL_RE.test(uname);
+  // A Gmail as username → send them to Google instead of a duplicate account.
+  if (asEmail && isGmail(uname)) {
+    return json(
+      { error: "That's a Gmail — use “Sign in with Google” so you don't end up with two accounts.", google: true },
+      400,
+      PUBLIC_CORS,
+    );
+  }
+  // Username may be a handle OR a (non-Gmail) email address.
+  if (!asEmail && !USERNAME_RE.test(uname)) {
+    return json({ error: 'Username: 3–32 letters, numbers, _ . - , or your email' }, 400, PUBLIC_CORS);
   }
   if (password.length < 8 || password.length > 200) {
     return json({ error: 'Password must be at least 8 characters' }, 400, PUBLIC_CORS);
@@ -605,14 +622,56 @@ async function accountSignup(request, env) {
   if (!(await allowPublicWrite(request, 'acctnew'))) {
     return json({ error: 'Slow down a moment and try again.' }, 429, PUBLIC_CORS);
   }
-  const uname = username.toLowerCase();
-  const exists = await env.DB.prepare('SELECT 1 AS ok FROM accounts WHERE username = ?').bind(uname).first();
-  if (exists) return json({ error: 'That username is taken' }, 409, PUBLIC_CORS);
+  // Uniqueness across both username and email so one address = one account.
+  const clash = asEmail
+    ? await env.DB.prepare('SELECT 1 AS ok FROM accounts WHERE username = ? OR email = ?').bind(uname, uname).first()
+    : await env.DB.prepare('SELECT 1 AS ok FROM accounts WHERE username = ?').bind(uname).first();
+  if (clash) return json({ error: 'That username or email is already taken' }, 409, PUBLIC_CORS);
   const role = ROLES.includes(data.role) ? data.role : 'fan';
+  const email = asEmail ? uname : ''; // an email username doubles as the tied email
   const pass = await hashPassword(password);
-  const res = await env.DB.prepare('INSERT INTO accounts (username, pass_hash, role) VALUES (?, ?, ?)').bind(uname, pass, role).run();
+  const res = await env.DB.prepare('INSERT INTO accounts (username, pass_hash, role, email) VALUES (?, ?, ?, ?)')
+    .bind(uname, pass, role, email).run();
   const id = res.meta && res.meta.last_row_id;
-  return json({ ok: true, token: await makeAccountToken(id, uname, env), account: accountInfo(id, uname, '', role) }, 200, PUBLIC_CORS);
+  return json({ ok: true, token: await makeAccountToken(id, uname, env), account: accountInfo(id, uname, email, role) }, 200, PUBLIC_CORS);
+}
+
+// Member Sign in with Google: verify the Google token, then resolve to the ONE
+// account for that email — found by email, or by an email-as-username account,
+// or created fresh. This is what keeps a Gmail user from having a duplicate
+// password account, and connects them to whatever creator card was authorized
+// for their email (claims are keyed to the account id this returns).
+async function accountGoogleLogin(request, env) {
+  if (!env.GOOGLE_CLIENT_ID) return json({ error: "Google sign-in isn't set up yet" }, 501, PUBLIC_CORS);
+  let data;
+  try {
+    data = await request.json();
+  } catch {
+    return json({ error: 'Body must be JSON' }, 400, PUBLIC_CORS);
+  }
+  const who = await verifyGoogleIdToken(String(data.credential || ''), env);
+  if (!who) return json({ error: 'Google sign-in failed — try again' }, 401, PUBLIC_CORS);
+  const email = who.email; // already lowercased + verified by Google
+  let row = await env.DB.prepare('SELECT id, username, email, role FROM accounts WHERE email = ?').bind(email).first();
+  if (!row) {
+    // Someone who signed up with this email as a username but never set the
+    // email column: adopt it so the two identities are the same account.
+    row = await env.DB.prepare('SELECT id, username, email, role FROM accounts WHERE username = ?').bind(email).first();
+    if (row && !row.email) {
+      await env.DB.prepare('UPDATE accounts SET email = ? WHERE id = ?').bind(email, row.id).run();
+      row.email = email;
+    }
+  }
+  if (!row) {
+    const res = await env.DB.prepare('INSERT INTO accounts (username, pass_hash, role, email) VALUES (?, ?, ?, ?)')
+      .bind(email, '', 'fan', email).run();
+    row = { id: res.meta && res.meta.last_row_id, username: email, email, role: 'fan' };
+  }
+  return json(
+    { ok: true, token: await makeAccountToken(row.id, row.username, env), account: accountInfo(row.id, row.username, row.email, row.role) },
+    200,
+    PUBLIC_CORS,
+  );
 }
 
 async function accountLogin(request, env) {
@@ -625,8 +684,11 @@ async function accountLogin(request, env) {
   } catch {
     return json({ error: 'Body must be JSON' }, 400, PUBLIC_CORS);
   }
-  const uname = str(data.username, 32).toLowerCase();
+  const uname = str(data.username, 254).toLowerCase();
   const password = typeof data.password === 'string' ? data.password : '';
+  if (isGmail(uname)) {
+    return json({ error: 'Use “Sign in with Google” for a Gmail address.', google: true }, 400, PUBLIC_CORS);
+  }
   const row = await env.DB.prepare('SELECT id, username, pass_hash, email, role FROM accounts WHERE username = ?').bind(uname).first();
   const ok = row && (await verifyPassword(password, row.pass_hash));
   if (!ok) {
@@ -689,12 +751,20 @@ async function accountSetEmail(request, env, acct) {
   } catch {
     return json({ error: 'Body must be JSON' }, 400, PUBLIC_CORS);
   }
-  const email = str(data.email, 200);
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+  const email = str(data.email, 200).toLowerCase();
+  if (!EMAIL_RE.test(email)) {
     return json({ error: 'Please enter a valid email' }, 400, PUBLIC_CORS);
   }
-  await env.DB.prepare('UPDATE accounts SET email = ? WHERE id = ?').bind(email.toLowerCase(), acct.id).run();
-  return json({ ok: true, email: email.toLowerCase() }, 200, PUBLIC_CORS);
+  // One address = one account: don't let two accounts tie the same email.
+  const taken = await env.DB.prepare('SELECT 1 AS ok FROM accounts WHERE email = ? AND id <> ?').bind(email, acct.id).first();
+  if (taken) return json({ error: 'That email is already on another account' }, 409, PUBLIC_CORS);
+  if (isGmail(email)) {
+    // Fine to tie a Gmail, but nudge them toward Google sign-in for it.
+    await env.DB.prepare('UPDATE accounts SET email = ? WHERE id = ?').bind(email, acct.id).run();
+    return json({ ok: true, email, google: true }, 200, PUBLIC_CORS);
+  }
+  await env.DB.prepare('UPDATE accounts SET email = ? WHERE id = ?').bind(email, acct.id).run();
+  return json({ ok: true, email }, 200, PUBLIC_CORS);
 }
 
 // A logged-in member claims a credit card. Requires an email tied to the
@@ -1139,6 +1209,9 @@ export default {
       }
       if (method === 'POST' && path === '/api/account/login') {
         return accountLogin(request, env);
+      }
+      if (method === 'POST' && path === '/api/account/glogin') {
+        return accountGoogleLogin(request, env);
       }
       if (path === '/api/account/me' || path === '/api/account/email' || path === '/api/account/claim' || path === '/api/account/role') {
         const acct = await checkAccount(request, env);

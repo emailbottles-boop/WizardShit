@@ -280,3 +280,20 @@ ADMIN_PASSWORD (no new secret required). To use a dedicated one:
 `npx wrangler secret put SESSION_SECRET`. Passwords are PBKDF2-hashed;
 PBKDF2_ITERS in src/index.js can be lowered if the Workers CPU limit is hit
 on the free plan.
+
+## Upgrade: one identity per person (username / email / Google) (2026-08)
+
+Members can sign up with a plain username OR an email. If the email is a
+Gmail, both the site and the worker steer them to "Sign in with Google"
+instead of a password account, so nobody ends up with two accounts on the
+same address. Member Google sign-in (POST /api/account/glogin) resolves to
+the ONE account for that email — found by email, by an email-as-username
+account, or created fresh — and that account carries whatever creator card
+a founder authorized. Email is unique across accounts.
+
+No schema change (uses the existing accounts.email). To enable the Google
+button on the site, the same GOOGLE_CLIENT_ID used for founder sign-in must
+list the madamstudio origin under Authorized JavaScript origins in the
+Google Cloud console (add https://<your madamstudio domain>). Without a
+client id configured the button just stays hidden and username/email +
+password still works. Then: npx wrangler deploy.
