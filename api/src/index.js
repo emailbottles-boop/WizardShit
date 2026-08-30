@@ -316,6 +316,98 @@ async function timingSafeEqualStr(a, b) {
   return diff === 0;
 }
 
+/* ------------------------------------------------------- member accounts --- */
+/*
+ * Anyone can make an account (username + password) and browse. To become a
+ * creator, a logged-in member ties an email and claims their credit card; a
+ * founder approves the claim in the Control Room and the account then has hub
+ * access to that card. Founders (the admin panel) are a separate system above;
+ * this is the public membership layer.
+ */
+
+const PBKDF2_ITERS = 100000; // tune down only if the Workers CPU limit bites
+
+async function pbkdf2(password, salt, iters) {
+  const km = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits']);
+  const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', salt, iterations: iters, hash: 'SHA-256' }, km, 256);
+  return new Uint8Array(bits);
+}
+async function hashPassword(password) {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const hash = await pbkdf2(password, salt, PBKDF2_ITERS);
+  return 'pbkdf2$' + PBKDF2_ITERS + '$' + b64urlEncode(salt) + '$' + b64urlEncode(hash);
+}
+async function verifyPassword(password, stored) {
+  const parts = (stored || '').split('$');
+  if (parts.length !== 4 || parts[0] !== 'pbkdf2') return false;
+  const iters = Number(parts[1]);
+  if (!Number.isInteger(iters) || iters < 1 || iters > 5000000) return false;
+  let salt, expected;
+  try {
+    salt = b64urlDecode(parts[2]);
+    expected = b64urlDecode(parts[3]);
+  } catch {
+    return false;
+  }
+  const actual = await pbkdf2(password, salt, iters);
+  if (actual.length !== expected.length) return false;
+  let diff = 0;
+  for (let i = 0; i < actual.length; i++) diff |= actual[i] ^ expected[i];
+  return diff === 0;
+}
+
+// Member session tokens are signed with a key derived from SESSION_SECRET (or
+// ADMIN_PASSWORD as a fallback so no new secret is strictly required). Distinct
+// namespace from the founder session key, so the two token families can never
+// be confused for one another.
+async function accountKey(env) {
+  const secret = env.SESSION_SECRET || env.ADMIN_PASSWORD;
+  if (!secret) throw new BadInput('Accounts are not configured (set SESSION_SECRET or ADMIN_PASSWORD)');
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode('wiz-account-v1:' + secret));
+  return crypto.subtle.importKey('raw', digest, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify']);
+}
+async function makeAccountToken(id, username, env) {
+  const exp = Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60;
+  const payload = id + '|' + username + '|' + exp;
+  const key = await accountKey(env);
+  const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(payload));
+  return 'wizacct.' + b64urlEncode(new TextEncoder().encode(payload)) + '.' + b64urlEncode(sig);
+}
+async function verifyAccountToken(token, env) {
+  const parts = (token || '').split('.');
+  if (parts.length !== 3 || parts[0] !== 'wizacct') return null;
+  let payload;
+  try {
+    payload = new TextDecoder().decode(b64urlDecode(parts[1]));
+  } catch {
+    return null;
+  }
+  const key = await accountKey(env);
+  const ok = await crypto.subtle.verify('HMAC', key, b64urlDecode(parts[2]), new TextEncoder().encode(payload));
+  if (!ok) return null;
+  const [id, username, expStr] = payload.split('|');
+  if (!id || Number(expStr) < Math.floor(Date.now() / 1000)) return null;
+  return { id: Number(id), username };
+}
+// Returns { id, username } for a valid member token, else null.
+async function checkAccount(request, env) {
+  const auth = request.headers.get('Authorization') || '';
+  const given = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+  if (!given.startsWith('wizacct.')) return null;
+  try {
+    return await verifyAccountToken(given, env);
+  } catch {
+    return null;
+  }
+}
+// Does this account have a founder-approved claim on this creator card?
+async function accountHasCreator(env, accountId, creatorName) {
+  const row = await env.DB.prepare(
+    "SELECT 1 AS ok FROM claims WHERE account_id = ? AND credit_name = ? AND status = 'verified'",
+  ).bind(accountId, creatorName).first();
+  return !!row;
+}
+
 /**
  * Returns { ok: true, mode, email } or { ok: false, error, status }.
  * Access mode wins when configured; the password is only a fallback.
@@ -486,6 +578,126 @@ async function receiveClaim(request, env) {
   return json({ ok: true }, 200, PUBLIC_CORS);
 }
 
+/* --------------------------------------------------- account endpoints --- */
+
+const USERNAME_RE = /^[a-zA-Z0-9_.-]{3,32}$/;
+
+function accountInfo(id, username, email) {
+  return { id, username, email: email || '' };
+}
+
+async function accountSignup(request, env) {
+  let data;
+  try {
+    data = await request.json();
+  } catch {
+    return json({ error: 'Body must be JSON' }, 400, PUBLIC_CORS);
+  }
+  const username = str(data.username, 32);
+  const password = typeof data.password === 'string' ? data.password : '';
+  if (!USERNAME_RE.test(username)) {
+    return json({ error: 'Username: 3–32 letters, numbers, _ . -' }, 400, PUBLIC_CORS);
+  }
+  if (password.length < 8 || password.length > 200) {
+    return json({ error: 'Password must be at least 8 characters' }, 400, PUBLIC_CORS);
+  }
+  if (!(await allowPublicWrite(request, 'acctnew'))) {
+    return json({ error: 'Slow down a moment and try again.' }, 429, PUBLIC_CORS);
+  }
+  const uname = username.toLowerCase();
+  const exists = await env.DB.prepare('SELECT 1 AS ok FROM accounts WHERE username = ?').bind(uname).first();
+  if (exists) return json({ error: 'That username is taken' }, 409, PUBLIC_CORS);
+  const pass = await hashPassword(password);
+  const res = await env.DB.prepare('INSERT INTO accounts (username, pass_hash) VALUES (?, ?)').bind(uname, pass).run();
+  const id = res.meta && res.meta.last_row_id;
+  return json({ ok: true, token: await makeAccountToken(id, uname, env), account: accountInfo(id, uname, '') }, 200, PUBLIC_CORS);
+}
+
+async function accountLogin(request, env) {
+  if ((await authFailCount(request, 'acct')) >= AUTH_FAIL_MAX) {
+    return json({ error: 'Too many attempts — wait a few minutes.' }, 429, PUBLIC_CORS);
+  }
+  let data;
+  try {
+    data = await request.json();
+  } catch {
+    return json({ error: 'Body must be JSON' }, 400, PUBLIC_CORS);
+  }
+  const uname = str(data.username, 32).toLowerCase();
+  const password = typeof data.password === 'string' ? data.password : '';
+  const row = await env.DB.prepare('SELECT id, username, pass_hash, email FROM accounts WHERE username = ?').bind(uname).first();
+  const ok = row && (await verifyPassword(password, row.pass_hash));
+  if (!ok) {
+    await recordAuthFail(request, 'acct');
+    return json({ error: 'Wrong username or password' }, 401, PUBLIC_CORS);
+  }
+  return json(
+    { ok: true, token: await makeAccountToken(row.id, row.username, env), account: accountInfo(row.id, row.username, row.email) },
+    200,
+    PUBLIC_CORS,
+  );
+}
+
+// Everything the logged-in member's account page needs: who they are, the
+// email tied to the account, the creators they can access, and pending claims.
+async function accountMe(env, acct) {
+  const row = await env.DB.prepare('SELECT id, username, email FROM accounts WHERE id = ?').bind(acct.id).first();
+  if (!row) return json({ error: 'Account not found' }, 404, PUBLIC_CORS);
+  const claims = await env.DB.prepare('SELECT credit_name, status FROM claims WHERE account_id = ?').bind(acct.id).all();
+  const verified = [];
+  const pending = [];
+  for (const c of claims.results) {
+    if (c.status === 'verified') verified.push(c.credit_name);
+    else if (c.status === 'pending') pending.push(c.credit_name);
+  }
+  return json({ account: accountInfo(row.id, row.username, row.email), creators: verified, pending }, 200, PUBLIC_CORS);
+}
+
+async function accountSetEmail(request, env, acct) {
+  let data;
+  try {
+    data = await request.json();
+  } catch {
+    return json({ error: 'Body must be JSON' }, 400, PUBLIC_CORS);
+  }
+  const email = str(data.email, 200);
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return json({ error: 'Please enter a valid email' }, 400, PUBLIC_CORS);
+  }
+  await env.DB.prepare('UPDATE accounts SET email = ? WHERE id = ?').bind(email.toLowerCase(), acct.id).run();
+  return json({ ok: true, email: email.toLowerCase() }, 200, PUBLIC_CORS);
+}
+
+// A logged-in member claims a credit card. Requires an email tied to the
+// account (that email is what the founder checks against). Lands as a pending
+// claim in the Control Room; approval grants this account hub access.
+async function accountClaim(request, env, acct) {
+  let data;
+  try {
+    data = await request.json();
+  } catch {
+    return json({ error: 'Body must be JSON' }, 400, PUBLIC_CORS);
+  }
+  const name = str(data.name, 200);
+  if (!name) return json({ error: 'Pick your credit card' }, 400, PUBLIC_CORS);
+  const known = await env.DB.prepare('SELECT 1 AS ok FROM credits WHERE name = ?').bind(name).first();
+  if (!known) return json({ error: 'Pick your credit card' }, 400, PUBLIC_CORS);
+  const me = await env.DB.prepare('SELECT email FROM accounts WHERE id = ?').bind(acct.id).first();
+  if (!me || !me.email) {
+    return json({ error: 'Tie your email to your account first' }, 400, PUBLIC_CORS);
+  }
+  const dupe = await env.DB.prepare('SELECT status FROM claims WHERE account_id = ? AND credit_name = ?')
+    .bind(acct.id, name).first();
+  if (dupe) return json({ ok: true, status: dupe.status }, 200, PUBLIC_CORS);
+  if (!(await allowPublicWrite(request, 'claim'))) {
+    return json({ error: 'Give it a minute and try again.' }, 429, PUBLIC_CORS);
+  }
+  await env.DB.prepare('INSERT INTO claims (credit_name, email, account_id, status) VALUES (?, ?, ?, ?)')
+    .bind(name, me.email, acct.id, 'pending')
+    .run();
+  return json({ ok: true, status: 'pending' }, 200, PUBLIC_CORS);
+}
+
 /* -------------------------------------------------------- applications --- */
 
 // Apply-to-Wizard-Shit form on madamstudio: name, email, portfolio link,
@@ -523,20 +735,23 @@ async function receiveApplication(request, env) {
 
 /* --------------------------------------------------------- work uploads --- */
 
-// The Upload button on a creator's madamstudio page: raw image body, creator
-// and title in the query string. Guarded like every public write (per-IP
-// throttle) plus two upload-specific checks: image types only, and the
-// creator must actually exist in the credits so strangers can't park files
-// under made-up names. New uploads land with status "new"; producers move
-// them to seen / verified / paid in the Control Room's UPLOADS tab.
+// The Upload button on a creator's hub: raw image body, creator + title in the
+// query string. Identity is NOT the URL param — it's the logged-in account:
+// the request must carry a valid member token AND that account must have a
+// founder-approved (verified) claim on the creator it's uploading as. This is
+// what makes uploads genuinely belong to the creator instead of anyone who can
+// edit a URL. New uploads land "new"; founders move them to seen/verified/paid.
 async function receiveWorkUpload(request, env, origin) {
   const url = new URL(request.url);
   const creator = str(url.searchParams.get('creator'), 200);
   const title = str(url.searchParams.get('title'), 300);
   if (!creator) return json({ error: 'Missing creator' }, 400, PUBLIC_CORS);
 
-  const known = await env.DB.prepare('SELECT 1 AS ok FROM credits WHERE name = ?').bind(creator).first();
-  if (!known) return json({ error: 'Unknown creator' }, 400, PUBLIC_CORS);
+  const acct = await checkAccount(request, env);
+  if (!acct) return json({ error: 'Sign in to upload' }, 401, PUBLIC_CORS);
+  if (!(await accountHasCreator(env, acct.id, creator))) {
+    return json({ error: 'Your account is not verified for this creator' }, 403, PUBLIC_CORS);
+  }
 
   const type = (request.headers.get('Content-Type') || '').split(';')[0].trim().toLowerCase();
   const ext = IMAGE_TYPES[type];
@@ -655,23 +870,23 @@ async function allowPublicWrite(request, bucket) {
 const AUTH_FAIL_WINDOW = 600; // seconds a failure is remembered
 const AUTH_FAIL_MAX = 10; // failures per window before we start refusing
 
-function authFailKey(request) {
+function authFailKey(request, scope) {
   const ip = request.headers.get('CF-Connecting-IP') || 'noip';
-  return new Request('https://ratelimit.invalid/authfail/' + encodeURIComponent(ip));
+  return new Request('https://ratelimit.invalid/authfail/' + (scope || 'admin') + '/' + encodeURIComponent(ip));
 }
-async function authFailCount(request) {
+async function authFailCount(request, scope) {
   try {
-    const hit = await caches.default.match(authFailKey(request));
+    const hit = await caches.default.match(authFailKey(request, scope));
     return hit ? Number(await hit.text()) || 0 : 0;
   } catch {
     return 0;
   }
 }
-async function recordAuthFail(request) {
+async function recordAuthFail(request, scope) {
   try {
-    const n = (await authFailCount(request)) + 1;
+    const n = (await authFailCount(request, scope)) + 1;
     await caches.default.put(
-      authFailKey(request),
+      authFailKey(request, scope),
       new Response(String(n), { headers: { 'Cache-Control': 'max-age=' + AUTH_FAIL_WINDOW } }),
     );
   } catch {
@@ -889,6 +1104,20 @@ export default {
       if (method === 'POST' && path === '/api/claim') {
         return receiveClaim(request, env);
       }
+      // ---- member accounts ----
+      if (method === 'POST' && path === '/api/account/signup') {
+        return accountSignup(request, env);
+      }
+      if (method === 'POST' && path === '/api/account/login') {
+        return accountLogin(request, env);
+      }
+      if (path === '/api/account/me' || path === '/api/account/email' || path === '/api/account/claim') {
+        const acct = await checkAccount(request, env);
+        if (!acct) return json({ error: 'Sign in first' }, 401, PUBLIC_CORS);
+        if (method === 'GET' && path === '/api/account/me') return accountMe(env, acct);
+        if (method === 'POST' && path === '/api/account/email') return accountSetEmail(request, env, acct);
+        if (method === 'POST' && path === '/api/account/claim') return accountClaim(request, env, acct);
+      }
       if (method === 'GET' && path === '/api/claims-public') {
         return verifiedClaims(env);
       }
@@ -1048,7 +1277,11 @@ export default {
           }
         }
         if (method === 'GET' && path === '/api/admin/claims') {
-          const rows = await env.DB.prepare('SELECT * FROM claims ORDER BY id DESC LIMIT 500').all();
+          // Join the account so a founder can see the username behind a claim
+          // when deciding whether to verify it.
+          const rows = await env.DB.prepare(
+            'SELECT c.*, a.username AS account_username FROM claims c LEFT JOIN accounts a ON a.id = c.account_id ORDER BY c.id DESC LIMIT 500',
+          ).all();
           return json({ claims: rows.results }, 200, { 'Cache-Control': 'no-store' });
         }
         {

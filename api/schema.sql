@@ -83,10 +83,19 @@ CREATE TABLE IF NOT EXISTS uploads (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS accounts (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  username   TEXT NOT NULL UNIQUE,           -- stored lowercased
+  pass_hash  TEXT NOT NULL,                  -- pbkdf2$iters$salt$hash
+  email      TEXT NOT NULL DEFAULT '',       -- optional, tied later
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS claims (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   credit_name TEXT NOT NULL,               -- which credit card they clicked
-  email       TEXT NOT NULL,               -- the gmail they entered
+  email       TEXT NOT NULL,               -- the gmail on the claim
+  account_id  INTEGER,                     -- the member account that claimed it
   status      TEXT NOT NULL DEFAULT 'pending', -- pending | verified | denied
   created_at  TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE (credit_name, email)

@@ -258,3 +258,25 @@ An adversarial audit pass; no schema change, so deploying is just
 
 Set `ALLOWED_ORIGINS` in wrangler.toml to the madamstudio + wizardshit
 origins (it already lists them) — if unset, CORS falls back to open.
+
+## Upgrade: member accounts + creator hub (2026-08)
+
+Anyone can make an account (username + password) and browse. To become a
+creator, a signed-in member ties an email and claims their credit card; a
+founder approves the claim in the WIZARD IDS tab (which now shows the
+account username behind each claim) and that account gets hub access —
+its Upload button on the creator page starts working. Uploads are bound to
+the authenticated account, not a URL param, so nobody can upload as someone
+else. One-time steps:
+
+1. Add the accounts table + claim link column:
+   `npx wrangler d1 execute wizardshit --remote --file=upgrade-accounts.sql`
+   (If it says "duplicate column name account_id", that part already ran —
+   safe to ignore.)
+2. Redeploy: `npx wrangler deploy`
+
+Member session tokens are signed with SESSION_SECRET if set, else with
+ADMIN_PASSWORD (no new secret required). To use a dedicated one:
+`npx wrangler secret put SESSION_SECRET`. Passwords are PBKDF2-hashed;
+PBKDF2_ITERS in src/index.js can be lowered if the Workers CPU limit is hit
+on the free plan.
