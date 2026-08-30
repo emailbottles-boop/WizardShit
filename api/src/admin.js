@@ -244,8 +244,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
 
 <div id="loginOverlay">
   <div class="box">
-    <img class="login-logo" src="https://wizardshit.store/wizshtlogo_trans.png" alt="" onerror="this.style.display='none'">
-    <h2>Wiz<span class="at">@</span>rd Shit</h2>
+    <img class="login-logo" src="https://wizardshit.store/wizshtlogo_trans.png" alt="Wiz@rd Shit" onerror="this.style.display='none'">
     <p>Owners only — enter the admin password.</p>
     <input type="password" id="pwInput" placeholder="password" autocomplete="current-password">
     <button class="btn primary" id="pwBtn" style="width:100%">Enter</button>
