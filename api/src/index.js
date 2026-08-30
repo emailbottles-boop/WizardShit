@@ -702,7 +702,12 @@ async function accountLogin(request, env) {
   if (isGmail(uname)) {
     return json({ error: 'Use “Sign in with Google” for a Gmail address.', google: true }, 400, PUBLIC_CORS);
   }
-  const row = await env.DB.prepare('SELECT id, username, pass_hash, email, role FROM accounts WHERE username = ?').bind(uname).first();
+  // People can sign in with their username OR the (non-Gmail) email tied to
+  // their account. Only treat it as an email lookup when it actually looks
+  // like one, so a plain username can't accidentally match an email column.
+  const row = uname.includes('@')
+    ? await env.DB.prepare('SELECT id, username, pass_hash, email, role FROM accounts WHERE username = ? OR email = ?').bind(uname, uname).first()
+    : await env.DB.prepare('SELECT id, username, pass_hash, email, role FROM accounts WHERE username = ?').bind(uname).first();
   const ok = row && (await verifyPassword(password, row.pass_hash));
   if (!ok) {
     await recordAuthFail(request, 'acct');
