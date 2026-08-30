@@ -1133,6 +1133,33 @@ async function handleUpload(request, env, origin) {
   return json({ key, url: origin + '/img/' + key });
 }
 
+// Founder places work directly into a creator's feed from the Control Room.
+// Same image safety as every upload, but it lands already "verified" (a
+// founder put it there) so it's live in that creator's portal immediately —
+// this is how the three of you fill a creator's page before they ever log in.
+async function founderUploadFor(request, env, origin) {
+  const url = new URL(request.url);
+  const creator = str(url.searchParams.get('creator'), 200);
+  const title = str(url.searchParams.get('title'), 300);
+  if (!creator) return json({ error: 'Pick a creator' }, 400);
+  const known = await env.DB.prepare('SELECT 1 AS ok FROM credits WHERE name = ?').bind(creator).first();
+  if (!known) return json({ error: 'Unknown creator' }, 400);
+  const type = (request.headers.get('Content-Type') || '').split(';')[0].trim().toLowerCase();
+  const ext = IMAGE_TYPES[type];
+  if (!ext) return json({ error: 'Images only (png, jpg, gif, webp)' }, 415);
+  const body = await request.arrayBuffer();
+  if (body.byteLength === 0) return json({ error: 'Empty upload' }, 400);
+  if (body.byteLength > MAX_UPLOAD_BYTES) return json({ error: 'Image too large (8MB max)' }, 413);
+  const bad = checkImageBytes(body, type);
+  if (bad) return json({ error: bad }, 415);
+  const key = 'upload-' + Date.now().toString(36) + '-' + crypto.randomUUID().slice(0, 8) + '.' + ext;
+  await env.IMAGES.put(key, body, { httpMetadata: { contentType: type } });
+  await env.DB.prepare("INSERT INTO uploads (creator, title, image, status) VALUES (?, ?, ?, 'verified')")
+    .bind(creator, title, origin + '/img/' + key)
+    .run();
+  return json({ ok: true, url: origin + '/img/' + key });
+}
+
 async function serveImage(env, key) {
   const obj = await env.IMAGES.get(key);
   if (!obj) return new Response('Not found', { status: 404 });
@@ -1337,6 +1364,9 @@ export default {
         }
         if (method === 'POST' && path === '/api/admin/upload') {
           return handleUpload(request, env, url.origin);
+        }
+        if (method === 'POST' && path === '/api/admin/upload-for') {
+          return founderUploadFor(request, env, url.origin);
         }
         if (method === 'GET' && path === '/api/admin/messages') {
           const rows = await env.DB.prepare('SELECT * FROM messages ORDER BY id DESC LIMIT 500').all();
