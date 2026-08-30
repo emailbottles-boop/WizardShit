@@ -598,10 +598,6 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 // Gmail (and Google's alias domain) users are steered to Sign in with Google
 // so they don't end up with both a password account and a Google account on
 // the same address.
-function isGmail(s) {
-  return /@(gmail|googlemail)\.com$/i.test(s || '');
-}
-
 const ROLES = ['fan', 'applicant', 'crew'];
 function accountInfo(id, username, email, role) {
   return { id, username, email: email || '', role: ROLES.includes(role) ? role : 'fan' };
@@ -617,15 +613,8 @@ async function accountSignup(request, env) {
   const uname = str(data.username, 254).toLowerCase();
   const password = typeof data.password === 'string' ? data.password : '';
   const asEmail = EMAIL_RE.test(uname);
-  // A Gmail as username → send them to Google instead of a duplicate account.
-  if (asEmail && isGmail(uname)) {
-    return json(
-      { error: "That's a Gmail — use “Sign in with Google” so you don't end up with two accounts.", google: true },
-      400,
-      PUBLIC_CORS,
-    );
-  }
-  // Username may be a handle OR a (non-Gmail) email address.
+  // Username may be a handle OR an email address (Gmail included — anyone can
+  // make a plain email + password account here).
   if (!asEmail && !USERNAME_RE.test(uname)) {
     return json({ error: 'Username: 3–32 letters, numbers, _ . - , or your email' }, 400, PUBLIC_CORS);
   }
@@ -699,12 +688,10 @@ async function accountLogin(request, env) {
   }
   const uname = str(data.username, 254).toLowerCase();
   const password = typeof data.password === 'string' ? data.password : '';
-  if (isGmail(uname)) {
-    return json({ error: 'Use “Sign in with Google” for a Gmail address.', google: true }, 400, PUBLIC_CORS);
-  }
-  // People can sign in with their username OR the (non-Gmail) email tied to
-  // their account. Only treat it as an email lookup when it actually looks
-  // like one, so a plain username can't accidentally match an email column.
+  // People can sign in with their username OR the email tied to their account
+  // (any address, Gmail included). Only treat it as an email lookup when it
+  // actually looks like one, so a plain username can't accidentally match an
+  // email column.
   const row = uname.includes('@')
     ? await env.DB.prepare('SELECT id, username, pass_hash, email, role FROM accounts WHERE username = ? OR email = ?').bind(uname, uname).first()
     : await env.DB.prepare('SELECT id, username, pass_hash, email, role FROM accounts WHERE username = ?').bind(uname).first();
@@ -776,11 +763,6 @@ async function accountSetEmail(request, env, acct) {
   // One address = one account: don't let two accounts tie the same email.
   const taken = await env.DB.prepare('SELECT 1 AS ok FROM accounts WHERE email = ? AND id <> ?').bind(email, acct.id).first();
   if (taken) return json({ error: 'That email is already on another account' }, 409, PUBLIC_CORS);
-  if (isGmail(email)) {
-    // Fine to tie a Gmail, but nudge them toward Google sign-in for it.
-    await env.DB.prepare('UPDATE accounts SET email = ? WHERE id = ?').bind(email, acct.id).run();
-    return json({ ok: true, email, google: true }, 200, PUBLIC_CORS);
-  }
   await env.DB.prepare('UPDATE accounts SET email = ? WHERE id = ?').bind(email, acct.id).run();
   return json({ ok: true, email }, 200, PUBLIC_CORS);
 }
