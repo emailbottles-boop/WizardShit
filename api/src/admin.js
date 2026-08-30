@@ -238,6 +238,8 @@ export const ADMIN_HTML = `<!DOCTYPE html>
     border-radius: 7px; padding: 0.3rem 0.6rem; font-size: 0.76rem; color: var(--text);
     box-shadow: 0 6px 20px rgba(0,0,0,0.4);
   }
+  .col-label { font-size: 0.66rem; letter-spacing: 0.16em; text-transform: uppercase; color: var(--accent); margin: 0.2rem 0 0.7rem; font-weight: 700; }
+  .col-label:not(:first-child) { margin-top: 1.4rem; }
 </style>
 </head>
 <body>
@@ -269,6 +271,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
     <button class="tab" data-tab="messages">Messages</button>
     <button class="tab" data-tab="signups">Signups</button>
     <button class="tab" data-tab="claims">Wizard IDs</button>
+    <button class="tab" data-tab="creators">Creators</button>
     <button class="tab" data-tab="uploads">Uploads</button>
     <button class="tab" data-tab="payments">Payments</button>
     <button class="tab" data-tab="apps">Apps</button>
@@ -298,7 +301,8 @@ export const ADMIN_HTML = `<!DOCTYPE html>
   var inbox = null;        // fetched on first visit to MESSAGES
   var signups = null;      // fetched on first visit to SIGNUPS
   var claims = null;       // fetched on first visit to WIZARD IDS
-  var uploads = null;      // fetched on first visit to UPLOADS
+  var uploads = null;      // fetched on first visit to UPLOADS / CREATORS
+  var pickedCreator = '';  // the creator selected in the split CREATORS dashboard
   var payments = null;     // fetched on first visit to PAYMENTS
   var apps = null;         // fetched on first visit to APPS
   var orders = null;       // fetched on first visit to ORDERS
@@ -989,6 +993,96 @@ export const ADMIN_HTML = `<!DOCTYPE html>
     });
   }
 
+  /* ---- Creators: split founder dashboard ----
+     Left = pick one creator and drop work straight into their feed (lands
+     verified/live immediately). Right = the shared crew activity feed, the
+     same for every founder. Both read the same uploads list. */
+  function uploadCardEl(u, manage) {
+    var card = el('div', 'item' + (u.status === 'new' ? ' unread' : ''));
+    var head = el('div', 'item-head');
+    var thumb = el('a', 'thumb');
+    thumb.href = u.image; thumb.target = '_blank';
+    thumb.style.width = '46px'; thumb.style.height = '46px'; thumb.style.flexShrink = '0';
+    thumb.style.backgroundImage = 'url("' + (u.image || '').replace(/"/g, '%22') + '")';
+    head.appendChild(thumb);
+    head.appendChild(el('strong', 'grow', (manage ? '' : u.creator + ' \\u2014 ') + (u.title || '(untitled)')));
+    head.appendChild(el('span', 'msg-meta', u.status.toUpperCase() + ' \\u00B7 ' + (u.created_at || '').slice(0, 16)));
+    if (manage) {
+      ['seen', 'verified', 'paid'].forEach(function (s) {
+        if (u.status === s) return;
+        var b = el('button', 'btn', s); b.style.textTransform = 'uppercase';
+        b.onclick = function () { uploadAction(u.id, '/' + s, 'POST'); };
+        head.appendChild(b);
+      });
+      var delB = el('button', 'icon-btn danger', '\\uD83D\\uDDD1');
+      delB.title = 'Delete';
+      delB.onclick = function () { if (confirm('Delete this upload forever?')) uploadAction(u.id, '', 'DELETE'); };
+      head.appendChild(delB);
+    }
+    card.appendChild(head);
+    return card;
+  }
+
+  function renderCreators() {
+    if (uploads === null) {
+      listEl.appendChild(el('div', 'empty', 'Loading the crew dashboard\\u2026'));
+      return;
+    }
+    var split = el('div');
+    split.style.display = 'grid';
+    split.style.gridTemplateColumns = 'repeat(auto-fit, minmax(300px, 1fr))';
+    split.style.gap = '1.2rem';
+    split.style.alignItems = 'start';
+
+    /* ---- LEFT: one creator ---- */
+    var left = el('div');
+    left.appendChild(el('div', 'col-label', 'Upload to a creator'));
+    var names = state.credits.map(function (c) { return c.name; }).filter(Boolean);
+    if (!pickedCreator && names.length) pickedCreator = names[0];
+    var sel = el('select');
+    names.forEach(function (n) { sel.appendChild(new Option(n, n)); });
+    sel.value = pickedCreator;
+    sel.onchange = function () { pickedCreator = sel.value; render(); };
+    left.appendChild(sel);
+
+    var drop = el('div', 'item');
+    var file = el('input'); file.type = 'file'; file.accept = 'image/png,image/jpeg,image/gif,image/webp';
+    var upBtn = el('button', 'btn primary', 'Choose image \\u2192 upload to ' + (pickedCreator || 'creator'));
+    upBtn.style.width = '100%';
+    upBtn.onclick = function () { file.click(); };
+    file.onchange = function () {
+      var f = file.files[0]; file.value = '';
+      if (!f || !pickedCreator) return;
+      upBtn.disabled = true; upBtn.textContent = 'Uploading\\u2026';
+      var title = f.name.replace(/\\.[a-z0-9]+$/i, '').slice(0, 100);
+      fetch('/api/admin/upload-for?creator=' + encodeURIComponent(pickedCreator) + '&title=' + encodeURIComponent(title), {
+        method: 'POST',
+        headers: Object.assign({ 'Content-Type': f.type }, authHeaders()),
+        body: f,
+      }).then(function (r) { return r.json().then(function (d) { if (!r.ok) throw new Error(d.error || 'upload failed'); return d; }); })
+        .then(function () { toast('Added to ' + pickedCreator); uploads = null; loadUploads(); })
+        .catch(function (e) { toast(e.message, true); upBtn.disabled = false; upBtn.textContent = 'Choose image \\u2192 upload'; });
+    };
+    drop.appendChild(upBtn);
+    drop.appendChild(file);
+    left.appendChild(drop);
+
+    var mine = uploads.filter(function (u) { return u.creator === pickedCreator; });
+    left.appendChild(el('div', 'col-label', (pickedCreator || 'Creator') + "'s work \\u00B7 " + mine.length));
+    if (!mine.length) left.appendChild(el('div', 'empty', 'Nothing yet \\u2014 drop the first piece above.'));
+    mine.forEach(function (u) { left.appendChild(uploadCardEl(u, true)); });
+
+    /* ---- RIGHT: shared crew feed ---- */
+    var right = el('div');
+    right.appendChild(el('div', 'col-label', 'Crew activity \\u2014 everyone'));
+    if (!uploads.length) right.appendChild(el('div', 'empty', 'No work uploaded yet.'));
+    uploads.slice(0, 40).forEach(function (u) { right.appendChild(uploadCardEl(u, false)); });
+
+    split.appendChild(left);
+    split.appendChild(right);
+    listEl.appendChild(split);
+  }
+
   /* ---- payments ---- */
   function loadPayments() {
     api('/api/admin/payments')
@@ -1309,6 +1403,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
     else if (tab === 'messages') { renderMessages(); return; }
     else if (tab === 'signups') { renderSignups(); return; }
     else if (tab === 'claims') { renderClaims(); return; }
+    else if (tab === 'creators') { renderCreators(); return; }
     else if (tab === 'uploads') { renderUploads(); return; }
     else if (tab === 'payments') { renderPayments(); return; }
     else if (tab === 'apps') { renderApps(); return; }
@@ -1329,7 +1424,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
       if (tab === 'messages' && inbox === null) loadInbox();
       if (tab === 'signups' && signups === null) loadSignups();
       if (tab === 'claims' && claims === null) loadClaims();
-      if (tab === 'uploads' && uploads === null) loadUploads();
+      if ((tab === 'uploads' || tab === 'creators') && uploads === null) loadUploads();
       if (tab === 'payments' && payments === null) loadPayments();
       if (tab === 'apps' && apps === null) loadApps();
       if (tab === 'orders' && orders === null) loadOrders();
@@ -1366,7 +1461,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
     if (tab === 'messages') { inbox = null; render(); loadInbox(); return; }
     if (tab === 'signups') { signups = null; render(); loadSignups(); return; }
     if (tab === 'claims') { claims = null; render(); loadClaims(); return; }
-    if (tab === 'uploads') { uploads = null; render(); loadUploads(); return; }
+    if (tab === 'uploads' || tab === 'creators') { uploads = null; render(); loadUploads(); return; }
     if (tab === 'payments') { payments = null; render(); loadPayments(); return; }
     if (tab === 'apps') { apps = null; render(); loadApps(); return; }
     if (tab === 'orders') { orders = null; render(); loadOrders(); return; }
