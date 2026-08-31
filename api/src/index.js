@@ -598,10 +598,6 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 // Gmail (and Google's alias domain) users are steered to Sign in with Google
 // so they don't end up with both a password account and a Google account on
 // the same address.
-function isGmail(s) {
-  return /@(gmail|googlemail)\.com$/i.test(s || '');
-}
-
 const ROLES = ['fan', 'applicant', 'crew'];
 function accountInfo(id, username, email, role) {
   return { id, username, email: email || '', role: ROLES.includes(role) ? role : 'fan' };
@@ -617,15 +613,8 @@ async function accountSignup(request, env) {
   const uname = str(data.username, 254).toLowerCase();
   const password = typeof data.password === 'string' ? data.password : '';
   const asEmail = EMAIL_RE.test(uname);
-  // A Gmail as username → send them to Google instead of a duplicate account.
-  if (asEmail && isGmail(uname)) {
-    return json(
-      { error: "That's a Gmail — use “Sign in with Google” so you don't end up with two accounts.", google: true },
-      400,
-      PUBLIC_CORS,
-    );
-  }
-  // Username may be a handle OR a (non-Gmail) email address.
+  // Username may be a handle OR an email address (Gmail included — anyone can
+  // make a plain email + password account here).
   if (!asEmail && !USERNAME_RE.test(uname)) {
     return json({ error: 'Username: 3–32 letters, numbers, _ . - , or your email' }, 400, PUBLIC_CORS);
   }
@@ -699,10 +688,13 @@ async function accountLogin(request, env) {
   }
   const uname = str(data.username, 254).toLowerCase();
   const password = typeof data.password === 'string' ? data.password : '';
-  if (isGmail(uname)) {
-    return json({ error: 'Use “Sign in with Google” for a Gmail address.', google: true }, 400, PUBLIC_CORS);
-  }
-  const row = await env.DB.prepare('SELECT id, username, pass_hash, email, role FROM accounts WHERE username = ?').bind(uname).first();
+  // People can sign in with their username OR the email tied to their account
+  // (any address, Gmail included). Only treat it as an email lookup when it
+  // actually looks like one, so a plain username can't accidentally match an
+  // email column.
+  const row = uname.includes('@')
+    ? await env.DB.prepare('SELECT id, username, pass_hash, email, role FROM accounts WHERE username = ? OR email = ?').bind(uname, uname).first()
+    : await env.DB.prepare('SELECT id, username, pass_hash, email, role FROM accounts WHERE username = ?').bind(uname).first();
   const ok = row && (await verifyPassword(password, row.pass_hash));
   if (!ok) {
     await recordAuthFail(request, 'acct');
@@ -771,11 +763,6 @@ async function accountSetEmail(request, env, acct) {
   // One address = one account: don't let two accounts tie the same email.
   const taken = await env.DB.prepare('SELECT 1 AS ok FROM accounts WHERE email = ? AND id <> ?').bind(email, acct.id).first();
   if (taken) return json({ error: 'That email is already on another account' }, 409, PUBLIC_CORS);
-  if (isGmail(email)) {
-    // Fine to tie a Gmail, but nudge them toward Google sign-in for it.
-    await env.DB.prepare('UPDATE accounts SET email = ? WHERE id = ?').bind(email, acct.id).run();
-    return json({ ok: true, email, google: true }, 200, PUBLIC_CORS);
-  }
   await env.DB.prepare('UPDATE accounts SET email = ? WHERE id = ?').bind(email, acct.id).run();
   return json({ ok: true, email }, 200, PUBLIC_CORS);
 }
@@ -1190,29 +1177,7 @@ async function purgeContentCache() {
 
 /* -------------------------------------------------------------- router --- */
 
-export default {
-  async fetch(request, env, ctx) {
-    const url = new URL(request.url);
-    const path = url.pathname;
-    const method = request.method;
-
-    if (method === 'OPTIONS') {
-      // These POSTs all send a non-simple Content-Type (application/json or
-      // image/*), so the browser always preflights here first. Restricting the
-      // preflight origin to the site's own origins is what actually stops a
-      // third-party page from driving the write endpoints via a visitor's
-      // browser — the actual POST never fires if this preflight refuses it.
-      return new Response(null, {
-        status: 204,
-        headers: {
-          ...writeCors(request, env),
-          'Access-Control-Allow-Methods': 'GET, POST, PUT, OPTIONS',
-          'Access-Control-Allow-Headers': 'Content-Type, Authorization, Cf-Access-Jwt-Assertion',
-          'Access-Control-Max-Age': '86400',
-        },
-      });
-    }
-
+async function route(request, env, ctx, url, path, method) {
     try {
       // ---- public ----
       if (method === 'GET' && path === '/api/content') {
@@ -1516,5 +1481,50 @@ export default {
       console.error(e);
       return json({ error: 'Something went wrong. Please try again.' }, 500);
     }
+}
+
+export default {
+  async fetch(request, env, ctx) {
+    const url = new URL(request.url);
+    const path = url.pathname;
+    const method = request.method;
+
+    if (method === 'OPTIONS') {
+      // These POSTs all send a non-simple Content-Type (application/json or
+      // image/*), so the browser always preflights here first. Restricting the
+      // preflight origin to the site's own origins is what actually stops a
+      // third-party page from driving the write endpoints via a visitor's
+      // browser — the actual POST never fires if this preflight refuses it.
+      // DELETE is allowed too: the Madam Studio console removes claims,
+      // payments and uploads cross-origin.
+      return new Response(null, {
+        status: 204,
+        headers: {
+          ...writeCors(request, env),
+          'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+          'Access-Control-Allow-Headers': 'Content-Type, Authorization, Cf-Access-Jwt-Assertion',
+          'Access-Control-Max-Age': '86400',
+        },
+      });
+    }
+
+    const resp = await route(request, env, ctx, url, path, method);
+    // The Madam Studio admin console is hosted on a different origin
+    // (madamwizzy.com) but calls these same owner-only + login endpoints, so
+    // their responses must carry an Access-Control-Allow-Origin the browser
+    // will accept. They remain auth-gated — CORS only lets the trusted studio
+    // origin read the reply. Public GETs keep their own wildcard CORS.
+    if (
+      path === '/api/login-config' ||
+      path === '/api/glogin' ||
+      path === '/api/admin/login' ||
+      path.startsWith('/api/admin/')
+    ) {
+      const ac = writeCors(request, env);
+      const out = new Response(resp.body, resp);
+      for (const k in ac) out.headers.set(k, ac[k]);
+      return out;
+    }
+    return resp;
   },
 };
