@@ -46,7 +46,8 @@ export const ADMIN_HTML = `<!DOCTYPE html>
   header .sub { font-size: 0.8rem; color: var(--muted); font-weight: 500; }
   #whoami { margin-left: auto; font-size: 0.78rem; color: var(--muted); }
 
-  .tabs { display: flex; gap: 0.25rem; flex-wrap: wrap; border-bottom: 1px solid var(--border); margin-bottom: 1.1rem; }
+  .tabs { display: flex; gap: 0.25rem; flex-wrap: wrap; border-bottom: 1px solid var(--border); margin-bottom: 0.7rem; }
+  #tabHelp { color: var(--muted); font-size: 0.82rem; line-height: 1.45; margin-bottom: 1rem; }
   .tab {
     padding: 0.55rem 0.9rem;
     border: none;
@@ -276,6 +277,8 @@ export const ADMIN_HTML = `<!DOCTYPE html>
     <button class="tab" data-tab="analytics">Analytics</button>
   </nav>
 
+  <div id="tabHelp"></div>
+
   <div class="toolbar">
     <button class="btn" id="addBtn">+ Add</button>
     <button class="btn" id="printfulBtn" style="display:none">Import from Printful</button>
@@ -294,14 +297,13 @@ export const ADMIN_HTML = `<!DOCTYPE html>
 (function () {
   'use strict';
 
-  var state = { merch: [], credits: [], donators: [], panels: [] };
+  // This is the STORE console (wizardshit.store/login): merch, credits,
+  // donators, the inbox, the mailing list, Printful orders, traffic.
+  // Crew/creator admin — wizard IDs, uploads, payments, applications, panels —
+  // lives in the Madam Studio console instead, at madamwizzy.com/admin.
+  var state = { merch: [], credits: [], donators: [] };
   var inbox = null;        // fetched on first visit to MESSAGES
   var signups = null;      // fetched on first visit to SIGNUPS
-  var claims = null;       // fetched on first visit to WIZARD IDS
-  var uploads = null;      // fetched on first visit to UPLOADS / CREATORS
-  var pickedCreator = '';  // the creator selected in the split CREATORS dashboard
-  var payments = null;     // fetched on first visit to PAYMENTS
-  var apps = null;         // fetched on first visit to APPS
   var orders = null;       // fetched on first visit to ORDERS
   var stats = null;        // fetched on first visit to ANALYTICS
   var statRange = '30d';   // '30d' | '12m'
@@ -706,20 +708,6 @@ export const ADMIN_HTML = `<!DOCTYPE html>
     });
   }
 
-  // Square panels for the madamstudio creator pages. "creator" must match a
-  // credit card name exactly; the word "shared" puts the panel in the
-  // recent-projects column that every creator's page shows on the right.
-  function renderPanels() {
-    state.panels.forEach(function (item, i) {
-      var body = el('div', 'fields');
-      body.appendChild(field('Creator (credit card name, or "shared")', item.creator, function (v) { item.creator = v; }));
-      body.appendChild(field('Title', item.title, function (v) { item.title = v; }));
-      body.appendChild(field('Link (optional \\u2014 where clicking the panel goes)', item.url, function (v) { item.url = v; }, true));
-      body.appendChild(imageField('Picture', item, 'image'));
-      listEl.appendChild(itemShell(state.panels, i, (item.creator || '?') + ' \\u2014 ' + (item.title || '(untitled)'), body));
-    });
-  }
-
   function renderDonators() {
     state.donators.forEach(function (item, i) {
       var body = el('div', 'fields');
@@ -812,349 +800,6 @@ export const ADMIN_HTML = `<!DOCTYPE html>
       delB.onclick = function () {
         if (!confirm('Remove ' + s.email + ' from the list?')) return;
         api('/api/admin/signups/' + s.id, { method: 'DELETE' }).then(loadSignups)
-          .catch(function (e) { toast(e.message, true); });
-      };
-      head.appendChild(delB);
-      card.appendChild(head);
-      listEl.appendChild(card);
-    });
-  }
-
-  /* ---- wizard ID claims ---- */
-  function loadClaims() {
-    api('/api/admin/claims')
-      .then(function (d) { claims = d.claims; render(); })
-      .catch(function (e) { if (e.message !== 'login required') toast(e.message, true); });
-  }
-
-  function claimAction(id, pathSuffix, method) {
-    api('/api/admin/claims/' + id + pathSuffix, { method: method }).then(loadClaims)
-      .catch(function (e) { toast(e.message, true); });
-  }
-
-  // Verify board. Each claim is a light: red = requested, yellow = staged,
-  // green = on (this account can now use the creator hub). Deny parks it.
-  var LIGHT = { pending: ['\\uD83D\\uDD34', 'Requested'], staged: ['\\uD83D\\uDFE1', 'Staged'], verified: ['\\uD83D\\uDFE2', 'On'], denied: ['\\u26AB', 'Denied'] };
-  function renderClaims() {
-    if (claims === null) {
-      listEl.appendChild(el('div', 'empty', 'Fetching the verify board\\u2026'));
-      return;
-    }
-    if (!claims.length) {
-      listEl.appendChild(el('div', 'empty', 'No claims yet. When someone signs in and claims their crew card on madamstudio, they land here: red \\u2192 stage to yellow \\u2192 turn on to green to open their hub.'));
-      return;
-    }
-    claims.forEach(function (c) {
-      var light = LIGHT[c.status] || LIGHT.pending;
-      var card = el('div', 'item' + (c.status === 'pending' ? ' unread' : ''));
-      var head = el('div', 'item-head');
-      var who = c.credit_name + ' \\u2014 ' + c.email + (c.account_username ? ' (@' + c.account_username + ')' : '');
-      head.appendChild(el('strong', 'grow', light[0] + ' ' + who));
-      head.appendChild(el('span', 'msg-meta', light[1].toUpperCase() + ' \\u00B7 ' + (c.created_at || '').slice(0, 16)));
-      if (c.status !== 'staged' && c.status !== 'verified') {
-        var stageB = el('button', 'btn', 'Stage');
-        stageB.onclick = function () { claimAction(c.id, '/stage', 'POST'); };
-        head.appendChild(stageB);
-      }
-      if (c.status !== 'verified') {
-        var onB = el('button', 'btn', 'Turn on');
-        onB.title = 'Verify \\u2014 opens their creator hub';
-        onB.onclick = function () { claimAction(c.id, '/verify', 'POST'); };
-        head.appendChild(onB);
-      } else {
-        var offB = el('button', 'btn', 'Turn off');
-        offB.title = 'Back to staged \\u2014 closes their hub';
-        offB.onclick = function () { claimAction(c.id, '/stage', 'POST'); };
-        head.appendChild(offB);
-      }
-      if (c.status !== 'denied') {
-        var noB = el('button', 'icon-btn', '\\u2715');
-        noB.title = 'Deny';
-        noB.onclick = function () { claimAction(c.id, '/deny', 'POST'); };
-        head.appendChild(noB);
-      }
-      var delB = el('button', 'icon-btn danger', '\\uD83D\\uDDD1');
-      delB.title = 'Delete';
-      delB.onclick = function () {
-        if (!confirm('Delete this claim forever?')) return;
-        claimAction(c.id, '', 'DELETE');
-      };
-      head.appendChild(delB);
-      card.appendChild(head);
-      listEl.appendChild(card);
-    });
-  }
-
-  /* ---- applications ---- */
-  function loadApps() {
-    api('/api/admin/applications')
-      .then(function (d) { apps = d.applications; render(); })
-      .catch(function (e) { if (e.message !== 'login required') toast(e.message, true); });
-  }
-
-  function renderApps() {
-    if (apps === null) {
-      listEl.appendChild(el('div', 'empty', 'Fetching applications\\u2026'));
-      return;
-    }
-    if (!apps.length) {
-      listEl.appendChild(el('div', 'empty', 'No applications yet. The Apply page on madamstudio delivers here \\u2014 and only here.'));
-      return;
-    }
-    apps.forEach(function (a) {
-      var card = el('div', 'item' + (a.read ? '' : ' unread'));
-      var head = el('div', 'item-head');
-      head.appendChild(el('strong', 'grow', (a.name || 'anonymous') + ' \\u2014 ' + a.email));
-      head.appendChild(el('span', 'msg-meta', (a.created_at || '').slice(0, 16)));
-      var readB = el('button', 'icon-btn', a.read ? '\\u21BA' : '\\u2713');
-      readB.title = a.read ? 'Mark unread' : 'Mark read';
-      readB.onclick = function () {
-        api('/api/admin/applications/' + a.id + '/read', { method: 'POST' }).then(loadApps)
-          .catch(function (e) { toast(e.message, true); });
-      };
-      var delB = el('button', 'icon-btn danger', '\\uD83D\\uDDD1');
-      delB.title = 'Delete';
-      delB.onclick = function () {
-        if (!confirm('Delete this application forever?')) return;
-        api('/api/admin/applications/' + a.id, { method: 'DELETE' }).then(loadApps)
-          .catch(function (e) { toast(e.message, true); });
-      };
-      head.appendChild(readB);
-      head.appendChild(delB);
-      card.appendChild(head);
-      if (a.portfolio) {
-        var link = el('div', 'msg-body');
-        var aEl = el('a', '', a.portfolio);
-        aEl.href = a.portfolio;
-        aEl.target = '_blank';
-        aEl.rel = 'noopener';
-        link.appendChild(aEl);
-        card.appendChild(link);
-      }
-      if (a.message) card.appendChild(el('div', 'msg-body', a.message));
-      listEl.appendChild(card);
-    });
-  }
-
-  /* ---- creator work uploads ---- */
-  function loadUploads() {
-    api('/api/admin/uploads')
-      .then(function (d) { uploads = d.uploads; render(); })
-      .catch(function (e) { if (e.message !== 'login required') toast(e.message, true); });
-  }
-
-  function uploadAction(id, pathSuffix, method) {
-    api('/api/admin/uploads/' + id + pathSuffix, { method: method }).then(loadUploads)
-      .catch(function (e) { toast(e.message, true); });
-  }
-
-  function renderUploads() {
-    if (uploads === null) {
-      listEl.appendChild(el('div', 'empty', 'Fetching uploads\\u2026'));
-      return;
-    }
-    if (!uploads.length) {
-      listEl.appendChild(el('div', 'empty', 'No uploads yet. Creators send work from their madamstudio page; it lands here to be marked seen, verified, and paid.'));
-      return;
-    }
-    uploads.forEach(function (u) {
-      var card = el('div', 'item' + (u.status === 'new' ? ' unread' : ''));
-      var head = el('div', 'item-head');
-      var thumb = el('a', 'thumb');
-      thumb.href = u.image;
-      thumb.target = '_blank';
-      thumb.style.width = '52px';
-      thumb.style.height = '52px';
-      thumb.style.flexShrink = '0';
-      thumb.style.backgroundImage = 'url("' + (u.image || '').replace(/"/g, '%22') + '")';
-      thumb.title = 'Open full size';
-      head.appendChild(thumb);
-      head.appendChild(el('strong', 'grow', u.creator + (u.title ? ' \\u2014 ' + u.title : '')));
-      head.appendChild(el('span', 'msg-meta', u.status.toUpperCase() + ' \\u00B7 ' + (u.created_at || '').slice(0, 16)));
-      ['seen', 'verified', 'paid'].forEach(function (s) {
-        if (u.status === s) return;
-        var b = el('button', 'btn', s);
-        b.style.textTransform = 'uppercase';
-        b.onclick = function () { uploadAction(u.id, '/' + s, 'POST'); };
-        head.appendChild(b);
-      });
-      var delB = el('button', 'icon-btn danger', '\\uD83D\\uDDD1');
-      delB.title = 'Delete (also removes the image)';
-      delB.onclick = function () {
-        if (!confirm('Delete this upload forever?')) return;
-        uploadAction(u.id, '', 'DELETE');
-      };
-      head.appendChild(delB);
-      card.appendChild(head);
-      listEl.appendChild(card);
-    });
-  }
-
-  /* ---- Creators: split founder dashboard ----
-     Left = pick one creator and drop work straight into their feed (lands
-     verified/live immediately). Right = the shared crew activity feed, the
-     same for every founder. Both read the same uploads list. */
-  function uploadCardEl(u, manage) {
-    var card = el('div', 'item' + (u.status === 'new' ? ' unread' : ''));
-    var head = el('div', 'item-head');
-    var thumb = el('a', 'thumb');
-    thumb.href = u.image; thumb.target = '_blank';
-    thumb.style.width = '46px'; thumb.style.height = '46px'; thumb.style.flexShrink = '0';
-    thumb.style.backgroundImage = 'url("' + (u.image || '').replace(/"/g, '%22') + '")';
-    head.appendChild(thumb);
-    head.appendChild(el('strong', 'grow', (manage ? '' : u.creator + ' \\u2014 ') + (u.title || '(untitled)')));
-    head.appendChild(el('span', 'msg-meta', u.status.toUpperCase() + ' \\u00B7 ' + (u.created_at || '').slice(0, 16)));
-    if (manage) {
-      ['seen', 'verified', 'paid'].forEach(function (s) {
-        if (u.status === s) return;
-        var b = el('button', 'btn', s); b.style.textTransform = 'uppercase';
-        b.onclick = function () { uploadAction(u.id, '/' + s, 'POST'); };
-        head.appendChild(b);
-      });
-      var delB = el('button', 'icon-btn danger', '\\uD83D\\uDDD1');
-      delB.title = 'Delete';
-      delB.onclick = function () { if (confirm('Delete this upload forever?')) uploadAction(u.id, '', 'DELETE'); };
-      head.appendChild(delB);
-    }
-    card.appendChild(head);
-    return card;
-  }
-
-  function renderCreators() {
-    if (uploads === null) {
-      listEl.appendChild(el('div', 'empty', 'Loading the crew dashboard\\u2026'));
-      return;
-    }
-    var split = el('div');
-    split.style.display = 'grid';
-    split.style.gridTemplateColumns = 'repeat(auto-fit, minmax(300px, 1fr))';
-    split.style.gap = '1.2rem';
-    split.style.alignItems = 'start';
-
-    /* ---- LEFT: one creator ---- */
-    var left = el('div');
-    left.appendChild(el('div', 'col-label', 'Upload to a creator'));
-    var names = state.credits.map(function (c) { return c.name; }).filter(Boolean);
-    if (!pickedCreator && names.length) pickedCreator = names[0];
-    var sel = el('select');
-    names.forEach(function (n) { sel.appendChild(new Option(n, n)); });
-    sel.value = pickedCreator;
-    sel.onchange = function () { pickedCreator = sel.value; render(); };
-    left.appendChild(sel);
-
-    var drop = el('div', 'item');
-    var file = el('input'); file.type = 'file'; file.accept = 'image/png,image/jpeg,image/gif,image/webp';
-    var upBtn = el('button', 'btn primary', 'Choose image \\u2192 upload to ' + (pickedCreator || 'creator'));
-    upBtn.style.width = '100%';
-    upBtn.onclick = function () { file.click(); };
-    file.onchange = function () {
-      var f = file.files[0]; file.value = '';
-      if (!f || !pickedCreator) return;
-      upBtn.disabled = true; upBtn.textContent = 'Uploading\\u2026';
-      var title = f.name.replace(/\\.[a-z0-9]+$/i, '').slice(0, 100);
-      fetch('/api/admin/upload-for?creator=' + encodeURIComponent(pickedCreator) + '&title=' + encodeURIComponent(title), {
-        method: 'POST',
-        headers: Object.assign({ 'Content-Type': f.type }, authHeaders()),
-        body: f,
-      }).then(function (r) { return r.json().then(function (d) { if (!r.ok) throw new Error(d.error || 'upload failed'); return d; }); })
-        .then(function () { toast('Added to ' + pickedCreator); uploads = null; loadUploads(); })
-        .catch(function (e) { toast(e.message, true); upBtn.disabled = false; upBtn.textContent = 'Choose image \\u2192 upload'; });
-    };
-    drop.appendChild(upBtn);
-    drop.appendChild(file);
-    left.appendChild(drop);
-
-    var mine = uploads.filter(function (u) { return u.creator === pickedCreator; });
-    left.appendChild(el('div', 'col-label', (pickedCreator || 'Creator') + "'s work \\u00B7 " + mine.length));
-    if (!mine.length) left.appendChild(el('div', 'empty', 'Nothing yet \\u2014 drop the first piece above.'));
-    mine.forEach(function (u) { left.appendChild(uploadCardEl(u, true)); });
-
-    /* ---- RIGHT: shared crew feed ---- */
-    var right = el('div');
-    right.appendChild(el('div', 'col-label', 'Crew activity \\u2014 everyone'));
-    if (!uploads.length) right.appendChild(el('div', 'empty', 'No work uploaded yet.'));
-    uploads.slice(0, 40).forEach(function (u) { right.appendChild(uploadCardEl(u, false)); });
-
-    split.appendChild(left);
-    split.appendChild(right);
-    listEl.appendChild(split);
-  }
-
-  /* ---- payments ---- */
-  function loadPayments() {
-    api('/api/admin/payments')
-      .then(function (d) { payments = d.payments; render(); })
-      .catch(function (e) { if (e.message !== 'login required') toast(e.message, true); });
-  }
-
-  function money(n) { return '$' + (Number(n) || 0).toFixed(2); }
-
-  function renderPayments() {
-    if (payments === null) {
-      listEl.appendChild(el('div', 'empty', 'Fetching payments\\u2026'));
-      return;
-    }
-    // "Record a payment" form: creator dropdown from credits, amount, note.
-    var form = el('div', 'item');
-    var fields = el('div', 'fields');
-    var creatorNames = state.credits.map(function (c) { return c.name; }).filter(Boolean);
-    var selWrap = el('div', 'full');
-    selWrap.appendChild(el('label', '', 'Creator'));
-    var sel = el('select');
-    sel.appendChild(new Option('Select a creator\\u2026', ''));
-    creatorNames.forEach(function (n) { sel.appendChild(new Option(n, n)); });
-    selWrap.appendChild(sel);
-    fields.appendChild(selWrap);
-    var amtWrap = el('div');
-    amtWrap.appendChild(el('label', '', 'Amount ($)'));
-    var amt = el('input'); amt.type = 'number'; amt.min = '0'; amt.step = '0.01';
-    amtWrap.appendChild(amt);
-    fields.appendChild(amtWrap);
-    var noteWrap = el('div');
-    noteWrap.appendChild(el('label', '', 'Note (what for)'));
-    var note = el('input'); note.type = 'text';
-    noteWrap.appendChild(note);
-    fields.appendChild(noteWrap);
-    var payBtn = el('button', 'btn primary', 'Record payment');
-    payBtn.onclick = function () {
-      if (!sel.value) { toast('Pick a creator', true); return; }
-      if (!(Number(amt.value) > 0)) { toast('Enter an amount', true); return; }
-      payBtn.disabled = true;
-      api('/api/admin/payments', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ creator: sel.value, amount: Number(amt.value), note: note.value }),
-      }).then(function () { toast('Payment recorded'); payments = null; loadPayments(); })
-        .catch(function (e) { toast(e.message, true); payBtn.disabled = false; });
-    };
-    fields.appendChild(payBtn);
-    form.appendChild(fields);
-    listEl.appendChild(form);
-
-    if (!payments.length) {
-      listEl.appendChild(el('div', 'empty', 'No payments recorded yet.'));
-      return;
-    }
-    // Per-creator totals.
-    var totals = {};
-    payments.forEach(function (p) { totals[p.creator] = (totals[p.creator] || 0) + (Number(p.amount) || 0); });
-    var grand = payments.reduce(function (s, p) { return s + (Number(p.amount) || 0); }, 0);
-    var sum = el('div', 'item');
-    sum.appendChild(el('strong', '', 'Paid out: ' + money(grand)));
-    var byLine = Object.keys(totals).map(function (k) { return k + ' ' + money(totals[k]); }).join('  \\u00B7  ');
-    sum.appendChild(el('div', 'msg-meta', byLine));
-    listEl.appendChild(sum);
-
-    payments.forEach(function (p) {
-      var card = el('div', 'item');
-      var head = el('div', 'item-head');
-      head.appendChild(el('strong', 'grow', p.creator + ' \\u2014 ' + money(p.amount) + (p.note ? '  (' + p.note + ')' : '')));
-      head.appendChild(el('span', 'msg-meta', (p.created_at || '').slice(0, 16)));
-      var delB = el('button', 'icon-btn danger', '\\uD83D\\uDDD1');
-      delB.title = 'Delete';
-      delB.onclick = function () {
-        if (!confirm('Delete this payment record?')) return;
-        api('/api/admin/payments/' + p.id, { method: 'DELETE' }).then(function () { payments = null; loadPayments(); })
           .catch(function (e) { toast(e.message, true); });
       };
       head.appendChild(delB);
@@ -1385,8 +1030,21 @@ export const ADMIN_HTML = `<!DOCTYPE html>
     return panel;
   }
 
+  // One plain-English line per tab, shown under the tab row, so nobody has to
+  // guess what a tab is for.
+  var TAB_HELP = {
+    merch: 'The products shown in the MERCH section of the website. Import them from Printful, or add one by hand, then hit Save & publish.',
+    credits: 'The flip cards in the CREDITS section \\u2014 who worked on the show, their photo, and the bio on the back of the card.',
+    donators: 'The list of names thanked in the DONATORS section of the website.',
+    messages: 'Messages people sent you from the box on the website. Each one comes with the sender\\u2019s email so you can write back.',
+    signups: 'Everyone who put their email in the signup box on the website \\u2014 your mailing list. Download it as a CSV.',
+    orders: 'Live orders pulled straight from your Printful account: what sold, to who, and where it is in shipping.',
+    analytics: 'How much traffic the website is getting \\u2014 visits per day for the last month, or per month for the last year.'
+  };
+
   function render() {
     listEl.innerHTML = '';
+    document.getElementById('tabHelp').textContent = TAB_HELP[tab] || '';
     var editable = tab === 'merch' || tab === 'credits' || tab === 'donators';
     document.getElementById('addBtn').style.display = editable ? '' : 'none';
     document.getElementById('saveBtn').style.display = editable ? '' : 'none';
