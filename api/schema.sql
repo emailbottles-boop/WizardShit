@@ -22,7 +22,9 @@ CREATE TABLE IF NOT EXISTS credits (
   back_quote     INTEGER NOT NULL DEFAULT 0, -- 1 = italic quote style
   back_show_name INTEGER NOT NULL DEFAULT 0, -- 1 = repeat the name on the card back
   visible        INTEGER NOT NULL DEFAULT 1,
-  sort           INTEGER NOT NULL DEFAULT 0
+  sort           INTEGER NOT NULL DEFAULT 0,
+  board_group    TEXT NOT NULL DEFAULT '',       -- department group for the board editor
+  arrangement    TEXT NOT NULL DEFAULT 'split'   -- how this creator's own board lays out
 );
 
 CREATE TABLE IF NOT EXISTS donators (
@@ -78,9 +80,16 @@ CREATE TABLE IF NOT EXISTS uploads (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   creator    TEXT NOT NULL,                 -- credit card name it belongs to
   title      TEXT NOT NULL DEFAULT '',
-  image      TEXT NOT NULL,                 -- /img/<key> URL in R2
+  image      TEXT NOT NULL,                 -- /img/<key> URL in R2, or an external link
   status     TEXT NOT NULL DEFAULT 'new',   -- new | seen | verified | paid
+  media_type TEXT NOT NULL DEFAULT 'image', -- image | video | music | link | file
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Studio-wide settings (key/value). Holds e.g. the public board's arrangement.
+CREATE TABLE IF NOT EXISTS settings (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS accounts (

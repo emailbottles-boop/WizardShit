@@ -1141,10 +1141,86 @@ async function founderUploadFor(request, env, origin) {
   if (bad) return json({ error: bad }, 415);
   const key = 'upload-' + Date.now().toString(36) + '-' + crypto.randomUUID().slice(0, 8) + '.' + ext;
   await env.IMAGES.put(key, body, { httpMetadata: { contentType: type } });
-  await env.DB.prepare("INSERT INTO uploads (creator, title, image, status) VALUES (?, ?, ?, 'verified')")
+  await env.DB.prepare("INSERT INTO uploads (creator, title, image, status, media_type) VALUES (?, ?, ?, 'verified', 'image')")
     .bind(creator, title, origin + '/img/' + key)
     .run();
   return json({ ok: true, url: origin + '/img/' + key });
+}
+
+// Board editor: set a creator's department group and/or individual arrangement.
+const ARRANGEMENTS = ['split', 'gallery', 'feed', 'showcase', 'stream'];
+async function creatorConfig(request, env) {
+  let data;
+  try {
+    data = await request.json();
+  } catch {
+    return json({ error: 'Body must be JSON' }, 400);
+  }
+  const name = str(data.name, 200);
+  if (!name) return json({ error: 'Missing creator name' }, 400);
+  const known = await env.DB.prepare('SELECT 1 AS ok FROM credits WHERE name = ?').bind(name).first();
+  if (!known) return json({ error: 'Unknown creator' }, 400);
+  const sets = [];
+  const binds = [];
+  if (data.board_group !== undefined) {
+    sets.push('board_group = ?');
+    binds.push(str(data.board_group, 60));
+  }
+  if (data.arrangement !== undefined) {
+    const a = str(data.arrangement, 20);
+    if (!ARRANGEMENTS.includes(a)) return json({ error: 'Unknown arrangement' }, 400);
+    sets.push('arrangement = ?');
+    binds.push(a);
+  }
+  if (!sets.length) return json({ error: 'Nothing to update' }, 400);
+  binds.push(name);
+  await env.DB.prepare('UPDATE credits SET ' + sets.join(', ') + ' WHERE name = ?').bind(...binds).run();
+  return json({ ok: true });
+}
+
+// The one public board's arrangement (studio-wide, same for everyone).
+async function publicArrangement(request, env, method) {
+  if (method === 'GET') {
+    const row = await env.DB.prepare("SELECT value FROM settings WHERE key = 'public_arrangement'").first();
+    return json({ arrangement: (row && row.value) || 'gallery' }, 200, { 'Cache-Control': 'no-store' });
+  }
+  let data;
+  try {
+    data = await request.json();
+  } catch {
+    return json({ error: 'Body must be JSON' }, 400);
+  }
+  const a = str(data.arrangement, 20);
+  if (!ARRANGEMENTS.includes(a)) return json({ error: 'Unknown arrangement' }, 400);
+  await env.DB.prepare("INSERT INTO settings (key, value) VALUES ('public_arrangement', ?) ON CONFLICT(key) DO UPDATE SET value = ?")
+    .bind(a, a)
+    .run();
+  return json({ ok: true });
+}
+
+// Board editor: add a slot that points at an external link (a video, track, or
+// any URL) rather than an uploaded file. Stored like an upload, with its media
+// type, so it renders as a slot on the board.
+const MEDIA_TYPES = ['image', 'video', 'music', 'link', 'file'];
+async function uploadLink(request, env) {
+  let data;
+  try {
+    data = await request.json();
+  } catch {
+    return json({ error: 'Body must be JSON' }, 400);
+  }
+  const creator = str(data.creator, 200);
+  const title = str(data.title, 300);
+  const link = str(data.url, 2000);
+  const mediaType = MEDIA_TYPES.includes(data.type) ? data.type : 'link';
+  if (!creator) return json({ error: 'Pick a creator' }, 400);
+  const known = await env.DB.prepare('SELECT 1 AS ok FROM credits WHERE name = ?').bind(creator).first();
+  if (!known) return json({ error: 'Unknown creator' }, 400);
+  if (!/^https?:\/\//i.test(link)) return json({ error: 'Link must start with http(s)://' }, 400);
+  await env.DB.prepare("INSERT INTO uploads (creator, title, image, status, media_type) VALUES (?, ?, ?, 'verified', ?)")
+    .bind(creator, title, link, mediaType)
+    .run();
+  return json({ ok: true });
 }
 
 async function serveImage(env, key) {
@@ -1332,6 +1408,15 @@ async function route(request, env, ctx, url, path, method) {
         }
         if (method === 'POST' && path === '/api/admin/upload-for') {
           return founderUploadFor(request, env, url.origin);
+        }
+        if (method === 'POST' && path === '/api/admin/creator-config') {
+          return creatorConfig(request, env);
+        }
+        if (path === '/api/admin/public-arrangement' && (method === 'GET' || method === 'POST')) {
+          return publicArrangement(request, env, method);
+        }
+        if (method === 'POST' && path === '/api/admin/upload-link') {
+          return uploadLink(request, env);
         }
         if (method === 'GET' && path === '/api/admin/messages') {
           const rows = await env.DB.prepare('SELECT * FROM messages ORDER BY id DESC LIMIT 500').all();
