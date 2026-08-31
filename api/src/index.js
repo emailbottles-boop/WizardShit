@@ -1177,29 +1177,7 @@ async function purgeContentCache() {
 
 /* -------------------------------------------------------------- router --- */
 
-export default {
-  async fetch(request, env, ctx) {
-    const url = new URL(request.url);
-    const path = url.pathname;
-    const method = request.method;
-
-    if (method === 'OPTIONS') {
-      // These POSTs all send a non-simple Content-Type (application/json or
-      // image/*), so the browser always preflights here first. Restricting the
-      // preflight origin to the site's own origins is what actually stops a
-      // third-party page from driving the write endpoints via a visitor's
-      // browser — the actual POST never fires if this preflight refuses it.
-      return new Response(null, {
-        status: 204,
-        headers: {
-          ...writeCors(request, env),
-          'Access-Control-Allow-Methods': 'GET, POST, PUT, OPTIONS',
-          'Access-Control-Allow-Headers': 'Content-Type, Authorization, Cf-Access-Jwt-Assertion',
-          'Access-Control-Max-Age': '86400',
-        },
-      });
-    }
-
+async function route(request, env, ctx, url, path, method) {
     try {
       // ---- public ----
       if (method === 'GET' && path === '/api/content') {
@@ -1503,5 +1481,50 @@ export default {
       console.error(e);
       return json({ error: 'Something went wrong. Please try again.' }, 500);
     }
+}
+
+export default {
+  async fetch(request, env, ctx) {
+    const url = new URL(request.url);
+    const path = url.pathname;
+    const method = request.method;
+
+    if (method === 'OPTIONS') {
+      // These POSTs all send a non-simple Content-Type (application/json or
+      // image/*), so the browser always preflights here first. Restricting the
+      // preflight origin to the site's own origins is what actually stops a
+      // third-party page from driving the write endpoints via a visitor's
+      // browser — the actual POST never fires if this preflight refuses it.
+      // DELETE is allowed too: the Madam Studio console removes claims,
+      // payments and uploads cross-origin.
+      return new Response(null, {
+        status: 204,
+        headers: {
+          ...writeCors(request, env),
+          'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+          'Access-Control-Allow-Headers': 'Content-Type, Authorization, Cf-Access-Jwt-Assertion',
+          'Access-Control-Max-Age': '86400',
+        },
+      });
+    }
+
+    const resp = await route(request, env, ctx, url, path, method);
+    // The Madam Studio admin console is hosted on a different origin
+    // (madamwizzy.com) but calls these same owner-only + login endpoints, so
+    // their responses must carry an Access-Control-Allow-Origin the browser
+    // will accept. They remain auth-gated — CORS only lets the trusted studio
+    // origin read the reply. Public GETs keep their own wildcard CORS.
+    if (
+      path === '/api/login-config' ||
+      path === '/api/glogin' ||
+      path === '/api/admin/login' ||
+      path.startsWith('/api/admin/')
+    ) {
+      const ac = writeCors(request, env);
+      const out = new Response(resp.body, resp);
+      for (const k in ac) out.headers.set(k, ac[k]);
+      return out;
+    }
+    return resp;
   },
 };

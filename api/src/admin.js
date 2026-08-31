@@ -264,17 +264,14 @@ export const ADMIN_HTML = `<!DOCTYPE html>
   </header>
 
   <nav class="tabs">
+    <!-- Store console only. The Madam Studio platform tabs (Wizard IDs,
+         Creators, Uploads, Payments, Apps, Panels) live in the separate
+         Madam Studio console at madamwizzy.com/admin. -->
     <button class="tab active" data-tab="merch">Merch</button>
     <button class="tab" data-tab="credits">Credits</button>
     <button class="tab" data-tab="donators">Donators</button>
-    <button class="tab" data-tab="panels">Panels</button>
     <button class="tab" data-tab="messages">Messages</button>
     <button class="tab" data-tab="signups">Signups</button>
-    <button class="tab" data-tab="claims">Wizard IDs</button>
-    <button class="tab" data-tab="creators">Creators</button>
-    <button class="tab" data-tab="uploads">Uploads</button>
-    <button class="tab" data-tab="payments">Payments</button>
-    <button class="tab" data-tab="apps">Apps</button>
     <button class="tab" data-tab="orders">Orders</button>
     <button class="tab" data-tab="analytics">Analytics</button>
   </nav>
@@ -1390,7 +1387,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
 
   function render() {
     listEl.innerHTML = '';
-    var editable = tab === 'merch' || tab === 'credits' || tab === 'donators' || tab === 'panels';
+    var editable = tab === 'merch' || tab === 'credits' || tab === 'donators';
     document.getElementById('addBtn').style.display = editable ? '' : 'none';
     document.getElementById('saveBtn').style.display = editable ? '' : 'none';
     document.getElementById('printfulBtn').style.display = tab === 'merch' ? '' : 'none';
@@ -1399,14 +1396,8 @@ export const ADMIN_HTML = `<!DOCTYPE html>
       renderMerch();
     } else if (tab === 'credits') renderCredits();
     else if (tab === 'donators') renderDonators();
-    else if (tab === 'panels') renderPanels();
     else if (tab === 'messages') { renderMessages(); return; }
     else if (tab === 'signups') { renderSignups(); return; }
-    else if (tab === 'claims') { renderClaims(); return; }
-    else if (tab === 'creators') { renderCreators(); return; }
-    else if (tab === 'uploads') { renderUploads(); return; }
-    else if (tab === 'payments') { renderPayments(); return; }
-    else if (tab === 'apps') { renderApps(); return; }
     else if (tab === 'analytics') { renderAnalytics(); return; }
     else { renderOrders(); return; }
     if (!state[tab].length) {
@@ -1423,10 +1414,6 @@ export const ADMIN_HTML = `<!DOCTYPE html>
       render();
       if (tab === 'messages' && inbox === null) loadInbox();
       if (tab === 'signups' && signups === null) loadSignups();
-      if (tab === 'claims' && claims === null) loadClaims();
-      if ((tab === 'uploads' || tab === 'creators') && uploads === null) loadUploads();
-      if (tab === 'payments' && payments === null) loadPayments();
-      if (tab === 'apps' && apps === null) loadApps();
       if (tab === 'orders' && orders === null) loadOrders();
       if (tab === 'analytics' && stats === null) loadStats();
     };
@@ -1450,7 +1437,6 @@ export const ADMIN_HTML = `<!DOCTYPE html>
     var fresh;
     if (tab === 'merch') fresh = { title: '', url: 'https://wizard.printful.me/product/', image: '', sticker: 0, row_break: 0, visible: 1 };
     else if (tab === 'credits') fresh = { name: '', roles: '', photo: '', photo_css: '', back_text: '', back_quote: 0, back_show_name: 0, visible: 1 };
-    else if (tab === 'panels') fresh = { creator: '', title: '', url: '', image: '', visible: 1 };
     else fresh = { name: '', visible: 1 };
     state[tab].unshift(fresh);
     setDirty(true);
@@ -1460,10 +1446,6 @@ export const ADMIN_HTML = `<!DOCTYPE html>
   document.getElementById('reloadBtn').onclick = function () {
     if (tab === 'messages') { inbox = null; render(); loadInbox(); return; }
     if (tab === 'signups') { signups = null; render(); loadSignups(); return; }
-    if (tab === 'claims') { claims = null; render(); loadClaims(); return; }
-    if (tab === 'uploads' || tab === 'creators') { uploads = null; render(); loadUploads(); return; }
-    if (tab === 'payments') { payments = null; render(); loadPayments(); return; }
-    if (tab === 'apps') { apps = null; render(); loadApps(); return; }
     if (tab === 'orders') { orders = null; render(); loadOrders(); return; }
     if (tab === 'analytics') { stats = null; render(); loadStats(); return; }
     if (dirty && !confirm('Throw away unsaved changes and reload?')) return;
