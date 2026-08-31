@@ -1672,6 +1672,9 @@ const SCREENS = { home, updates, merch, content, credits, donators };
 function showScreen(screenToShow, pushState = true) {
   [home, updates, merch, content, credits, donators].forEach(s => s.classList.remove("active"));
   screenToShow.classList.add("active");
+  // Each screen is its own scroll box, so it remembers where you left it.
+  // Open every screen at the top instead of halfway down the last visit.
+  screenToShow.scrollTop = 0;
   const mobileActive = window.matchMedia('(max-width: 900px)').matches;
   waterLayer.style.opacity = screenToShow === home ? 0 : (mobileActive ? 0.5 : 1);
   if (pushState) {
