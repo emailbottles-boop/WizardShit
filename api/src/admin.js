@@ -156,10 +156,13 @@ export const ADMIN_HTML = `<!DOCTYPE html>
   }
   #toast.error { border-left-color: var(--danger); }
 
+  /* Covers the page from the first paint. Without this the console renders
+     first and only gets covered once the auth request comes back, which
+     flashes the whole Control Room at anyone who opens the page. */
   #loginOverlay {
     position: fixed; inset: 0; z-index: 40;
     background: var(--bg);
-    display: none; align-items: center; justify-content: center; padding: 1.5rem;
+    display: flex; align-items: center; justify-content: center; padding: 1.5rem;
   }
   #loginOverlay .box {
     width: min(370px, 92vw);
@@ -168,6 +171,10 @@ export const ADMIN_HTML = `<!DOCTYPE html>
     background: var(--card);
     padding: 2.1rem 1.8rem 1.9rem;
     text-align: center;
+    visibility: hidden;
+  }
+  #loginOverlay.ask .box {
+    visibility: visible;
     animation: rise 0.35s cubic-bezier(0.16, 1, 0.3, 1);
   }
   @keyframes rise {
@@ -297,6 +304,19 @@ export const ADMIN_HTML = `<!DOCTYPE html>
 (function () {
   'use strict';
 
+  // The overlay is up from the first paint; these two decide whether it is
+  // showing the password box or getting out of the way.
+  function showLoginPrompt() {
+    var ov = document.getElementById('loginOverlay');
+    ov.style.display = 'flex';
+    ov.classList.add('ask');
+  }
+  function hideLoginPrompt() {
+    var ov = document.getElementById('loginOverlay');
+    ov.classList.remove('ask');
+    ov.style.display = 'none';
+  }
+
   // This is the STORE console (wizardshit.store/login): merch, credits,
   // donators, the inbox, the mailing list, Printful orders, traffic.
   // Crew/creator admin — wizard IDs, uploads, payments, applications, panels —
@@ -347,7 +367,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
     opts.headers = Object.assign({}, opts.headers || {}, authHeaders());
     return fetch(path, opts).then(function (res) {
       if (res.status === 401) {
-        document.getElementById('loginOverlay').style.display = 'flex';
+        showLoginPrompt();
         setupGoogleButton();
         throw new Error('login required');
       }
@@ -388,7 +408,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
                     return;
                   }
                   sessionStorage.setItem('wizpw', out.d.token);
-                  document.getElementById('loginOverlay').style.display = 'none';
+                  hideLoginPrompt();
                   boot();
                 })
                 .catch(function () { toast('Network error', true); });
@@ -421,7 +441,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
           err.style.display = 'block';
           return;
         }
-        document.getElementById('loginOverlay').style.display = 'none';
+        hideLoginPrompt();
         boot();
       })
       .catch(function () { toast('Network error', true); });
@@ -1143,17 +1163,23 @@ export const ADMIN_HTML = `<!DOCTYPE html>
       .then(function (out) {
         if (!out.ok) {
           if (out.status === 401) {
-            document.getElementById('loginOverlay').style.display = 'flex';
+            showLoginPrompt();
             setupGoogleButton();
-          } else toast(out.d.error || 'Backend not ready', true);
+          } else {
+            // Not an auth problem — get the cover out of the way so the
+            // console and the error are both visible.
+            hideLoginPrompt();
+            toast(out.d.error || 'Backend not ready', true);
+          }
           return;
         }
+        hideLoginPrompt();
         document.getElementById('whoami').textContent =
           'logged in' + (out.d.email && out.d.email !== 'owner' ? ' as ' + out.d.email : '') +
           (out.d.mode === 'access' ? ' via Cloudflare Access' : out.d.mode === 'google' ? ' via Google' : '');
         load();
       })
-      .catch(function () { toast('Cannot reach the backend', true); });
+      .catch(function () { hideLoginPrompt(); toast('Cannot reach the backend', true); });
   }
 
   boot();
