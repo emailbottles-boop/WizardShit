@@ -101,12 +101,20 @@ CREATE TABLE IF NOT EXISTS accounts (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
--- Payments a founder records to a creator; shown in that creator's hub.
+-- Money a founder records against a creator; shown in that creator's hub.
+-- One row per entry, so the three figures on a creator's page are sums by
+-- kind rather than counters that can drift:
+--   paid     — money already sent, the running "paid to date" total
+--   deferred — agreed work that pays out later
+--   iou      — an informal debt, not yet scheduled
+-- 'paid' is the default so every row written before kinds existed keeps
+-- counting as a real payment.
 CREATE TABLE IF NOT EXISTS payments (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   creator    TEXT NOT NULL,                 -- credit card name
   amount     REAL NOT NULL,                 -- in dollars
   note       TEXT NOT NULL DEFAULT '',
+  kind       TEXT NOT NULL DEFAULT 'paid',  -- paid | deferred | iou
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
