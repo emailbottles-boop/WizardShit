@@ -120,6 +120,35 @@ function json(data, status = 200, headers = {}) {
 // promises a founder records so a creator can see what is still owed.
 const PAYMENT_KINDS = ['paid', 'deferred', 'iou'];
 
+// A 'paid' row can settle one of the promises, drawing it down. '' is fresh
+// money that settles nothing.
+const PAYMENT_SETTLES = ['', 'iou', 'deferred'];
+
+/**
+ * Folds ledger rows into the three figures a creator's page shows.
+ *
+ * paid is gross — every dollar sent, whatever it settled. The other two are
+ * balances: what was promised, less the payments marked as settling it. They
+ * floor at zero, so overpaying a $50 IOU by $10 reads as settled rather than
+ * as owing minus ten.
+ */
+function payTotals(rows) {
+  let paid = 0;
+  let deferred = 0;
+  let iou = 0;
+  for (const row of rows) {
+    const amount = Number(row.amount) || 0;
+    if (row.kind === 'deferred') deferred += amount;
+    else if (row.kind === 'iou') iou += amount;
+    else {
+      paid += amount;
+      if (row.settles === 'iou') iou -= amount;
+      else if (row.settles === 'deferred') deferred -= amount;
+    }
+  }
+  return { paid, deferred: Math.max(0, deferred), iou: Math.max(0, iou) };
+}
+
 // Public GETs return data that is public anyway, so they keep a wildcard.
 const PUBLIC_CORS = { 'Access-Control-Allow-Origin': '*' };
 
@@ -724,25 +753,19 @@ async function accountMe(env, acct) {
     else if (c.status === 'pending' || c.status === 'staged') pending.push(c.credit_name);
   }
   // Money the creator can see: everything recorded against a card they're
-  // verified on. paidTotal stays money actually sent — deferred pay and IOUs
-  // are promises, so they are counted separately and never folded into it.
+  // verified on. paidTotal stays money actually sent; the other two are what
+  // is still owed after the payments that settled them.
   let payments = [];
-  let paidTotal = 0;
-  let deferredTotal = 0;
-  let iouTotal = 0;
+  let totals = { paid: 0, deferred: 0, iou: 0 };
   if (verified.length) {
     const marks = verified.map(() => '?').join(',');
     const rows = await env.DB.prepare(
-      'SELECT id, creator, amount, note, kind, created_at FROM payments WHERE creator IN (' + marks + ') ORDER BY id DESC LIMIT 200',
+      'SELECT id, creator, amount, note, kind, settles, created_at FROM payments WHERE creator IN (' + marks + ') ORDER BY id DESC LIMIT 200',
     ).bind(...verified).all();
     payments = rows.results;
-    for (const p of payments) {
-      const amount = Number(p.amount) || 0;
-      if (p.kind === 'deferred') deferredTotal += amount;
-      else if (p.kind === 'iou') iouTotal += amount;
-      else paidTotal += amount;
-    }
+    totals = payTotals(payments);
   }
+  const { paid: paidTotal, deferred: deferredTotal, iou: iouTotal } = totals;
   return json(
     {
       account: accountInfo(row.id, row.username, row.email, row.role),
@@ -1542,15 +1565,21 @@ async function route(request, env, ctx, url, path, method) {
           // Older callers (and the Control Room's plain "record a payment"
           // form) send no kind at all, which stays a real payment.
           const kind = str(body.kind, 20) || 'paid';
+          // Only money actually sent can settle a promise; a promise settling
+          // another promise would double-count against the same debt.
+          const settles = kind === 'paid' ? str(body.settles, 20) : '';
           if (!creator) return json({ error: 'Pick a creator' }, 400);
           if (!PAYMENT_KINDS.includes(kind)) return json({ error: 'Unknown kind' }, 400);
+          if (!PAYMENT_SETTLES.includes(settles)) return json({ error: 'Unknown settles' }, 400);
           const known = await env.DB.prepare('SELECT 1 AS ok FROM credits WHERE name = ?').bind(creator).first();
           if (!known) return json({ error: 'Unknown creator' }, 400);
           if (!Number.isFinite(amount) || amount <= 0 || amount > 1000000) {
             return json({ error: 'Enter a valid amount' }, 400);
           }
-          await env.DB.prepare('INSERT INTO payments (creator, amount, note, kind) VALUES (?, ?, ?, ?)')
-            .bind(creator, Math.round(amount * 100) / 100, note, kind)
+          await env.DB.prepare(
+            'INSERT INTO payments (creator, amount, note, kind, settles) VALUES (?, ?, ?, ?, ?)',
+          )
+            .bind(creator, Math.round(amount * 100) / 100, note, kind, settles)
             .run();
           return json({ ok: true });
         }

@@ -115,6 +115,14 @@ CREATE TABLE IF NOT EXISTS payments (
   amount     REAL NOT NULL,                 -- in dollars
   note       TEXT NOT NULL DEFAULT '',
   kind       TEXT NOT NULL DEFAULT 'paid',  -- paid | deferred | iou
+  -- What a 'paid' row settles: '' (fresh money), 'iou' or 'deferred'.
+  -- Paying someone usually draws down what they were owed, so the two
+  -- promise figures are balances, not piles that only grow:
+  --   iou outstanding      = sum(iou)      - sum(paid settling 'iou')
+  --   deferred outstanding = sum(deferred) - sum(paid settling 'deferred')
+  -- Settling never rewrites the original row, so the ledger stays an
+  -- audit trail and a mistake is undone by deleting the payment.
+  settles    TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
