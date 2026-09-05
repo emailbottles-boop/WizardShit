@@ -872,6 +872,8 @@
         slots.forEach(function (slot) { if (slot.photo && slot.photo.id === p.id) stripShow(slot, p, true); });
       } else if (at >= 0) {
         list[at].caption = p.caption;
+        list[at].uploader = p.uploader;
+        list[at].photographer = p.photographer;
       }
       return;
     }

@@ -254,7 +254,8 @@ export const ADMIN_HTML = `<!doctype html>
         '<div class="by">' + (p.uploader ? 'added by ' + esc(p.uploader) : 'added anonymously') +
           (p.photographer ? ' \u00b7 photo by ' + esc(p.photographer) : '') +
           ' \u00b7 <a href="/api/admin/original/' + p.id + '?token=' + encodeURIComponent(token) + '">original' + (p.original_bytes ? ' ' + niceSize(p.original_bytes) : '') + '</a>' +
-          ' · ' + esc(String(p.created_at || '').slice(0, 10)) + '</div>' +
+          ' · ' + esc(String(p.created_at || '').slice(0, 10)) +
+          ' · <a href="#" data-act="names">edit names</a></div>' +
       '</div>' +
       '<div class="acts">' +
         (p.kind === 'audio' || /\.gif$/i.test(p.image || '') ? '' : '<button data-act="trim">Trim</button>') +
@@ -262,6 +263,19 @@ export const ADMIN_HTML = `<!doctype html>
         '<button data-act="hide">' + (p.hidden ? 'Put back' : 'Hide') + '</button>' +
         '<button class="danger" data-act="del">Delete</button>' +
       '</div>';
+
+    // The two names on a photo can be corrected or cleared here. A blank
+    // answer clears that name; Cancel leaves everything as it was.
+    el.querySelector('[data-act="names"]').onclick = function (e) {
+      e.preventDefault();
+      var by = prompt('Added by (leave blank for no name):', p.uploader || '');
+      if (by === null) return;
+      var photoBy = prompt('Photo by (leave blank for no name):', p.photographer || '');
+      if (photoBy === null) return;
+      api('/api/admin/photos/' + p.id, { method: 'POST', body: JSON.stringify({ uploader: by.trim(), photographer: photoBy.trim() }) })
+        .then(function () { p.uploader = by.trim(); p.photographer = photoBy.trim(); el.replaceWith(card(p)); })
+        .catch(function (err) { alert(err.message); });
+    };
 
     var trimBtn = el.querySelector('[data-act="trim"]');
     if (trimBtn) trimBtn.onclick = function () { openTrim(p, el); };
