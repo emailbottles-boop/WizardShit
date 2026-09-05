@@ -57,7 +57,7 @@
     // already on the page, for when someone wants to change how it reads.
     if (s.name) {
       $('name').textContent = s.name;
-      document.title = 'In memory of ' + s.name;
+      document.title = s.name + ' — The Real MJ';
     }
     if (s.dates) $('dates').textContent = s.dates;
     if (s.intro) $('intro').textContent = s.intro;

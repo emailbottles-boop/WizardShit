@@ -79,9 +79,21 @@ body {
   margin: 0;
 }
 
+/* The line under his name. Set once here, not in the database: it is who he
+   was, not something that needs editing. */
+.sub {
+  font-family: var(--serif);
+  font-style: italic;
+  font-weight: 400;
+  font-size: clamp(24px, 4.6vw, 34px);
+  line-height: 1.2;
+  color: var(--soft);
+  margin: 8px 0 0;
+}
+
 .dates {
   font-family: var(--serif);
-  font-size: clamp(18px, 3.4vw, 24px);
+  font-size: clamp(17px, 3vw, 21px);
   font-style: italic;
   color: var(--soft);
   margin: 12px 0 0;
