@@ -129,6 +129,14 @@
     el.dataset.id = st.id;
     el.tabIndex = 0;
     el.setAttribute('role', 'button');
+    if (st.image) {
+      var pic = document.createElement('img');
+      pic.loading = 'lazy';
+      pic.decoding = 'async';
+      pic.src = thumbUrl(st);
+      pic.alt = '';
+      el.appendChild(pic);
+    }
     var text = document.createElement('p');
     text.textContent = st.caption || '';
     el.appendChild(text);
@@ -144,14 +152,24 @@
     return el;
   }
 
+  // Stories with a photograph come first, then the written ones; newest
+  // first within each.
+  function storyOrder(a, b) {
+    var ai = a.image ? 1 : 0, bi = b.image ? 1 : 0;
+    return bi - ai || b.id - a.id;
+  }
+
   function renderStories() {
     var list = $('storyList');
     list.innerHTML = '';
+    stories.sort(storyOrder);
     stories.forEach(function (st) { list.appendChild(storyCard(st, false)); });
     $('stories').hidden = stories.length === 0;
   }
 
   function openReader(st) {
+    $('readerImg').hidden = !st.image;
+    if (st.image) $('readerImg').src = fileUrl(st); else $('readerImg').removeAttribute('src');
     $('readerText').textContent = st.caption || '';
     $('readerBy').textContent = st.uploader ? 'told by ' + st.uploader : '';
     $('readerBy').hidden = !st.uploader;
@@ -375,6 +393,7 @@
       li.dataset.i = i;
       ul.appendChild(li);
     });
+    storyButton();
     $('send').disabled = chosen.length === 0;
     $('send').textContent = chosen.length > 1
       ? 'Add ' + chosen.length + ' photos to the wall'
@@ -567,7 +586,7 @@
 
   /* ---------------------------------------------------------- uploading --- */
 
-  function send(item, caption, by) {
+  function send(item, caption, by, story) {
     var photoBy = $('photoBy').value.trim();
     var trap = $('website').value;
     var q = trap ? '?website=' + encodeURIComponent(trap) : '';
@@ -584,6 +603,7 @@
       fd.append('caption', caption);
       fd.append('by', by);
       fd.append('photo_by', photoBy);
+      if (story) fd.append('story', story);
       return api('/api/photos' + q, { method: 'POST', body: fd });
     }
 
@@ -723,32 +743,60 @@
 
   /* -------------------------------------------------------------- story --- */
 
-  $('story').addEventListener('input', function () {
-    $('sendStory').disabled = $('story').value.trim().length < 2;
-  });
+  function storyButton() {
+    var has = $('story').value.trim().length >= 2;
+    $('sendStory').disabled = !has;
+    $('sendStory').textContent = chosen.length === 1 ? 'Add the photo with the story' : 'Add the story';
+  }
+  $('story').addEventListener('input', storyButton);
+
+  function placeStory(st) {
+    stories.push(st);
+    stories.sort(storyOrder);
+    renderStories();
+    var el = findStory(st.id);
+    if (el) el.classList.add('fresh');
+  }
 
   $('sendStory').addEventListener('click', function () {
     var text = $('story').value.trim();
     if (text.length < 2) return;
     var msg = $('msg');
     var btn = $('sendStory');
-    btn.disabled = true;
     msg.className = 'msg';
+
+    // A story goes with one photograph or none. More than one, or a
+    // recording, is asked to be sorted out rather than guessed at.
+    if (chosen.length > 1) {
+      msg.className = 'msg bad';
+      msg.textContent = 'Choose just one photo to go with a story, or none.';
+      return;
+    }
+    if (chosen.length === 1 && audioType(chosen[0])) {
+      msg.className = 'msg bad';
+      msg.textContent = 'A story goes with a photo, not a recording. Add the recording to the wall on its own.';
+      return;
+    }
+
+    btn.disabled = true;
     msg.textContent = 'Adding…';
-    api('/api/stories', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ story: text, by: $('by').value.trim(), website: $('website').value }),
-    }).then(function (d) {
-      if (d && d.story) {
-        stories.unshift(d.story);
-        var list = $('storyList');
-        list.insertBefore(storyCard(d.story, true), list.firstChild);
-        $('stories').hidden = false;
-      }
+    var by = $('by').value.trim();
+    var work = chosen.length === 1
+      ? prepare(chosen[0]).then(function (item) { return send(item, '', by, text); }).then(function (d) { return d && d.photo; })
+      : api('/api/stories', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ story: text, by: by, website: $('website').value }),
+        }).then(function (d) { return d && d.story; });
+
+    work.then(function (st) {
+      if (st) placeStory(st);
       msg.className = 'msg good';
       msg.textContent = 'Added. Thank you.';
       $('story').value = '';
+      chosen = [];
+      $('files').value = '';
+      listChosen();
       setTimeout(function () {
         closeSheet();
         msg.textContent = '';
@@ -757,7 +805,8 @@
       }, 1400);
     }).catch(function (err) {
       msg.className = 'msg bad';
-      msg.textContent = err.message || 'Could not add that just now. Please try again.';
+      msg.textContent = err.message === 'could not read' ? "Couldn't read that photo. Try a different copy of it."
+        : (err.message === 'too large' ? 'That photo is too large.' : (err.message || 'Could not add that just now. Please try again.'));
       btn.disabled = false;
     });
   });
@@ -956,11 +1005,7 @@
         for (var si = 0; si < stories.length; si++) if (stories[si].id === p.id) { stories[si] = p; break; }
         return;
       }
-      stories.push(p); stories.sort(function (a, b) { return b.id - a.id; });
-      var sl = $('storyList');
-      var sBefore = Array.prototype.find.call(sl.children, function (el) { return Number(el.dataset.id) < p.id; }) || null;
-      sl.insertBefore(storyCard(p, true), sBefore);
-      $('stories').hidden = false;
+      placeStory(p);
       return;
     }
     // Already on the page — this device uploaded it, or an earlier poll

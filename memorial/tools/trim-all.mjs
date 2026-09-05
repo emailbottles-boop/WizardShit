@@ -121,7 +121,7 @@ async function main() {
     if (!d.more || !page.length) break;
     before = page[page.length - 1].id;
   }
-  const todo = all.filter((p) => p.kind === 'photo' && !p.hidden && !p.trimmed && !/gif/i.test(p.mime || '') && !/\.gif$/i.test(p.image || ''));
+  const todo = all.filter((p) => p.kind !== 'audio' && p.image && !p.hidden && !p.trimmed && !/gif/i.test(p.mime || '') && !/\.gif$/i.test(p.image || ''));
   say(all.length + ' items on the site, ' + todo.length + ' photos to look at.');
 
   let trimmed = 0, clean = 0, skipped = 0, failed = 0;
