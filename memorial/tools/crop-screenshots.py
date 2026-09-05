@@ -16,8 +16,9 @@ How it decides where the photo is
 A screenshot is a tall flat-coloured canvas with the photo as a band across
 the middle. Looking for bright rows quietly fails on photos taken at night —
 a dim shot is darker than the white UI text above it. What separates them is
-flatness: the viewer's bars are one exact colour, and a photograph's rows
-never are, not even its darkest sky. See photo_band() for the two rules.
+smoothness: along a row of the viewer's furniture neighbouring pixels are all
+but identical, and along a row of a photograph they never are — even a night
+sky carries noise. See photo_band().
 
 Requires Pillow:  pip install Pillow
 """
@@ -29,12 +30,6 @@ try:
 except ImportError:
     sys.exit("Pillow is needed:  pip install Pillow")
 
-# A pixel this dark counts as "black". Not 0 — video compression and screen
-# dimming leave true black sitting a shade above it.
-BLACK = 4
-# Fraction of a row's width that must be non-black for it to be photo. Real
-# rows measured on Facebook screenshots: UI <= 0.10, darkest photo 0.44.
-COVER = 0.30
 # Ignore a band this short; it is a stray highlight, not a photograph.
 MIN_ROWS = 200
 
@@ -44,53 +39,43 @@ SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".heic", ".PNG", ".JPG", ".JPEG"}
 def photo_band(im):
     """Return (top, bottom) of the photograph, or None if there isn't one.
 
-    Two rules, tried in order.
+    What every viewer's furniture has in common is that it is SMOOTH: flat
+    black, a flat grey, a vertical gradient, even Facebook's blurred wash
+    behind a post. Along any of those rows, neighbouring pixels are all but
+    identical. A photograph is never smooth like that — even a night sky
+    carries sensor noise, so neighbouring pixels differ by a value or more.
 
-    1. Exact-colour. A viewer's bars are a single flat colour — Facebook's is
-       pure black, Instagram's stories viewer a dark grey — and the top-left
-       pixel is always that colour. Any row that is 90% that exact colour is
-       furniture. A photograph's darkest sky never is: its pixels vary by a
-       few values, so almost none match exactly. Text rows and thumbnail
-       strips dip below 90%, but they are cut off from the photo by flat
-       rows on either side, so they form short separate runs and the photo
-       is still the longest one.
-
-    2. Coverage, as a fallback when the bars really are black and rule 1
-       finds nothing usable: rows where under 30% of the width is non-black
-       are furniture (UI rows measure 0.00-0.10, the darkest photo 0.44).
+    Measured on real screenshots, the mean change between neighbouring
+    pixels along a row is 0.00-0.13 for furniture and 0.84 upward for the
+    darkest photo rows, so 0.5 splits them with room on both sides. Text
+    rows and thumbnail strips score high too, but smooth rows box them in,
+    so they form short separate runs and the photo is the longest one.
     """
-    rgb = im.convert("RGB")
+    rgb = im.convert("L")
     w, h = rgb.size
     px = rgb.load()
-    cols = list(range(0, w, max(1, w // 160)))
-    n = len(cols)
-    corner = px[0, 0]
-
-    def longest(flags):
-        best = None
-        y = 0
-        while y < h:
-            if flags[y]:
-                start = y
-                while y < h and flags[y]:
-                    y += 1
-                if best is None or y - start > best[1] - best[0]:
-                    best = (start, y)
-            y += 1
-        return best
-
-    exact = [sum(1 for x in cols if px[x, y] == corner) / n for y in range(h)]
-    band = longest([e < 0.9 for e in exact])
-    if band and band[1] - band[0] >= MIN_ROWS:
-        return band
-
-    grey = im.convert("L")
-    g = grey.load()
-    lit = [sum(1 for x in cols if g[x, y] > BLACK) / n > COVER for y in range(h)]
-    band = longest(lit)
-    if band and band[1] - band[0] >= MIN_ROWS:
-        return band
-    return None
+    photo = []
+    for y in range(h):
+        total = 0
+        prev = px[0, y]
+        for x in range(1, w):
+            cur = px[x, y]
+            total += cur - prev if cur >= prev else prev - cur
+            prev = cur
+        photo.append(total / (w - 1) >= 0.5)
+    best = None
+    y = 0
+    while y < h:
+        if photo[y]:
+            start = y
+            while y < h and photo[y]:
+                y += 1
+            if best is None or y - start > best[1] - best[0]:
+                best = (start, y)
+        y += 1
+    if best is None or best[1] - best[0] < MIN_ROWS:
+        return None
+    return best
 
 
 def main():

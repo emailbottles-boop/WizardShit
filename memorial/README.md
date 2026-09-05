@@ -109,7 +109,7 @@ Keep it somewhere that isn't Cloudflare.
 | `api/deploy.sh` | puts the whole site live |
 | `api/backup.sh` | downloads everything onto your computer |
 | `tools/crop-screenshots.py` | trims phone/Facebook furniture off screenshots |
-| `seed/` | the first photos of him, and `seed.sh` to put them on the site once |
+| `seed/` | the first photos of him, and `seed.sh` to put them up; safe to re-run |
 
 ## A note on what this does with photos
 
