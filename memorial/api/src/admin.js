@@ -218,6 +218,7 @@ export const ADMIN_HTML = `<!doctype html>
       '<div class="meta">' +
         '<div class="cap">' + (p.caption ? esc(p.caption) : '<span style="color:var(--soft)">No caption</span>') + '</div>' +
         '<div class="by">' + (p.uploader ? 'added by ' + esc(p.uploader) : 'added anonymously') +
+          (p.photographer ? ' \u00b7 photo by ' + esc(p.photographer) : '') +
           ' · ' + esc(String(p.created_at || '').slice(0, 10)) + '</div>' +
       '</div>' +
       '<div class="acts">' +

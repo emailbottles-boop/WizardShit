@@ -17,6 +17,8 @@
   var recordings = [];  // every visible recording, newest first
   var oldest = null;    // id of the last one loaded, for paging
   var cursor = 0;       // the last change event this page has applied
+  var people = [];      // everyone who has put a name to a photo
+  var filter = '';      // '' = everyone, else one person's photos
   var loading = false;
 
   /* ------------------------------------------------------------ helpers --- */
@@ -144,23 +146,9 @@
     }
     fig.appendChild(img);
 
-    if (p.caption || p.uploader) {
-      var cap = document.createElement('figcaption');
-      if (p.caption) {
-        var c = document.createElement('div');
-        c.className = 'cap';
-        c.textContent = p.caption;
-        cap.appendChild(c);
-      }
-      if (p.uploader) {
-        var b = document.createElement('div');
-        b.className = 'by';
-        b.textContent = 'added by ' + p.uploader;
-        cap.appendChild(b);
-      }
-      fig.appendChild(cap);
-    }
-
+    // Nothing is written under a photo on the wall. Whatever came with it —
+    // the words, who added it, who took it — is kept and shown when the photo
+    // is opened.
     function open() { openLight(photos.indexOf(p)); }
     fig.addEventListener('click', open);
     fig.addEventListener('keydown', function (e) {
@@ -186,6 +174,8 @@
       $('state').hidden = photos.length > 0;
       if (!photos.length) $('state').textContent = recordings.length ? 'No photographs yet.' : 'Nothing here yet. Yours can be the first.';
       $('more').hidden = !d.more;
+      people = d.people || [];
+      renderPeople();
       cursor = d.cursor || 0;
       startLive();
     }).catch(function () {
@@ -200,7 +190,7 @@
     if (loading || !oldest) return;
     loading = true;
     $('more').textContent = 'Loading…';
-    api('/api/photos?before=' + oldest).then(function (d) {
+    api('/api/photos?before=' + oldest + (filter ? '&by=' + encodeURIComponent(filter) : '')).then(function (d) {
       var list = d.photos || [];
       photos = photos.concat(list);
       if (list.length) oldest = list[list.length - 1].id;
@@ -226,6 +216,7 @@
     $('lightImg').alt = p.caption || '';
     $('lightCap').textContent = p.caption || '';
     $('lightBy').textContent = p.uploader ? 'added by ' + p.uploader : '';
+    $('lightPhotoBy').textContent = p.photographer ? 'photo by ' + p.photographer : '';
     $('light').hidden = false;
     document.body.style.overflow = 'hidden';
     $('closeLight').focus();
@@ -487,6 +478,8 @@
     var blob = item.blob || item;
     var type = item.type || blob.type || 'image/jpeg';
     var q = '?caption=' + encodeURIComponent(caption) + '&by=' + encodeURIComponent(by);
+    var photoBy = $('photoBy').value.trim();
+    if (photoBy) q += '&photo_by=' + encodeURIComponent(photoBy);
     if (item.isAudio && item.duration) q += '&duration=' + encodeURIComponent(Math.round(item.duration * 10) / 10);
     var trap = $('website').value;
     if (trap) q += '&website=' + encodeURIComponent(trap);
@@ -558,6 +551,7 @@
         var newPhotos = added.filter(function (p) { return p.kind !== 'audio'; });
         var newRecs = added.filter(function (p) { return p.kind === 'audio'; });
         if (newPhotos.length) {
+          newPhotos.forEach(function (p) { notePerson(p.uploader); });
           photos = newPhotos.concat(photos);
           var wall = $('wall');
           newPhotos.slice().reverse().forEach(function (p) {
@@ -618,6 +612,57 @@
     });
   });
 
+  /* ------------------------------------------------------------- people --- */
+
+  // A row of names above the wall. Tap one to see just that person's photos
+  // as a set; tap Everyone to come back. Only appears once two or more people
+  // have put a name to something.
+  function renderPeople() {
+    var nav = $('people');
+    nav.innerHTML = '';
+    if (people.length < 2 && !filter) { nav.hidden = true; return; }
+    var all = [{ name: '' }].concat(people);
+    all.forEach(function (person) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = person.name || 'Everyone';
+      b.setAttribute('aria-pressed', person.name === filter ? 'true' : 'false');
+      b.addEventListener('click', function () { setFilter(person.name); });
+      nav.appendChild(b);
+    });
+    nav.hidden = false;
+  }
+
+  // Someone put their name to a photo: make sure they have a chip.
+  function notePerson(name) {
+    if (!name || people.some(function (x) { return x.name === name; })) return;
+    people.push({ name: name, count: 1 });
+    renderPeople();
+  }
+
+  function setFilter(name) {
+    if (name === filter) return;
+    filter = name;
+    renderPeople();
+    loadWall();
+  }
+
+  function loadWall() {
+    loading = true;
+    $('more').hidden = true;
+    api('/api/photos' + (filter ? '?by=' + encodeURIComponent(filter) : '')).then(function (d) {
+      photos = d.photos || [];
+      oldest = photos.length ? photos[photos.length - 1].id : null;
+      render(photos, false);
+      $('state').hidden = photos.length > 0;
+      if (!photos.length) $('state').textContent = filter ? 'Nothing from ' + filter + ' yet.' : 'Nothing here yet. Yours can be the first.';
+      $('more').hidden = !d.more;
+    }).catch(function () {
+      $('state').hidden = false;
+      $('state').textContent = 'Could not load those just now. Please try again in a moment.';
+    }).then(function () { loading = false; });
+  }
+
   /* --------------------------------------------------------------- live --- */
 
   // Nobody should have to refresh. Every few seconds the page asks the server
@@ -646,6 +691,7 @@
   }
 
   function placeItem(p) {
+    if (p.kind !== 'audio') notePerson(p.uploader);
     // Already on the page — this device uploaded it, or an earlier poll
     // delivered it. Refresh the words under it and leave it where it is.
     var existing = p.kind === 'audio' ? findRec(p.id) : findTile(p.id);
@@ -668,6 +714,9 @@
       $('recordings').hidden = false;
       return;
     }
+    // Looking at one person's set: photos from anyone else wait until the
+    // page is back on Everyone.
+    if (filter && p.uploader !== filter) return;
     photos.push(p); photos.sort(byId);
     $('wall').insertBefore(tile(p, true), before($('wall')));
     $('state').hidden = true;

@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS photos (
   r2_key     TEXT NOT NULL,                  -- the bare R2 key, so delete can find it
   caption    TEXT NOT NULL DEFAULT '',       -- what it is / the memory; a recording's title
   uploader   TEXT NOT NULL DEFAULT '',       -- who added it (free text, optional)
+  photographer TEXT NOT NULL DEFAULT '',     -- who took it, if they said
   width      INTEGER NOT NULL DEFAULT 0,     -- photos: from the file's own header
   height     INTEGER NOT NULL DEFAULT 0,     -- lets the grid reserve space, no layout jump
   duration   REAL    NOT NULL DEFAULT 0,     -- recordings: seconds, as the uploader's browser read it

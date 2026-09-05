@@ -360,6 +360,7 @@ function photoRow(r) {
     image: r.image,
     caption: r.caption || '',
     uploader: r.uploader || '',
+    photographer: r.photographer || '',
     width: r.width || 0,
     height: r.height || 0,
     duration: r.duration || 0,
@@ -367,19 +368,34 @@ function photoRow(r) {
   };
 }
 
-const ROW_COLS = 'id, kind, image, caption, uploader, width, height, duration, created_at';
+const ROW_COLS = 'id, kind, image, caption, uploader, photographer, width, height, duration, created_at';
 
-async function listPhotos(env, beforeId) {
+async function listPhotos(env, beforeId, by) {
   const before = Number(beforeId);
-  const sql = Number.isFinite(before) && before > 0
-    ? 'SELECT ' + ROW_COLS + " FROM photos WHERE hidden = 0 AND kind = 'photo' AND id < ? ORDER BY id DESC LIMIT ?"
-    : 'SELECT ' + ROW_COLS + " FROM photos WHERE hidden = 0 AND kind = 'photo' ORDER BY id DESC LIMIT ?";
-  const stmt = Number.isFinite(before) && before > 0
-    ? env.DB.prepare(sql).bind(before, PAGE_SIZE)
-    : env.DB.prepare(sql).bind(PAGE_SIZE);
-  const { results } = await stmt.all();
+  const paged = Number.isFinite(before) && before > 0;
+  const where = ["hidden = 0", "kind = 'photo'"];
+  const binds = [];
+  if (by) { where.push('uploader = ?'); binds.push(by); }
+  if (paged) { where.push('id < ?'); binds.push(before); }
+  binds.push(PAGE_SIZE);
+  const { results } = await env.DB.prepare(
+    'SELECT ' + ROW_COLS + ' FROM photos WHERE ' + where.join(' AND ') + ' ORDER BY id DESC LIMIT ?',
+  ).bind(...binds).all();
   const photos = (results || []).map(photoRow);
   return { photos, more: photos.length === PAGE_SIZE };
+}
+
+// Everyone who has put their name to a visible photo, most photos first. This
+// is what lets the page show one person's photos as a set.
+async function listPeople(env) {
+  try {
+    const { results } = await env.DB.prepare(
+      "SELECT uploader AS name, COUNT(*) AS n FROM photos WHERE hidden = 0 AND kind = 'photo' AND uploader <> '' GROUP BY uploader ORDER BY n DESC, name ASC LIMIT 200",
+    ).all();
+    return (results || []).map((r) => ({ name: r.name, count: r.n }));
+  } catch {
+    return [];
+  }
 }
 
 async function listRecordings(env) {
@@ -422,7 +438,7 @@ async function latestCursor(env) {
  */
 async function changesSince(env, cursor) {
   const { results } = await env.DB.prepare(
-    'SELECT c.seq, c.kind AS ev, c.item_id, p.hidden, p.id, p.kind, p.image, p.caption, p.uploader, ' +
+    'SELECT c.seq, c.kind AS ev, c.item_id, p.hidden, p.id, p.kind, p.image, p.caption, p.uploader, p.photographer, ' +
     'p.width, p.height, p.duration, p.created_at ' +
     'FROM changes c LEFT JOIN photos p ON p.id = c.item_id WHERE c.seq > ? ORDER BY c.seq ASC LIMIT 200',
   ).bind(cursor).all();
@@ -531,6 +547,7 @@ async function receiveUpload(request, env, origin) {
 
   const caption = str(url.searchParams.get('caption'), 600);
   const uploader = str(url.searchParams.get('by'), 80);
+  const photographer = str(url.searchParams.get('photo_by'), 80);
   // The browser reads the length before uploading; it is display-only, so a
   // wrong or missing value costs nothing but a label. Capped at ten hours.
   const duration = isImage ? 0 : Math.max(0, Math.min(36000, Number(url.searchParams.get('duration')) || 0));
@@ -553,9 +570,9 @@ async function receiveUpload(request, env, origin) {
   let row;
   try {
     row = await env.DB.prepare(
-      'INSERT INTO photos (kind, mime, image, r2_key, caption, uploader, width, height, duration, bytes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING ' + ROW_COLS,
+      'INSERT INTO photos (kind, mime, image, r2_key, caption, uploader, photographer, width, height, duration, bytes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING ' + ROW_COLS,
     )
-      .bind(kind, storedType, image, key, caption, uploader, width, height, duration, body.byteLength)
+      .bind(kind, storedType, image, key, caption, uploader, photographer, width, height, duration, body.byteLength)
       .first();
   } catch (err) {
     await env.IMAGES.delete(key).catch(() => {});
@@ -650,10 +667,10 @@ async function route(request, env, ctx, url, path, method) {
     const cacheKey = new Request(origin + '/api/memorial');
     const hit = await cache.match(cacheKey);
     if (hit) return hit;
-    const [settings, wall, recordings, cursor] = await Promise.all([
-      readSettings(env), listPhotos(env, null), listRecordings(env), latestCursor(env),
+    const [settings, wall, recordings, cursor, people] = await Promise.all([
+      readSettings(env), listPhotos(env, null), listRecordings(env), latestCursor(env), listPeople(env),
     ]);
-    const res = json({ ...wall, recordings, settings, cursor }, 200, {
+    const res = json({ ...wall, recordings, settings, cursor, people }, 200, {
       ...PUBLIC_CORS,
       // Short, because a photo added now should appear almost at once for
       // everyone; the explicit purge above covers the uploader themselves.
@@ -685,7 +702,7 @@ async function route(request, env, ctx, url, path, method) {
   // Older pages are not cached: they are read far less often, and they shift
   // as photos are hidden.
   if (path === '/api/photos' && method === 'GET') {
-    return json(await listPhotos(env, url.searchParams.get('before')), 200, PUBLIC_CORS);
+    return json(await listPhotos(env, url.searchParams.get('before'), str(url.searchParams.get('by'), 80)), 200, PUBLIC_CORS);
   }
 
   if (path === '/api/photos' && method === 'POST') {
@@ -737,6 +754,7 @@ async function route(request, env, ctx, url, path, method) {
         if ('hidden' in body) { sets.push('hidden = ?'); binds.push(body.hidden ? 1 : 0); }
         if ('caption' in body) { sets.push('caption = ?'); binds.push(str(body.caption, 600)); }
         if ('uploader' in body) { sets.push('uploader = ?'); binds.push(str(body.uploader, 80)); }
+        if ('photographer' in body) { sets.push('photographer = ?'); binds.push(str(body.photographer, 80)); }
         if (!sets.length) return json({ error: 'Nothing to change' }, 400);
         binds.push(id);
         await env.DB.prepare('UPDATE photos SET ' + sets.join(', ') + ' WHERE id = ?').bind(...binds).run();

@@ -51,6 +51,7 @@
 </section>
 
 <main>
+  <nav class="people" id="people" hidden aria-label="Photos by person"></nav>
   <div class="wall" id="wall" aria-live="polite"></div>
   <p class="state" id="state">Loading the photographs…</p>
   <button class="more" id="more" type="button" hidden>Show older photos</button>
@@ -78,6 +79,9 @@
     <label for="by">Your name <span class="opt">optional</span></label>
     <input id="by" maxlength="80" autocomplete="name" placeholder="So people know who shared it">
 
+    <label for="photoBy">Photographer <span class="opt">optional</span></label>
+    <input id="photoBy" maxlength="80" placeholder="Who took the photo">
+
     <!--
       Honeypot. Kept out of the tab order and hidden from screen readers, so
       only an automated form-filler ever puts anything in it.
@@ -102,6 +106,7 @@
     <figcaption>
       <span id="lightCap"></span>
       <span id="lightBy"></span>
+      <span id="lightPhotoBy"></span>
     </figcaption>
   </figure>
 </div>
