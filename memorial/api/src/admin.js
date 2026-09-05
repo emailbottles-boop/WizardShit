@@ -258,12 +258,25 @@ export const ADMIN_HTML = `<!doctype html>
       '</div>' +
       '<div class="acts">' +
         (p.kind === 'audio' || /\.gif$/i.test(p.image || '') ? '' : '<button data-act="trim">Trim</button>') +
+        (p.trimmed ? '<button data-act="untrim">Untrim</button>' : '') +
         '<button data-act="hide">' + (p.hidden ? 'Put back' : 'Hide') + '</button>' +
         '<button class="danger" data-act="del">Delete</button>' +
       '</div>';
 
     var trimBtn = el.querySelector('[data-act="trim"]');
     if (trimBtn) trimBtn.onclick = function () { openTrim(p, el); };
+    var untrimBtn = el.querySelector('[data-act="untrim"]');
+    if (untrimBtn) untrimBtn.onclick = function () {
+      untrimBtn.disabled = true;
+      fetch('/api/admin/photos/' + p.id + '/untrim', { method: 'POST', headers: { Authorization: 'Bearer ' + token } })
+        .then(function (r) { return r.json().catch(function () { return {}; }).then(function (d) { if (!r.ok) throw new Error(d.error || 'Could not untrim'); return d; }); })
+        .then(function (d) {
+          p.image = d.image; p.width = d.width; p.height = d.height; p.trimmed = 0;
+          var img = el.querySelector('img'); if (img) img.src = d.image;
+          untrimBtn.remove();
+        })
+        .catch(function (e) { alert(e.message); untrimBtn.disabled = false; });
+    };
     el.dataset.id = p.id;
     cards[p.id] = { p: p, el: el };
 
@@ -493,9 +506,12 @@ export const ADMIN_HTML = `<!doctype html>
           });
         });
     }).then(function (d) {
-      t.p.image = d.image; t.p.width = d.width; t.p.height = d.height;
+      t.p.image = d.image; t.p.width = d.width; t.p.height = d.height; t.p.trimmed = 1;
       var img = t.el.querySelector('img');
       if (img) img.src = d.image;
+      var fresh = card(t.p);
+      t.el.replaceWith(fresh);
+      t.el = fresh;
       var badge = t.el.querySelector('.badge');
       if (badge) badge.remove();
       msg.className = 'msg good'; msg.textContent = 'Done. It is on the wall like this now.';

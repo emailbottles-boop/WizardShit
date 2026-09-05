@@ -1,0 +1,9 @@
+{
+  "name": "memorial-tools",
+  "private": true,
+  "type": "module",
+  "description": "Helpers that run on the caretaker's computer, not on the site.",
+  "dependencies": {
+    "sharp": "^0.34.3"
+  }
+}
