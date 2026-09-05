@@ -688,15 +688,28 @@
     return w >= 1100 ? 4 : w >= 700 ? 3 : 2;
   }
 
-  function stripPick(except) {
-    // A photo not already in the row, chosen at random; failing that, any
-    // photo that is not the one being replaced.
-    var showing = {};
-    slots.forEach(function (s) { if (s.photo) showing[s.photo.id] = true; });
-    var pool = photos.filter(function (p) { return !showing[p.id]; });
-    if (!pool.length) pool = photos.filter(function (p) { return !except || p.id !== except.id; });
-    if (!pool.length) return null;
-    return pool[Math.floor(Math.random() * pool.length)];
+  // The row runs through the photographs in the order they were added,
+  // starting from the bottom of the wall (the first ones up) and working
+  // towards the newest, then around again. Ids only ever go up as photos are
+  // added, so "the next one" is simply the smallest id above the last shown,
+  // which stays right even as new photos arrive or the caretaker hides some.
+  var stripLast = 0;           // id of the photo most recently put in the row
+
+  function stripPick() {
+    var next = null;
+    for (var i = photos.length - 1; i >= 0; i--) {
+      if (photos[i].id > stripLast) { next = photos[i]; break; }
+    }
+    if (!next) {
+      // Reached the newest. If the wall has older pages it has not fetched
+      // yet, bring the next one in first so the row can start from the true
+      // bottom; otherwise go around again from the oldest that is loaded.
+      if (!$('more').hidden) { if (!loading) loadMore(); return null; }
+      stripLast = 0;
+      next = photos.length ? photos[photos.length - 1] : null;
+    }
+    if (next) stripLast = next.id;
+    return next;
   }
 
   function stripShow(slot, p, instant) {
@@ -750,14 +763,19 @@
       row.appendChild(el);
       slots.push(slot);
     }
+    // Fill left to right with the first photographs that went up.
+    stripLast = 0;
+    stripNext = 0;
     slots.forEach(function (slot) { stripShow(slot, stripPick(), true); });
   }
 
   function stripTurn() {
     if (!slots.length || photos.length < STRIP_MIN) return;
+    var p = stripPick();
+    if (!p) return;                       // an older page is on its way; try next time
     var slot = slots[stripNext % slots.length];
     stripNext++;
-    stripShow(slot, stripPick(slot.photo), false);
+    stripShow(slot, p, false);
   }
 
   function stripRun() {
