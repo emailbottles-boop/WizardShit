@@ -296,6 +296,43 @@ function be32(b, o) {
   return ((b[o] << 24) | (b[o + 1] << 16) | (b[o + 2] << 8) | b[o + 3]) >>> 0;
 }
 
+/**
+ * A phone held upright shoots its sensor's native landscape frame and writes
+ * an EXIF tag saying "rotate this on display" rather than rotating the pixels
+ * itself — cheaper for the camera, and every viewer honours the tag when
+ * painting the photo. This reads that ONE tag (Orientation, 0x0112) out of a
+ * JPEG's EXIF block, by hand: just enough of TIFF's structure to find it,
+ * nothing else in EXIF is used or trusted here.
+ */
+function tiffU16(b, o, little) { return little ? (b[o] | (b[o + 1] << 8)) : ((b[o] << 8) | b[o + 1]); }
+function tiffU32(b, o, little) {
+  return little
+    ? ((b[o] | (b[o + 1] << 8) | (b[o + 2] << 16) | (b[o + 3] << 24)) >>> 0)
+    : (((b[o] << 24) | (b[o + 1] << 16) | (b[o + 2] << 8) | b[o + 3]) >>> 0);
+}
+
+function exifOrientation(app1, len) {
+  // "Exif\0\0" then a TIFF header: 2-byte byte order, magic 42, IFD0 offset.
+  if (len < 14 || !(app1[0] === 0x45 && app1[1] === 0x78 && app1[2] === 0x69 && app1[3] === 0x66)) return 0;
+  const tiff = 6;
+  let little;
+  if (app1[tiff] === 0x49 && app1[tiff + 1] === 0x49) little = true;
+  else if (app1[tiff] === 0x4d && app1[tiff + 1] === 0x4d) little = false;
+  else return 0;
+  if (tiffU16(app1, tiff + 2, little) !== 42) return 0;
+  const ifd0 = tiff + tiffU32(app1, tiff + 4, little);
+  if (ifd0 + 2 > len) return 0;
+  const count = tiffU16(app1, ifd0, little);
+  for (let e = 0; e < count; e++) {
+    const entry = ifd0 + 2 + e * 12;
+    if (entry + 12 > len) break;
+    // Tag 0x0112 = Orientation, type SHORT: its value sits in the first two
+    // bytes of the entry's 4-byte value field regardless of byte order.
+    if (tiffU16(app1, entry, little) === 0x0112) return tiffU16(app1, entry + 8, little);
+  }
+  return 0;
+}
+
 function tag(b, o, text) {
   for (let i = 0; i < text.length; i++) if (b[o + i] !== text.charCodeAt(i)) return false;
   return true;
@@ -343,18 +380,31 @@ function readImageSize(buf, type) {
   } else if (type === 'image/jpeg') {
     if (b.length < 4 || b[0] !== 0xff || b[1] !== 0xd8 || b[2] !== 0xff) return 'That is not a real JPEG';
     let i = 2;
+    let orientation = 0;
     while (i + 9 < b.length) {
       if (b[i] !== 0xff) { i++; continue; }
       const t = b[i + 1];
       if (t === 0xff || t === 0x01 || t === 0xd8 || (t >= 0xd0 && t <= 0xd9)) { i += t === 0xff ? 1 : 2; continue; }
+      const segLen = (b[i + 2] << 8) | b[i + 3];
+      // APP1 carries EXIF, including which way up the camera held the phone.
+      // The frame's own pixel data never gets rotated for this — the tag is
+      // the only record of it — so it has to be read here, not skipped.
+      if (t === 0xe1) orientation = exifOrientation(b.subarray(i + 4, i + 2 + segLen), segLen - 2);
       // Any SOF marker carries the real size; SOF4/8/12 are tables, not frames.
       if (t >= 0xc0 && t <= 0xcf && t !== 0xc4 && t !== 0xc8 && t !== 0xcc) {
         dims = [(b[i + 7] << 8) | b[i + 8], (b[i + 5] << 8) | b[i + 6]];
         break;
       }
-      i += 2 + ((b[i + 2] << 8) | b[i + 3]);
+      i += 2 + segLen;
     }
     if (!dims) return 'Could not read that JPEG';
+    // Orientations 5-8 turn the frame a quarter turn, so the sensor's own
+    // width and height swap on screen. Without this, a phone photo taken in
+    // portrait reports its landscape sensor size, and everything downstream
+    // that lays the picture out by that size — the wall's reserved space
+    // among them — sizes a box for the wrong shape and the photo distorts to
+    // fill it, even though the photo itself displays right-side up.
+    if (orientation >= 5 && orientation <= 8) dims = [dims[1], dims[0]];
   } else if (type === 'image/gif') {
     if (b.length < 10 || b[0] !== 0x47 || b[1] !== 0x49 || b[2] !== 0x46) return 'That is not a real GIF';
     dims = [b[6] | (b[7] << 8), b[8] | (b[9] << 8)];
@@ -874,6 +924,34 @@ async function route(request, env, ctx, url, path, method) {
 
   if (path.startsWith('/api/admin/')) {
     if (!(await isAdmin(request, env))) return json({ error: 'Please sign in' }, 401);
+
+    // One-time repair for photos uploaded before EXIF orientation was read: a
+    // phone photo taken in portrait was stored with its landscape sensor
+    // dimensions, which sized the wall's reserved space for the wrong shape
+    // and squashed the photo to fill it — the photo file itself was always
+    // fine, only the recorded width/height were wrong. Re-reads each photo's
+    // actual bytes with the fixed logic and corrects the row if it disagrees.
+    // Safe to run more than once: a row already correct is left untouched.
+    if (path === '/api/admin/fix-orientation' && method === 'POST') {
+      const { results } = await env.DB.prepare(
+        "SELECT id, r2_key, mime, width, height FROM photos WHERE kind = 'photo'",
+      ).all();
+      let checked = 0, fixed = 0, unreadable = 0;
+      for (const row of results || []) {
+        checked++;
+        const obj = await env.IMAGES.get(row.r2_key).catch(() => null);
+        if (!obj) { unreadable++; continue; }
+        const size = readImageSize(await obj.arrayBuffer(), row.mime);
+        if (typeof size === 'string') { unreadable++; continue; }
+        if (size.width !== row.width || size.height !== row.height) {
+          await env.DB.prepare('UPDATE photos SET width = ?, height = ? WHERE id = ?')
+            .bind(size.width, size.height, row.id).run();
+          fixed++;
+        }
+      }
+      await purgeWallCache(origin);
+      return json({ checked, fixed, unreadable });
+    }
 
     if (path === '/api/admin/photos' && method === 'GET') {
       const before = Number(url.searchParams.get('before'));
