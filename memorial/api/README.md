@@ -90,55 +90,48 @@ own domain.
 
 ---
 
-## Putting it on your own domain
+## Putting it on mahoganyjr.com
 
-Once you've bought the domain and added it to Cloudflare (dashboard → **Add a
-site** → follow the nameserver steps at your registrar):
+The routes are already written for `mahoganyjr.com`, and the repo root has a
+`CNAME` file with that domain in it. What's left is telling Cloudflare and
+GitHub about each other.
 
-**1. Route the four backend paths to the worker.** Uncomment the `routes` block
-in `wrangler.toml` and replace `YOURDOMAIN.com` with your domain:
+**1. Add the domain to Cloudflare.** Dashboard → **Add a site** → enter
+`mahoganyjr.com` → it gives you two nameservers to paste in at whoever you
+bought the domain from. That switch can take anywhere from minutes to a day.
 
-```toml
-routes = [
-  { pattern = "yourdomain.com/api/*",  zone_name = "yourdomain.com" },
-  { pattern = "yourdomain.com/img/*",  zone_name = "yourdomain.com" },
-  { pattern = "yourdomain.com/admin*", zone_name = "yourdomain.com" },
-]
-```
+The `routes` block in `wrangler.toml` sends only `/api/*`, `/img/*` and
+`/admin` to the worker. Do **not** widen it to `mahoganyjr.com/*` — that would
+put the worker in front of the whole site, including the homepage it doesn't
+serve.
 
-Only those paths. Do **not** add `yourdomain.com/*` — that would put the worker
-in front of the whole site, including the homepage it doesn't serve.
-
-**2. Lock uploads to the domain.** In the same file. Until now this was empty,
-meaning "any site may upload" — which is what stops uploads breaking while you
-are still moving things around. Now that the address is settled you can narrow
-it:
-
-```toml
-ALLOWED_ORIGINS = "https://yourdomain.com,https://www.yourdomain.com"
-```
-
-List every address the site actually answers on. Anything you leave out has its
-uploads refused by the browser, and the person uploading sees nothing explaining
-why — so if you keep the GitHub Pages address working too, list it here as well.
-
-**3. Deploy again:** `bash deploy.sh`
-
-**4. Point the domain at GitHub Pages.** Create a file called `CNAME` in the
-repo root containing just your domain, then in the Cloudflare DNS tab add:
+**2. Point the domain at GitHub Pages.** In Cloudflare's **DNS** tab:
 
 | Type | Name | Content | Proxy |
 |---|---|---|---|
-| CNAME | `@` | `yourname.github.io` | Proxied |
-| CNAME | `www` | `yourname.github.io` | Proxied |
+| CNAME | `@` | `<your-github-username>.github.io` | Proxied |
+| CNAME | `www` | `<your-github-username>.github.io` | Proxied |
 
-**5. Simplify the config.** With both on one domain, set `js/config.js` back to:
+Then in the repo: **Settings → Pages → Custom domain** → `mahoganyjr.com`.
 
-```js
-window.MEMORIAL_API = "";
+**3. Only once mahoganyjr.com is actually loading the site**, you can narrow
+who may upload:
+
+```toml
+ALLOWED_ORIGINS = "https://mahoganyjr.com,https://www.mahoganyjr.com"
 ```
 
-The page then calls `/api/...` on its own address. Commit and push.
+It ships empty on purpose. List every address the site answers on — anything
+left out has its uploads refused by the browser, with nothing shown to the
+person uploading to explain why. Leaving it empty is not a security hole in any
+way that matters here: the wall is public and uploads are open by design.
+
+**4. Deploy again:** `bash deploy.sh`
+
+`js/config.js` is already `""`, which means "call `/api/...` on whatever
+address the page is being served from". Once the routes above are live that is
+mahoganyjr.com, and nothing further needs changing. Before then, put your
+`workers.dev` address in there so you can test.
 
 The `workers.dev` address keeps working alongside the domain — deliberately, so
 there's still a way into `/admin` if DNS ever has a bad day.

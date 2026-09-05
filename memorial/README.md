@@ -1,6 +1,6 @@
-# A memorial photo wall
+# Santana Turner — mahoganyjr.com
 
-A quiet website where the people who knew someone can put their photographs in
+A quiet website where the people who knew Santana can put their photographs in
 one place, so the pictures that only exist on one person's phone don't stay
 there.
 
@@ -41,9 +41,9 @@ Full walkthrough in **[api/README.md](api/README.md)**. Short version:
 6. Paste the worker URL it prints into `js/config.js`, commit, push
 7. Turn on GitHub Pages for this repo (Settings → Pages → deploy from `main`)
 
-Then open `/admin`, sign in, and type his name and dates into the **Page text**
-tab. That is the only place the name lives — you never have to edit code to
-change it.
+Then open `/admin`, sign in, and fill in his dates and whatever you want people
+to read first, in the **Page text** tab. His name is already on the page; the
+database version overrides it if you ever want to change how it reads.
 
 ## Looking after it
 
@@ -73,7 +73,7 @@ or twice a year:
 
 ```
 cd api
-bash backup.sh https://your-site-address.com
+bash backup.sh https://mahoganyjr.com
 ```
 
 That downloads every photo file plus all the captions into a dated folder.

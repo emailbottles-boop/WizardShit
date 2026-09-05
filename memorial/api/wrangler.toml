@@ -32,11 +32,11 @@ workers_dev = true
 # The trailing * on /admin is load-bearing. An exact pattern matches the path
 # only, so "/admin?x=1" would miss the worker and fall through to Pages.
 # ---------------------------------------------------------------------------
-# routes = [
-#   { pattern = "YOURDOMAIN.com/api/*",  zone_name = "YOURDOMAIN.com" },
-#   { pattern = "YOURDOMAIN.com/img/*",  zone_name = "YOURDOMAIN.com" },
-#   { pattern = "YOURDOMAIN.com/admin*", zone_name = "YOURDOMAIN.com" },
-# ]
+routes = [
+  { pattern = "mahoganyjr.com/api/*",  zone_name = "mahoganyjr.com" },
+  { pattern = "mahoganyjr.com/img/*",  zone_name = "mahoganyjr.com" },
+  { pattern = "mahoganyjr.com/admin*", zone_name = "mahoganyjr.com" },
+]
 
 # D1 database — create it with:
 #   npx wrangler d1 create memorial
@@ -64,7 +64,11 @@ bucket_name = "memorial-photos"
 # it, list every address the site is reachable at — including the GitHub Pages
 # one, if you use it — and add www as a separate entry:
 #
-#   ALLOWED_ORIGINS = "https://yourdomain.com,https://www.yourdomain.com,https://yourname.github.io"
+#   ALLOWED_ORIGINS = "https://mahoganyjr.com,https://www.mahoganyjr.com"
+#
+# Leave it empty until mahoganyjr.com is actually serving the site. Filling it
+# in sooner refuses uploads from the workers.dev address you test on, and does
+# it silently.
 ALLOWED_ORIGINS = ""
 
 # --- Secrets (never written in this file — it is committed to a public repo) ---

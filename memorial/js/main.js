@@ -44,15 +44,12 @@
 
   function applySettings(s) {
     s = s || {};
+    // His name is written into index.html, so an empty database is not an error
+    // and must not blank the heading — the database only ever OVERRIDES what is
+    // already on the page, for when someone wants to change how it reads.
     if (s.name) {
       $('name').textContent = s.name;
-      // The <title> in the HTML is a fallback; once we know the name, use it.
       document.title = 'In memory of ' + s.name;
-    } else {
-      // Nothing set in the admin panel yet — say so plainly rather than
-      // leaving an empty banner that looks broken.
-      $('name').textContent = 'In memory';
-      $('intro').textContent = 'Open /admin and add their name to finish setting up this page.';
     }
     if (s.dates) $('dates').textContent = s.dates;
     if (s.intro) $('intro').textContent = s.intro;
