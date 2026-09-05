@@ -856,6 +856,19 @@
     if (existing) {
       var cap = existing.querySelector('.cap');
       if (cap) cap.textContent = p.caption || (p.kind === 'audio' ? 'Untitled recording' : '');
+      // The caretaker may have trimmed it: the file behind it changed, so
+      // the picture on the wall, in the row and in the opened view follow.
+      var list = p.kind === 'audio' ? recordings : photos;
+      var at = -1;
+      for (var k = 0; k < list.length; k++) if (list[k].id === p.id) { at = k; break; }
+      if (at >= 0 && (list[at].image !== p.image || list[at].thumb !== p.thumb)) {
+        list[at] = p;
+        var img = existing.querySelector('img');
+        if (img) { img.style.aspectRatio = ''; img.removeAttribute('width'); img.removeAttribute('height'); img.src = thumbUrl(p); }
+        slots.forEach(function (slot) { if (slot.photo && slot.photo.id === p.id) stripShow(slot, p, true); });
+      } else if (at >= 0) {
+        list[at].caption = p.caption;
+      }
       return;
     }
     // New to this page. Slot it by id so order stays newest-first even when

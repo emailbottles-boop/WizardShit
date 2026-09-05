@@ -17,6 +17,7 @@
  *   POST   /api/admin/login       -> exchange the password for a session token
  *   GET    /api/admin/photos      -> every photo, including hidden ones
  *   POST   /api/admin/photos/<id> -> hide / unhide / re-caption a photo
+ *   POST   /api/admin/photos/<id>/trim -> replace the shown copy with a trimmed one
  *   DELETE /api/admin/photos/<id> -> delete a photo and its file, for good
  *   PUT    /api/admin/settings    -> save the headline text
  *
@@ -952,6 +953,64 @@ async function route(request, env, ctx, url, path, method) {
       const { results } = await stmt.all();
       const total = await env.DB.prepare('SELECT COUNT(*) AS n FROM photos').first();
       return json({ photos: results || [], more: (results || []).length === PAGE_SIZE, total: total?.n || 0 });
+    }
+
+    // Replace what the site shows for one photo with a trimmed copy from the
+    // caretaker panel: `display` (required) and `thumb` (optional), checked
+    // exactly like a public upload. The untouched original is kept as it is,
+    // so a trim can always be undone from it. New keys, so nothing cached
+    // anywhere can show the old shape; the old files are removed afterwards.
+    const trimMatch = path.match(/^\/api\/admin\/photos\/(\d+)\/trim$/);
+    if (trimMatch && method === 'POST') {
+      const id = Number(trimMatch[1]);
+      const row = await env.DB.prepare('SELECT id, kind, r2_key, thumb_key FROM photos WHERE id = ?').bind(id).first();
+      if (!row) return json({ error: 'That photo is gone' }, 404);
+      if (row.kind !== 'photo') return json({ error: 'Only photos can be trimmed' }, 400);
+      // Pinned now, before anything changes, so the cleanup at the end can
+      // only ever remove the copies this trim replaced.
+      const oldKeys = [row.r2_key, row.thumb_key].filter(Boolean);
+      const length = Number(request.headers.get('Content-Length') || '0');
+      if (length > MAX_UPLOAD_BYTES + MAX_THUMB_BYTES + 65536) return json({ error: 'That upload is too large' }, 413);
+      let form;
+      try { form = await request.formData(); } catch { return json({ error: 'Could not read that upload' }, 400); }
+      const display = form.get('display');
+      if (!display || typeof display === 'string') return json({ error: 'No photo in that upload' }, 400);
+      const dtype = (display.type || '').toLowerCase();
+      const dext = IMAGE_TYPES[dtype];
+      if (!dext) return json({ error: 'Photos (jpg, png, gif, webp) only' }, 415);
+      const dbuf = await display.arrayBuffer();
+      if (!dbuf.byteLength) return json({ error: 'That file was empty' }, 400);
+      if (dbuf.byteLength > MAX_UPLOAD_BYTES) return json({ error: 'That photo is larger than 12MB' }, 413);
+      const size = readImageSize(dbuf, dtype);
+      if (typeof size === 'string') return json({ error: size }, 415);
+      let tbuf = null, ttype = '';
+      const thumb = form.get('thumb');
+      if (thumb && typeof thumb !== 'string') {
+        ttype = (thumb.type || '').toLowerCase();
+        if (IMAGE_TYPES[ttype]) {
+          const b = await thumb.arrayBuffer();
+          if (b.byteLength && b.byteLength <= MAX_THUMB_BYTES && typeof readImageSize(b, ttype) !== 'string') tbuf = b;
+        }
+      }
+      const base = Date.now().toString(36) + '-' + crypto.randomUUID().slice(0, 12);
+      const key = base + '.' + dext;
+      const tkey = tbuf ? 'thumb-' + base + '.' + IMAGE_TYPES[ttype] : '';
+      await env.IMAGES.put(key, dbuf, { httpMetadata: { contentType: dtype } });
+      if (tbuf) await env.IMAGES.put(tkey, tbuf, { httpMetadata: { contentType: ttype } });
+      try {
+        await env.DB.prepare(
+          'UPDATE photos SET mime = ?, image = ?, r2_key = ?, thumb_key = ?, width = ?, height = ?, bytes = ? WHERE id = ?',
+        ).bind(dtype, '/img/' + key, key, tkey, size.width, size.height, dbuf.byteLength, id).run();
+      } catch (err) {
+        await Promise.all([key, tkey].filter(Boolean).map((k) => env.IMAGES.delete(k).catch(() => {})));
+        throw err;
+      }
+      // Only now are the old copies removed: if anything above had failed,
+      // the photo would still be on the wall exactly as before.
+      await Promise.all(oldKeys.map((k) => env.IMAGES.delete(k).catch(() => {})));
+      await logChange(env, 'show', id);
+      await purgeWallCache(origin);
+      return json({ ok: true, image: '/img/' + key, thumb: tkey ? '/img/' + tkey : '', width: size.width, height: size.height });
     }
 
     const photoMatch = path.match(/^\/api\/admin\/photos\/(\d+)$/);
