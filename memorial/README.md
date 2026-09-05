@@ -52,6 +52,18 @@ the wall, file kept, reversible) and **Delete** (gone permanently, including the
 file). Uploads are public the moment they are made, so `/admin` is worth having
 bookmarked on your phone.
 
+**Getting photos off Facebook.** In the photo viewer, the `...` menu in the
+top corner has **Save/Download**, which gives you the real full-resolution
+file. Use that rather than screenshotting — a screenshot bakes in the status
+bar, the black bars and the like-button strip, at a fraction of the quality.
+
+If you have already screenshotted a pile of them, this trims the furniture back
+off (originals untouched, and it is safe to run twice):
+
+```
+python3 tools/crop-screenshots.py ~/Pictures/screenshots
+```
+
 **Someone can't add a photo.** Almost always an iPhone HEIC that their browser
 won't decode. The page says so and suggests screenshotting it, which works.
 Most phones convert to JPEG automatically on upload, so this is uncommon.
@@ -79,6 +91,7 @@ Keep it somewhere that isn't Cloudflare.
 | `api/src/admin.js` | the caretaker panel |
 | `api/schema.sql` | the two database tables |
 | `api/backup.sh` | downloads everything onto your computer |
+| `tools/crop-screenshots.py` | trims phone/Facebook furniture off screenshots |
 
 ## A note on what this does with photos
 
