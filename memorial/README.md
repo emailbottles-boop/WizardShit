@@ -16,32 +16,37 @@ expires, and there is no monthly bill to forget about.
 ## How it fits together
 
 ```
-Visitor ─▶ mahoganyjr.com
-              ├─ the page, CSS, JavaScript ──▶ Cloudflare Pages
-              └─ /api/*  /img/*  /admin  ──▶ Cloudflare Worker
-                                                 ├──▶ D1  (captions, names, dates)
-                                                 └──▶ R2  (the photos and recordings)
+Visitor ─▶ mahoganyjr.com ─▶ one Cloudflare Worker
+                               ├─ the page, CSS, JavaScript   (from site/)
+                               ├─ /api/*  /img/*  /admin      (from api/src/)
+                               ├──▶ D1  (captions, names, dates)
+                               └──▶ R2  (the photos and recordings)
 You ────▶ /admin  (password protected)
 ```
 
-Everything is on Cloudflare, in your existing account: the page on Pages, the
-backend a Worker in [`api/`](api/). The page itself is plain HTML, CSS and
-JavaScript — no build step, no framework, nothing to update. If you open it in
-five years it will still make sense.
+The whole thing is one Cloudflare Worker in your existing account. It serves
+the page out of [`site/`](site/) and runs the backend out of
+[`api/src/`](api/src/), so one deploy puts everything live and there is nothing
+to point at anything else. The page itself is plain HTML, CSS and JavaScript —
+no build step, no framework, nothing to update. If you open it in five years it
+will still make sense.
 
 ## Setting it up
 
-Full walkthrough, including the DNS, in **[api/README.md](api/README.md)**.
-Short version, all from your terminal:
+Full walkthrough in **[api/README.md](api/README.md)**. Short version, all
+from your terminal, all from the `api/` folder:
 
-1. `cd api && npx wrangler login`
+1. `npx wrangler login`
 2. `npx wrangler d1 create memorial` — paste the id it prints into `wrangler.toml`
 3. `npx wrangler r2 bucket create memorial-photos`
 4. `npx wrangler secret put ADMIN_PASSWORD` — choose the caretaker password
-5. `bash deploy.sh` — the backend
-6. `cd .. && bash deploy-site.sh` — the page; live at `mahoganyjr.pages.dev`
-7. Attach the domain: Cloudflare dashboard → Workers & Pages → mahoganyjr →
-   Custom domains → add `mahoganyjr.com` and `www.mahoganyjr.com`
+5. `bash deploy.sh`
+
+That's it — step 5 puts the page, the backend, the domain and its HTTPS all
+live at once. **There is no DNS to set up**: the domain entries in
+`wrangler.toml` are Workers Custom Domains, and Cloudflare writes the records
+itself on deploy. The only thing that can stand in the way is the domain not
+being in your Cloudflare account yet, which the walkthrough covers.
 
 Then open `https://mahoganyjr.com/admin`, sign in, and fill in his dates and
 whatever you want people to read first, in the **Page text** tab. His name is
@@ -91,15 +96,15 @@ Keep it somewhere that isn't Cloudflare.
 
 | | |
 |---|---|
-| `index.html` | the memorial page |
-| `css/style.css` | all the styling |
-| `js/main.js` | loading the wall, the lightbox, uploading |
-| `js/config.js` | one line: where the backend lives |
-| `api/src/index.js` | the Worker — uploads, the wall, admin |
+| `site/index.html` | the memorial page |
+| `site/css/style.css` | all the styling |
+| `site/js/main.js` | loading the wall, the lightbox, uploading |
+| `site/js/config.js` | one line, normally empty: where the backend lives |
+| `api/src/index.js` | the Worker — serves the page, uploads, the wall, admin |
 | `api/src/admin.js` | the caretaker panel |
 | `api/schema.sql` | the two database tables |
-| `deploy-site.sh` | puts the page live on Cloudflare Pages |
-| `api/deploy.sh` | puts the backend live |
+| `api/wrangler.toml` | the worker's config, including the domain |
+| `api/deploy.sh` | puts the whole site live |
 | `api/backup.sh` | downloads everything onto your computer |
 | `tools/crop-screenshots.py` | trims phone/Facebook furniture off screenshots |
 

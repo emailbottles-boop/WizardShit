@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# One command to put the memorial backend live. Run it from this api/ folder:
+# One command to put the whole site live — page, backend, domain. Run it from
+# this api/ folder:
 #
 #   bash deploy.sh
 #

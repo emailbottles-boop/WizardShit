@@ -1,8 +1,9 @@
-# The backend
+# The worker
 
-One Cloudflare Worker. It takes photo and recording uploads, stores the files
-in R2 and the captions in D1, serves the wall and the recordings to the page,
-and hosts the password-protected `/admin` panel.
+One Cloudflare Worker, and it is the whole site. It serves the page out of
+`../site`, takes photo and recording uploads and stores the files in R2 and
+the captions in D1, serves the wall and the recordings back to the page, and
+hosts the password-protected `/admin` panel.
 
 This is a **separate** worker, database and bucket from anything else in the
 account. It shares nothing with any other site you run — separate names,
@@ -61,108 +62,58 @@ into this repo — which matters, because this repo is public.
 bash deploy.sh
 ```
 
-That creates the tables and deploys the worker. It prints your worker address,
-something like `https://memorial-api.yourname.workers.dev`.
+That creates the tables and deploys the worker — page, backend, domain, all in
+one. It prints two addresses: `https://mahoganyjr.com` and a spare,
+`https://mahoganyjr.yourname.workers.dev`, which is the same site and stays
+working forever as a back door if the domain ever has a bad day.
 
-Try `https://memorial-api.yourname.workers.dev/admin` now — your password
-should get you in, to an empty panel.
+Try `/admin` on either now — your password should get you in, to an empty
+panel.
 
-### 6. Put the page live
+If instead it says the custom domain could not be attached, the domain is not
+in your Cloudflare account yet. See the next section; the workers.dev address
+works regardless.
 
-From the repo root (one folder up):
-
-```
-cd ..
-bash deploy-site.sh
-```
-
-The first run creates a Cloudflare Pages project called `mahoganyjr`; it
-prints the address, `https://mahoganyjr.pages.dev`. The page is live there
-straight away, but it can't talk to the backend yet — that happens when both
-share the domain in the next section. To try it before then, put the worker's
-address into `js/config.js` temporarily:
-
-```js
-window.MEMORIAL_API = "https://memorial-api.yourname.workers.dev";
-```
-
-and run `bash deploy-site.sh` again. Set it back to `""` once the domain is on.
-
-### 7. Write his name
+### 6. Write his name
 
 Open `/admin` → **Page text** → fill in the name, the dates, and whatever you
 want people to read first. Save. That is the only place the name lives; you
 never edit code to change it.
 
-**At this point the site works.** Everything below is for moving it onto your
-own domain.
+**At this point the site is live** — on mahoganyjr.com if the domain was in
+your account, and on the workers.dev address either way.
 
 ---
 
-## Putting it on mahoganyjr.com — the DNS
+## The domain — there is no DNS to do
 
-There is no list of records to type in. Cloudflare writes them itself; your
-job is two clicks in the right place. In order:
+`wrangler.toml` lists `mahoganyjr.com` and `www.mahoganyjr.com` as **Workers
+Custom Domains**. When `deploy.sh` runs, Cloudflare creates the DNS records and
+the HTTPS certificate for each one by itself. You never open a DNS panel.
 
-**1. Get the domain into your Cloudflare account** (skip this if you bought it
-through Cloudflare — it's already there).
+The one thing it needs is for the domain to be a zone in *your* Cloudflare
+account:
 
-Dashboard → **Add a site** → `mahoganyjr.com` → Free plan. It shows you two
-nameservers, unique to your account, like `xxxx.ns.cloudflare.com`. Go to
-wherever you bought the domain, find its nameserver setting, and replace what's
-there with those two. Cloudflare emails you when it's active — anywhere from a
-few minutes to a day.
+- **Bought through Cloudflare?** It already is. Nothing to do.
+- **Bought somewhere else?** Once: Cloudflare dashboard → **Add a site** →
+  `mahoganyjr.com` → Free. It shows two nameservers unique to your account,
+  like `xxxx.ns.cloudflare.com`. Go to where you bought the domain, find its
+  nameserver setting, replace what's there with those two, save. Cloudflare
+  emails you when it's active — minutes to a day. Then `bash deploy.sh` once
+  more and the domain attaches.
 
-Nothing else works until this step is done, so if something below doesn't
-take, this is the first thing to check.
+That nameserver swap happens at the registrar, and no command can reach it.
+Everything else is the one deploy.
 
-**2. Attach the domain to the page.** Dashboard → **Workers & Pages** →
-**mahoganyjr** (the Pages project `deploy-site.sh` made) → **Custom domains**
-→ **Set up a custom domain** → `mahoganyjr.com` → Activate. Then the same
-again for `www.mahoganyjr.com`.
-
-That's the whole DNS. Cloudflare creates the records for you; afterwards the
-**DNS** tab of the zone shows exactly this, and if it doesn't, something above
-didn't finish:
-
-| Type | Name | Content | Proxy status |
-|---|---|---|---|
-| CNAME | `mahoganyjr.com` | `mahoganyjr.pages.dev` | Proxied (orange cloud) |
-| CNAME | `www` | `mahoganyjr.pages.dev` | Proxied (orange cloud) |
-
-Both must be **Proxied**. That is what lets the worker's routes in the next
-step intercept `/api/*`, `/img/*` and `/admin` on the same hostname while
-everything else goes to the page. HTTPS is automatic.
-
-**3. Attach the backend.** The `routes` block in `wrangler.toml` is already
-written for `mahoganyjr.com`. If you ran `bash deploy.sh` before the domain
-was in your account, run it once more now so the routes take. Do **not**
-widen the routes to `mahoganyjr.com/*` — that would put the worker in front of
-the whole site, including the homepage it doesn't serve.
-
-**4. Check it.** All three should work:
+**Check it.** All three should work:
 
 - `https://mahoganyjr.com` — the page, with his name on it
 - `https://mahoganyjr.com/admin` — the caretaker sign-in
 - `https://mahoganyjr.com/api/memorial` — a block of JSON
 
-**5. Only once mahoganyjr.com is actually loading the site**, you can narrow
-who may upload:
-
-```toml
-ALLOWED_ORIGINS = "https://mahoganyjr.com,https://www.mahoganyjr.com"
-```
-
-It ships empty on purpose. List every address the site answers on — anything
-left out has its uploads refused by the browser, with nothing shown to the
-person uploading to explain why. Leaving it empty is not a security hole in any
-way that matters here: the wall is public and uploads are open by design.
-
-Then `bash deploy.sh` again for it to take.
-
-`js/config.js` should be `""`, which means "call `/api/...` on whatever address
-the page is being served from". Once the domain is on, that is mahoganyjr.com
-and the page and backend are one site.
+`site/js/config.js` is `""`, which means "call `/api/...` on whatever address
+the page came from" — always right, since the page and the backend are the
+same worker.
 
 The `workers.dev` address keeps working alongside the domain — deliberately, so
 there's still a way into `/admin` if DNS ever has a bad day.
@@ -199,7 +150,7 @@ the file; **Delete** removes both, permanently.
 ## Changing things
 
 - The name, dates, intro text → `/admin`, not code.
-- The page's look → `css/style.css` in the repo root.
+- The page's look → `site/css/style.css`, then `bash deploy.sh`.
 - The API or the admin panel → `src/`, then `bash deploy.sh`.
 - Locally → `npx wrangler dev`, with the schema loaded via
   `npx wrangler d1 execute memorial --local --file=schema.sql` and a test

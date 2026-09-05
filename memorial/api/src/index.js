@@ -693,6 +693,13 @@ async function route(request, env, ctx, url, path, method) {
     return json({ error: 'Not found' }, 404);
   }
 
+  // Nothing matched. The page's files are served by the assets binding before
+  // this code ever runs, so a request landing here for a browser is a mistyped
+  // address — give it the site's own 404 page rather than a block of JSON.
+  if (env.ASSETS && method === 'GET' && (request.headers.get('Accept') || '').includes('text/html')) {
+    const page = await env.ASSETS.fetch(new Request(origin + '/404.html'));
+    return new Response(page.body, { status: 404, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+  }
   return json({ error: 'Not found' }, 404);
 }
 
