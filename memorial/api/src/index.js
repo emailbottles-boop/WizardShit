@@ -433,16 +433,17 @@ function readImageSize(buf, type) {
 
 /* --------------------------------------------------------------- wall --- */
 
-// What a visitor's browser is given about a photo. Deliberately NO names in
-// here: who added it and who took it are kept in the database for the
-// caretaker (/api/admin/photos returns them) and never leave through any
-// public endpoint, so they cannot be seen even by opening the API directly.
+// What a visitor's browser is given about a photo. Who added it and who took
+// it ride along, but the page shows them in one place only: inside the opened
+// photo. Never on the wall, in the row, or under a recording.
 function photoRow(r) {
   return {
     id: r.id,
     kind: r.kind || 'photo',
     image: r.image,
     caption: r.caption || '',
+    uploader: r.uploader || '',
+    photographer: r.photographer || '',
     thumb: r.thumb_key ? '/img/' + r.thumb_key : '',
     original_bytes: r.original_bytes || 0,
     width: r.width || 0,

@@ -77,10 +77,10 @@
     <textarea id="caption" maxlength="600" placeholder="Where it was, when it was, what was happening… (for a recording, its name)"></textarea>
 
     <label for="by">Your name <span class="opt">optional</span></label>
-    <input id="by" maxlength="80" autocomplete="name" placeholder="Kept for the family only — not shown on the site">
+    <input id="by" maxlength="80" autocomplete="name" placeholder="Shown only when someone opens the photo">
 
     <label for="photoBy">Photographer <span class="opt">optional</span></label>
-    <input id="photoBy" maxlength="80" placeholder="Kept for the family only — not shown on the site">
+    <input id="photoBy" maxlength="80" placeholder="Who took it — shown only when the photo is opened">
 
     <!--
       Honeypot. Kept out of the tab order and hidden from screen readers, so
@@ -105,6 +105,8 @@
     <img id="lightImg" alt="">
     <figcaption>
       <span id="lightCap"></span>
+      <span id="lightBy"></span>
+      <span id="lightPhotoBy"></span>
     </figcaption>
   </figure>
 </div>

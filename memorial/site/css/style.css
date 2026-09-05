@@ -516,6 +516,15 @@ footer .care a:hover { color: var(--accent); border-color: var(--accent); }
   margin-inline: auto;
 }
 .light figcaption span { display: block; }
+.light #lightBy, .light #lightPhotoBy {
+  color: #b9a995;
+  font-family: var(--sans);
+  font-size: 13px;
+  letter-spacing: .04em;
+  margin-top: 8px;
+}
+.light #lightBy + #lightPhotoBy { margin-top: 2px; }
+.light figcaption span { display: block; }
 .light .x { color: #cdbfae; font-size: 38px; top: 10px; right: 16px; }
 
 .nav {

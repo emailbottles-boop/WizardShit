@@ -19,9 +19,9 @@
   var cursor = 0;       // the last change event this page has applied
   var loading = false;
 
-  // Names are never shown on this page. Whoever adds something can still say
-  // who they are and who took the photo, but that is kept for the caretaker
-  // in /admin only — nothing a visitor sees carries a name.
+  // Names are never written on the wall, in the row, or under a recording.
+  // Who added a photo and who took it are shown in one place only: inside
+  // the photo, once it is opened.
 
   /* ------------------------------------------------------------ helpers --- */
 
@@ -167,7 +167,7 @@
     fig.appendChild(img);
 
     // Nothing is written under a photo on the wall. The words that came with
-    // it are shown when the photo is opened; names never are.
+    // it, and who added it, are shown only when the photo is opened.
     function open() { openLight(photos.indexOf(p)); }
     fig.addEventListener('click', open);
     fig.addEventListener('keydown', function (e) {
@@ -238,6 +238,10 @@
     $('lightImg').alt = p.caption || '';
     $('lightCap').textContent = p.caption || '';
     $('lightCap').hidden = !p.caption;
+    $('lightBy').textContent = p.uploader ? 'added by ' + p.uploader : '';
+    $('lightBy').hidden = !p.uploader;
+    $('lightPhotoBy').textContent = p.photographer ? 'photo by ' + p.photographer : '';
+    $('lightPhotoBy').hidden = !p.photographer;
     $('light').hidden = false;
     // Fetch the neighbours now, so the arrows feel instant rather than each
     // one starting a download.
