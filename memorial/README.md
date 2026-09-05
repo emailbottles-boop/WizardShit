@@ -83,16 +83,22 @@ python3 tools/crop-screenshots.py ~/Pictures/screenshots
 won't decode. The page says so and suggests screenshotting it, which works.
 Most phones convert to JPEG automatically on upload, so this is uncommon.
 
+**Originals.** Every photo that has to be shrunk for the page is also kept
+exactly as it left the phone, and never shown to the public — a phone writes
+its GPS position and more into the file, and the page's copies have that
+stripped. You get the originals from `/admin` (an "original" link under each
+photo) or in bulk with the backup below.
+
 **Keeping a copy.** These photos may be the only copies of some of them. Once
 or twice a year:
 
 ```
 cd api
-bash backup.sh https://mahoganyjr.com
+ADMIN_PASSWORD=yourpassword bash backup.sh https://mahoganyjr.com
 ```
 
-That downloads every photo file plus all the captions into a dated folder.
-Keep it somewhere that isn't Cloudflare.
+That downloads every photo, every recording, every original and all the words
+into a dated folder. Keep it somewhere that isn't Cloudflare.
 
 ## What's in here
 
@@ -114,7 +120,8 @@ Keep it somewhere that isn't Cloudflare.
 ## A note on what this does with photos
 
 Before a photo leaves the browser it is resized to 2400px on its long edge and
-re-encoded. (Recordings are never touched.) That is mostly for speed, but it has a side effect worth knowing:
+re-encoded, and a small copy is made for the wall so a page of photos loads
+in a moment. (Recordings are never touched.) That is mostly for speed, but it has a side effect worth knowing:
 it strips the EXIF metadata, so the GPS coordinates that phones quietly attach
 to photos are not published along with them.
 

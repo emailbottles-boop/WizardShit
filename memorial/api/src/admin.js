@@ -72,6 +72,7 @@ export const ADMIN_HTML = `<!doctype html>
   .photo .meta { padding: 12px; font-size: 13px; flex: 1; }
   .photo .cap { color: var(--ink); word-break: break-word; }
   .photo .by { color: var(--soft); font-size: 12px; margin-top: 5px; }
+  .photo .by a { color: var(--accent); }
   .photo .acts { display: flex; gap: 8px; padding: 0 12px 12px; }
   .photo .acts button { flex: 1; padding: 7px 8px; font-size: 13px; }
   .tabs { display: flex; gap: 8px; margin-bottom: 20px; }
@@ -142,6 +143,10 @@ export const ADMIN_HTML = `<!doctype html>
   var app = document.getElementById('app');
   var grid = document.getElementById('grid');
   var oldest = null;
+
+  function niceSize(n) {
+    return n < 1024 * 1024 ? Math.max(1, Math.round(n / 1024)) + ' KB' : (n / 1024 / 1024).toFixed(1) + ' MB';
+  }
 
   function fmtDur(sec) {
     sec = Math.round(sec);
@@ -219,6 +224,7 @@ export const ADMIN_HTML = `<!doctype html>
         '<div class="cap">' + (p.caption ? esc(p.caption) : '<span style="color:var(--soft)">No caption</span>') + '</div>' +
         '<div class="by">' + (p.uploader ? 'added by ' + esc(p.uploader) : 'added anonymously') +
           (p.photographer ? ' \u00b7 photo by ' + esc(p.photographer) : '') +
+          ' \u00b7 <a href="/api/admin/original/' + p.id + '?token=' + encodeURIComponent(token) + '">original' + (p.original_bytes ? ' ' + niceSize(p.original_bytes) : '') + '</a>' +
           ' · ' + esc(String(p.created_at || '').slice(0, 10)) + '</div>' +
       '</div>' +
       '<div class="acts">' +

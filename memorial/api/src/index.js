@@ -41,6 +41,13 @@ const MAX_UPLOAD_BYTES = 12 * 1024 * 1024;
 // tier's 10GB bucket still holds a couple of hundred of them.
 const MAX_AUDIO_BYTES = 60 * 1024 * 1024;
 
+// The untouched file a phone hands over, kept byte for byte beside the copy
+// the page shows. Big enough for a modern phone's largest JPEG; a RAW or a
+// 48-megapixel HEIF beyond this is simply not kept, and the display copy is.
+const MAX_ORIGINAL_BYTES = 40 * 1024 * 1024;
+// The small copy the wall loads. Generous; a real one is a tenth of this.
+const MAX_THUMB_BYTES = 2 * 1024 * 1024;
+
 // Recordings are few and precious, so the page gets every visible one at once
 // rather than paging through them.
 const MAX_RECORDINGS = 200;
@@ -244,6 +251,27 @@ const IMAGE_TYPES = {
   'image/webp': 'webp',
 };
 
+// Originals may also be HEIC/HEIF straight off an iPhone. They are never shown
+// inline — only handed back to the caretaker as a download — so the pixel
+// budget below does not apply to them; only that the bytes are what they
+// claim to be.
+const ORIGINAL_TYPES = {
+  ...IMAGE_TYPES,
+  'image/heic': 'heic', 'image/heif': 'heif', 'image/heic-sequence': 'heic',
+};
+function originalLooksRight(buf, type) {
+  const b = new Uint8Array(buf);
+  if (b.length < 16) return false;
+  if (type === 'image/heic' || type === 'image/heif' || type === 'image/heic-sequence') {
+    return b[4] === 0x66 && b[5] === 0x74 && b[6] === 0x79 && b[7] === 0x70; // 'ftyp'
+  }
+  if (type === 'image/png') return b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47;
+  if (type === 'image/jpeg') return b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff;
+  if (type === 'image/gif') return b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46;
+  if (type === 'image/webp') return b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46 && b[8] === 0x57 && b[9] === 0x45 && b[10] === 0x42 && b[11] === 0x50;
+  return false;
+}
+
 // A pixel bomb is a tiny file that decodes to an enormous bitmap — a flat
 // 20000x20000 PNG is a few KB on disk and several gigabytes of RGBA in a
 // viewer's browser. The byte ceiling does nothing about that, so the real
@@ -361,6 +389,8 @@ function photoRow(r) {
     caption: r.caption || '',
     uploader: r.uploader || '',
     photographer: r.photographer || '',
+    thumb: r.thumb_key ? '/img/' + r.thumb_key : '',
+    original_bytes: r.original_bytes || 0,
     width: r.width || 0,
     height: r.height || 0,
     duration: r.duration || 0,
@@ -368,7 +398,7 @@ function photoRow(r) {
   };
 }
 
-const ROW_COLS = 'id, kind, image, caption, uploader, photographer, width, height, duration, created_at';
+const ROW_COLS = 'id, kind, image, caption, uploader, photographer, width, height, duration, created_at, thumb_key, original_bytes';
 
 async function listPhotos(env, beforeId, by) {
   const before = Number(beforeId);
@@ -439,7 +469,7 @@ async function latestCursor(env) {
 async function changesSince(env, cursor) {
   const { results } = await env.DB.prepare(
     'SELECT c.seq, c.kind AS ev, c.item_id, p.hidden, p.id, p.kind, p.image, p.caption, p.uploader, p.photographer, ' +
-    'p.width, p.height, p.duration, p.created_at ' +
+    'p.width, p.height, p.duration, p.created_at, p.thumb_key, p.original_bytes ' +
     'FROM changes c LEFT JOIN photos p ON p.id = c.item_id WHERE c.seq > ? ORDER BY c.seq ASC LIMIT 200',
   ).bind(cursor).all();
   const byItem = new Map();
@@ -515,6 +545,10 @@ async function receiveUpload(request, env, origin) {
   }
 
   const type = (request.headers.get('Content-Type') || '').split(';')[0].trim().toLowerCase();
+  // The page sends photos as a form with up to three parts — the copy it
+  // shows, a small copy for the wall, and the untouched original. Anything
+  // else (a script, a recording, the seed) sends one file as the raw body.
+  if (type === 'multipart/form-data') return receivePhotoForm(request, env, origin);
   const isImage = !!IMAGE_TYPES[type];
   const ext = isImage ? IMAGE_TYPES[type] : AUDIO_TYPES[type];
   if (!ext) {
@@ -584,7 +618,92 @@ async function receiveUpload(request, env, origin) {
   return json({ ok: true, photo: photoRow(row) }, 200, PUBLIC_CORS);
 }
 
+/**
+ * A photo from the page: `display` (what the site shows, required), `thumb`
+ * (what the wall loads, optional) and `original` (the file exactly as it
+ * came off the phone, optional). The original is stored and never served to
+ * the public — it still carries whatever the phone wrote into it, GPS
+ * position included — the caretaker fetches it signed in.
+ */
+async function receivePhotoForm(request, env, origin) {
+  const length = Number(request.headers.get('Content-Length') || '0');
+  if (length > MAX_UPLOAD_BYTES + MAX_THUMB_BYTES + MAX_ORIGINAL_BYTES + 65536) {
+    return json({ error: 'That upload is too large' }, 413, PUBLIC_CORS);
+  }
+  let form;
+  try {
+    form = await request.formData();
+  } catch {
+    return json({ error: 'Could not read that upload' }, 400, PUBLIC_CORS);
+  }
+  if (str(form.get('website'), 100)) return json({ ok: true }, 200, PUBLIC_CORS);
+
+  const display = form.get('display');
+  if (!display || typeof display === 'string') return json({ error: 'No photo in that upload' }, 400, PUBLIC_CORS);
+  const dtype = (display.type || '').toLowerCase();
+  const dext = IMAGE_TYPES[dtype];
+  if (!dext) return json({ error: 'Photos (jpg, png, gif, webp) only' }, 415, PUBLIC_CORS);
+  const dbuf = await display.arrayBuffer();
+  if (!dbuf.byteLength) return json({ error: 'That file was empty' }, 400, PUBLIC_CORS);
+  if (dbuf.byteLength > MAX_UPLOAD_BYTES) return json({ error: 'That photo is larger than 12MB' }, 413, PUBLIC_CORS);
+  const size = readImageSize(dbuf, dtype);
+  if (typeof size === 'string') return json({ error: size }, 415, PUBLIC_CORS);
+
+  // A bad thumbnail or original is dropped, not fatal: the photo still goes up.
+  let tbuf = null, ttype = '';
+  const thumb = form.get('thumb');
+  if (thumb && typeof thumb !== 'string') {
+    ttype = (thumb.type || '').toLowerCase();
+    if (IMAGE_TYPES[ttype]) {
+      const b = await thumb.arrayBuffer();
+      if (b.byteLength && b.byteLength <= MAX_THUMB_BYTES && typeof readImageSize(b, ttype) !== 'string') tbuf = b;
+    }
+  }
+  let obuf = null, otype = '';
+  const original = form.get('original');
+  if (original && typeof original !== 'string') {
+    otype = (original.type || '').toLowerCase();
+    if (ORIGINAL_TYPES[otype]) {
+      const b = await original.arrayBuffer();
+      if (b.byteLength && b.byteLength <= MAX_ORIGINAL_BYTES && originalLooksRight(b, otype)) obuf = b;
+    }
+  }
+
+  const caption = str(form.get('caption'), 600);
+  const uploader = str(form.get('by'), 80);
+  const photographer = str(form.get('photo_by'), 80);
+
+  const base = Date.now().toString(36) + '-' + crypto.randomUUID().slice(0, 12);
+  const key = base + '.' + dext;
+  const tkey = tbuf ? 'thumb-' + base + '.' + IMAGE_TYPES[ttype] : '';
+  const okey = obuf ? 'orig-' + base + '.' + ORIGINAL_TYPES[otype] : '';
+
+  await env.IMAGES.put(key, dbuf, { httpMetadata: { contentType: dtype } });
+  if (tbuf) await env.IMAGES.put(tkey, tbuf, { httpMetadata: { contentType: ttype } });
+  if (obuf) await env.IMAGES.put(okey, obuf, { httpMetadata: { contentType: otype } });
+
+  let row;
+  try {
+    row = await env.DB.prepare(
+      'INSERT INTO photos (kind, mime, image, r2_key, thumb_key, original_key, original_bytes, caption, uploader, photographer, width, height, duration, bytes) ' +
+      'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING ' + ROW_COLS,
+    )
+      .bind('photo', dtype, '/img/' + key, key, tkey, okey, obuf ? obuf.byteLength : 0, caption, uploader, photographer, size.width, size.height, 0, dbuf.byteLength)
+      .first();
+  } catch (err) {
+    await Promise.all([key, tkey, okey].filter(Boolean).map((k) => env.IMAGES.delete(k).catch(() => {})));
+    throw err;
+  }
+
+  await logChange(env, 'add', row.id);
+  await purgeWallCache(origin);
+  return json({ ok: true, photo: photoRow(row) }, 200, PUBLIC_CORS);
+}
+
 async function serveFile(request, env, key) {
+  // Originals are never public: they still carry what the phone wrote into
+  // them. The caretaker fetches them through /api/admin/original/<id>.
+  if (key.startsWith('orig-')) return new Response('Not found', { status: 404 });
   // Handing R2 the request headers lets it resolve a Range header itself.
   // Without this an <audio> player still plays, but every seek restarts the
   // download from byte zero — on a 40MB WAV that is the difference between
@@ -727,6 +846,32 @@ async function route(request, env, ctx, url, path, method) {
     return json({ ok: true, token: await makeSessionToken(env) });
   }
 
+  // The caretaker's copy of a photo exactly as it was uploaded. The session
+  // token may come in the query string here, so a plain link on the admin
+  // page can fetch it; everywhere else it is a header.
+  const origMatch = path.match(/^\/api\/admin\/original\/(\d+)$/);
+  if (origMatch && method === 'GET') {
+    const token = bearer(request) || str(url.searchParams.get('token'), 500);
+    if (!token || !(await verifySessionToken(token, env))) return json({ error: 'Please sign in' }, 401);
+    const row = await env.DB.prepare('SELECT r2_key, original_key FROM photos WHERE id = ?').bind(Number(origMatch[1])).first();
+    if (!row) return json({ error: 'Not found' }, 404);
+    // No separate original means the stored file IS the original (it was
+    // small enough to send untouched, or came in through a script).
+    const key = row.original_key || row.r2_key;
+    const obj = await env.IMAGES.get(key);
+    if (!obj) return json({ error: 'File missing' }, 404);
+    const ext = key.split('.').pop();
+    return new Response(obj.body, {
+      headers: {
+        'Content-Type': obj.httpMetadata?.contentType || 'application/octet-stream',
+        'Content-Disposition': 'attachment; filename="mahoganyjr-' + origMatch[1] + '.' + ext + '"',
+        'Content-Length': String(obj.size),
+        'X-Content-Type-Options': 'nosniff',
+        'Cache-Control': 'private, no-store',
+      },
+    });
+  }
+
   if (path.startsWith('/api/admin/')) {
     if (!(await isAdmin(request, env))) return json({ error: 'Please sign in' }, 401);
 
@@ -766,10 +911,10 @@ async function route(request, env, ctx, url, path, method) {
       if (method === 'DELETE') {
         // Read the key first: once the row is gone there is no way left to
         // find the file, and it would sit in R2 forever.
-        const row = await env.DB.prepare('SELECT r2_key FROM photos WHERE id = ?').bind(id).first();
+        const row = await env.DB.prepare('SELECT r2_key, thumb_key, original_key FROM photos WHERE id = ?').bind(id).first();
         if (!row) return json({ error: 'Already gone' }, 404);
         await env.DB.prepare('DELETE FROM photos WHERE id = ?').bind(id).run();
-        await env.IMAGES.delete(row.r2_key).catch(() => {});
+        await Promise.all([row.r2_key, row.thumb_key, row.original_key].filter(Boolean).map((k) => env.IMAGES.delete(k).catch(() => {})));
         await logChange(env, 'remove', id);
         await purgeWallCache(origin);
         return json({ ok: true });

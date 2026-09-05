@@ -18,6 +18,9 @@ CREATE TABLE IF NOT EXISTS photos (
   caption    TEXT NOT NULL DEFAULT '',       -- what it is / the memory; a recording's title
   uploader   TEXT NOT NULL DEFAULT '',       -- who added it (free text, optional)
   photographer TEXT NOT NULL DEFAULT '',     -- who took it, if they said
+  thumb_key    TEXT NOT NULL DEFAULT '',     -- small copy for the wall (R2 key)
+  original_key TEXT NOT NULL DEFAULT '',     -- the untouched upload, admin-only (R2 key)
+  original_bytes INTEGER NOT NULL DEFAULT 0,
   width      INTEGER NOT NULL DEFAULT 0,     -- photos: from the file's own header
   height     INTEGER NOT NULL DEFAULT 0,     -- lets the grid reserve space, no layout jump
   duration   REAL    NOT NULL DEFAULT 0,     -- recordings: seconds, as the uploader's browser read it

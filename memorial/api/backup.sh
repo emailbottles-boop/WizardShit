@@ -3,10 +3,14 @@
 # Download everything — every photo file, and the captions and names that go
 # with them — onto this computer.
 #
-#   bash backup.sh https://your-site-address.com
+#   bash backup.sh https://mahoganyjr.com
 #
 # Optionally pass a folder name as a second argument; otherwise it makes one
-# named for today's date.
+# named for today's date. To also pull down the ORIGINALS — each photo exactly
+# as it left the phone, which the site never shows — give it the caretaker
+# password in the environment:
+#
+#   ADMIN_PASSWORD=yourpassword bash backup.sh https://mahoganyjr.com
 #
 # Worth doing once or twice a year, and worth keeping the result somewhere
 # that isn't Cloudflare. For some of these photos this may be the only copy
@@ -67,6 +71,33 @@ done < "$OUT/.keys.txt"
 printf '\n'
 
 rm -f "$OUT/.keys.json" "$OUT/.keys.txt"
+
+if [ -n "${ADMIN_PASSWORD:-}" ]; then
+  echo "==> Signing in for the originals"
+  TOKEN=$(curl -fsS -m 20 -X POST "$BASE/api/admin/login" -H 'Content-Type: application/json' \
+    --data "{\"password\":\"${ADMIN_PASSWORD}\"}" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
+  if [ -z "$TOKEN" ]; then
+    echo "    could not sign in — check ADMIN_PASSWORD; skipping originals" >&2
+  else
+    mkdir -p "$OUT/originals"
+    npx --yes wrangler d1 execute memorial --remote --json \
+      --command "SELECT id, COALESCE(NULLIF(original_key,''), r2_key) AS k FROM photos WHERE kind='photo' ORDER BY id" > "$OUT/.orig.json"
+    python3 - "$OUT/.orig.json" > "$OUT/.orig.txt" <<'PY2'
+import json, sys
+t = open(sys.argv[1], encoding='utf-8').read(); i = t.find('[')
+for blk in (json.loads(t[i:]) if i >= 0 else []):
+    for r in blk.get('results', []):
+        if r.get('k'): print(f"{r['id']}|{r['k'].rsplit('.',1)[-1]}")
+PY2
+    echo "==> Downloading $(wc -l < "$OUT/.orig.txt" | tr -d ' ') original(s)"
+    while IFS='|' read -r id ext; do
+      [ -z "$id" ] && continue
+      curl -fsS --retry 3 -m 600 -o "$OUT/originals/$id.$ext" "$BASE/api/admin/original/$id?token=$TOKEN" || echo "    could not fetch original $id" >&2
+    done < "$OUT/.orig.txt"
+    rm -f "$OUT/.orig.json" "$OUT/.orig.txt"
+    echo "    $OUT/originals/   — the untouched uploads, named by photo id"
+  fi
+fi
 
 echo "==> Done. Everything is in: $OUT"
 echo "    $OUT/memorial.sql  — captions, names, dates"

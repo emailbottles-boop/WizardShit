@@ -42,6 +42,11 @@
   function fileUrl(p) {
     return /^https?:\/\//.test(p.image) ? p.image : API + p.image;
   }
+  // The wall gets the small copy where there is one; opening a photo gets
+  // the full one.
+  function thumbUrl(p) {
+    return p.thumb ? (/^https?:\/\//.test(p.thumb) ? p.thumb : API + p.thumb) : fileUrl(p);
+  }
 
   // Captions and names are typed by the public, so they are only ever put on
   // the page through textContent or through this. Never innerHTML with them.
@@ -133,7 +138,7 @@
     var img = document.createElement('img');
     img.loading = 'lazy';
     img.decoding = 'async';
-    img.src = fileUrl(p);
+    img.src = thumbUrl(p);
     // The caption is the only description we have; without one the photo is
     // decorative as far as a screen reader is concerned.
     img.alt = p.caption || '';
@@ -341,6 +346,8 @@
   // Long enough that a photo still looks good full-screen on a large monitor,
   // small enough that thirty of them are a quick upload on a phone.
   var MAX_EDGE = 2400;
+  var THUMB_EDGE = 900;              // the small copy the wall loads
+  var ORIGINAL_MAX = 40 * 1024 * 1024; // the untouched file, kept for the caretaker
   var SEND_AS_IS = 4 * 1024 * 1024;
   var SERVER_MAX = 12 * 1024 * 1024;
   var AUDIO_MAX = 60 * 1024 * 1024;
@@ -375,8 +382,8 @@
     });
   }
 
-  function toBlob(canvas) {
-    return new Promise(function (res) { canvas.toBlob(res, 'image/jpeg', 0.88); });
+  function toBlob(canvas, quality) {
+    return new Promise(function (res) { canvas.toBlob(res, 'image/jpeg', quality || 0.88); });
   }
 
   /**
@@ -434,39 +441,51 @@
     }
 
     // Animated GIFs only survive as GIFs — drawing one to a canvas would keep
-    // the first frame and throw the animation away.
+    // the first frame and throw the animation away. Sent as they are; the
+    // stored file is the original.
     if (type === 'image/gif') {
       return file.size <= SERVER_MAX
-        ? Promise.resolve(file)
+        ? Promise.resolve({ display: file, thumb: null, original: null, isImage: true })
         : Promise.reject(new Error('too large'));
     }
 
-    if (KEEP[type] && file.size <= SEND_AS_IS) return Promise.resolve(file);
-
+    // Three copies of a photo leave the phone: the one the site shows (at
+    // most 2400px), a small one for the wall, and — whenever the shown copy
+    // had to be re-encoded — the file exactly as it was, for the caretaker.
     return decode(file).then(function (src) {
       var w = src.width, h = src.height;
       if (!w || !h) throw new Error('could not read');
-      var scale = Math.min(1, MAX_EDGE / Math.max(w, h));
-      var cw = Math.max(1, Math.round(w * scale));
-      var ch = Math.max(1, Math.round(h * scale));
 
-      var canvas = document.createElement('canvas');
-      canvas.width = cw;
-      canvas.height = ch;
-      var ctx = canvas.getContext('2d');
-      // JPEG has no transparency, so anything see-through would come out black.
-      // White reads as paper, which is what a scan of a print wants anyway.
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(0, 0, cw, ch);
-      ctx.drawImage(src, 0, 0, cw, ch);
-      if (src.close) src.close();
+      function scaled(edge, quality) {
+        var scale = Math.min(1, edge / Math.max(w, h));
+        var cw = Math.max(1, Math.round(w * scale));
+        var ch = Math.max(1, Math.round(h * scale));
+        var canvas = document.createElement('canvas');
+        canvas.width = cw;
+        canvas.height = ch;
+        var ctx = canvas.getContext('2d');
+        // JPEG has no transparency, so anything see-through would come out
+        // black. White reads as paper, which is what a scan of a print wants.
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, cw, ch);
+        ctx.drawImage(src, 0, 0, cw, ch);
+        return toBlob(canvas, quality);
+      }
 
-      return toBlob(canvas).then(function (blob) {
-        if (!blob) throw new Error('could not read');
-        // Re-encoding a small PNG can come out bigger than the original; keep
-        // whichever is smaller, as long as the server takes the format.
-        if (KEEP[type] && file.size <= blob.size && file.size <= SERVER_MAX) return file;
-        return blob;
+      var keepAsIs = KEEP[type] && file.size <= SEND_AS_IS;
+      var wantThumb = Math.max(w, h) > THUMB_EDGE;
+      return Promise.all([
+        keepAsIs ? Promise.resolve(file) : scaled(MAX_EDGE, 0.88),
+        wantThumb ? scaled(THUMB_EDGE, 0.8) : Promise.resolve(null),
+      ]).then(function (out) {
+        if (src.close) src.close();
+        var display = out[0], thumb = out[1];
+        if (!display) throw new Error('could not read');
+        // Re-encoding a small PNG can come out bigger than the file itself;
+        // keep whichever is smaller, as long as the server takes the format.
+        if (!keepAsIs && KEEP[type] && file.size <= display.size && file.size <= SERVER_MAX) display = file;
+        var original = display !== file && file.size <= ORIGINAL_MAX ? file : null;
+        return { display: display, thumb: thumb, original: original, isImage: true };
       });
     });
   }
@@ -474,19 +493,33 @@
   /* ---------------------------------------------------------- uploading --- */
 
   function send(item, caption, by) {
-    // `item` is either a Blob (a photo) or { blob, type, duration } (a recording).
-    var blob = item.blob || item;
-    var type = item.type || blob.type || 'image/jpeg';
-    var q = '?caption=' + encodeURIComponent(caption) + '&by=' + encodeURIComponent(by);
     var photoBy = $('photoBy').value.trim();
-    if (photoBy) q += '&photo_by=' + encodeURIComponent(photoBy);
-    if (item.isAudio && item.duration) q += '&duration=' + encodeURIComponent(Math.round(item.duration * 10) / 10);
     var trap = $('website').value;
-    if (trap) q += '&website=' + encodeURIComponent(trap);
+    var q = trap ? '?website=' + encodeURIComponent(trap) : '';
+
+    if (item.isImage) {
+      // A form with up to three parts: the copy the site shows, a small copy
+      // for the wall, and the untouched file for the caretaker. The browser
+      // sets the multipart boundary itself, so no Content-Type here.
+      var t = item.display.type;
+      var fd = new FormData();
+      fd.append('display', item.display, 'photo.' + (t === 'image/png' ? 'png' : t === 'image/webp' ? 'webp' : t === 'image/gif' ? 'gif' : 'jpg'));
+      if (item.thumb) fd.append('thumb', item.thumb, 'thumb.jpg');
+      if (item.original) fd.append('original', item.original, item.original.name || 'original');
+      fd.append('caption', caption);
+      fd.append('by', by);
+      fd.append('photo_by', photoBy);
+      return api('/api/photos' + q, { method: 'POST', body: fd });
+    }
+
+    // A recording: one file, sent exactly as it is.
+    q += (q ? '&' : '?') + 'caption=' + encodeURIComponent(caption) + '&by=' + encodeURIComponent(by);
+    if (photoBy) q += '&photo_by=' + encodeURIComponent(photoBy);
+    if (item.duration) q += '&duration=' + encodeURIComponent(Math.round(item.duration * 10) / 10);
     return api('/api/photos' + q, {
       method: 'POST',
-      headers: { 'Content-Type': type },
-      body: blob,
+      headers: { 'Content-Type': item.type },
+      body: item.blob,
     });
   }
 
@@ -517,7 +550,7 @@
         try { mark(i, '', 'adding…'); } catch (e) { /* cosmetic only */ }
         return prepare(file)
           .then(function (blob) {
-            var size = blob.blob ? blob.blob.size : blob.size;
+            var size = blob.isAudio ? blob.blob.size : blob.display.size;
             if (size > (blob.isAudio ? AUDIO_MAX : SERVER_MAX)) throw new Error('too large');
             return send(blob, caption, by).catch(function (err) {
               // The per-IP budget is generous but a big album can still reach
