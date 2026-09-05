@@ -13,16 +13,11 @@ the real full-resolution file with none of this to undo — always prefer that.
 
 How it decides where the photo is
 ---------------------------------
-A screenshot is a tall black canvas with the photo as a band across the
-middle. The obvious approach — look for the bright rows — quietly fails on
-photos taken at night: a dim indoor shot is darker than the white UI text
-above it, so brightness picks the toolbar and throws the photo away.
-
-What actually separates them is COVERAGE, not brightness. Letterbox rows are
-pure black edge to edge; a UI row is black with a little text on it, so under
-10% of its width is non-black. Even a very dark photograph covers more than
-40%. So each row is scored by the fraction of its width that isn't black, and
-the photo is the longest run of rows above that line.
+A screenshot is a tall flat-coloured canvas with the photo as a band across
+the middle. Looking for bright rows quietly fails on photos taken at night —
+a dim shot is darker than the white UI text above it. What separates them is
+flatness: the viewer's bars are one exact colour, and a photograph's rows
+never are, not even its darkest sky. See photo_band() for the two rules.
 
 Requires Pillow:  pip install Pillow
 """
@@ -47,31 +42,55 @@ SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".heic", ".PNG", ".JPG", ".JPEG"}
 
 
 def photo_band(im):
-    """Return (top, bottom) of the photograph, or None if there isn't one."""
+    """Return (top, bottom) of the photograph, or None if there isn't one.
+
+    Two rules, tried in order.
+
+    1. Exact-colour. A viewer's bars are a single flat colour — Facebook's is
+       pure black, Instagram's stories viewer a dark grey — and the top-left
+       pixel is always that colour. Any row that is 90% that exact colour is
+       furniture. A photograph's darkest sky never is: its pixels vary by a
+       few values, so almost none match exactly. Text rows and thumbnail
+       strips dip below 90%, but they are cut off from the photo by flat
+       rows on either side, so they form short separate runs and the photo
+       is still the longest one.
+
+    2. Coverage, as a fallback when the bars really are black and rule 1
+       finds nothing usable: rows where under 30% of the width is non-black
+       are furniture (UI rows measure 0.00-0.10, the darkest photo 0.44).
+    """
+    rgb = im.convert("RGB")
+    w, h = rgb.size
+    px = rgb.load()
+    cols = list(range(0, w, max(1, w // 160)))
+    n = len(cols)
+    corner = px[0, 0]
+
+    def longest(flags):
+        best = None
+        y = 0
+        while y < h:
+            if flags[y]:
+                start = y
+                while y < h and flags[y]:
+                    y += 1
+                if best is None or y - start > best[1] - best[0]:
+                    best = (start, y)
+            y += 1
+        return best
+
+    exact = [sum(1 for x in cols if px[x, y] == corner) / n for y in range(h)]
+    band = longest([e < 0.9 for e in exact])
+    if band and band[1] - band[0] >= MIN_ROWS:
+        return band
+
     grey = im.convert("L")
-    w, h = grey.size
-    px = grey.load()
-    # Sample across the width rather than reading every pixel: 120 columns is
-    # plenty to tell a black row from a photographic one, and it keeps this
-    # fast enough to run over a few hundred screenshots.
-    cols = range(0, w, max(1, w // 120))
-    n = len(list(cols))
-
-    lit = [sum(1 for x in cols if px[x, y] > BLACK) / n > COVER for y in range(h)]
-
-    best = None
-    y = 0
-    while y < h:
-        if lit[y]:
-            start = y
-            while y < h and lit[y]:
-                y += 1
-            if best is None or y - start > best[1] - best[0]:
-                best = (start, y)
-        y += 1
-    if best is None or best[1] - best[0] < MIN_ROWS:
-        return None
-    return best
+    g = grey.load()
+    lit = [sum(1 for x in cols if g[x, y] > BLACK) / n > COVER for y in range(h)]
+    band = longest(lit)
+    if band and band[1] - band[0] >= MIN_ROWS:
+        return band
+    return None
 
 
 def main():
