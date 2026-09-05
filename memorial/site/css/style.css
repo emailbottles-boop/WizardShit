@@ -168,8 +168,10 @@ main {
   column-gap: 10px;
 }
 @media (max-width: 1100px) { .wall { column-count: 3; } }
+/* Two columns all the way down to the smallest phone. Dropping to one made
+   every photo the width of the screen, so barely two fitted above the fold —
+   the opposite of a wall you can take in at a glance. */
 @media (max-width: 760px)  { .wall { column-count: 2; column-gap: 8px; } }
-@media (max-width: 420px)  { .wall { column-count: 1; } }
 
 .tile {
   break-inside: avoid;
