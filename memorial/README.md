@@ -50,10 +50,8 @@ live at once. **There is no DNS to set up**: the domain entries in
 itself on deploy. The only thing that can stand in the way is the domain not
 being in your Cloudflare account yet, which the walkthrough covers.
 
-Then open `https://mahoganyjr.com/admin`, sign in, and fill in his dates and
-whatever you want people to read first, in the **Page text** tab. His name is
-already on the page; the database version overrides it if you ever want to
-change how it reads.
+Then open `https://mahoganyjr.com/admin` and sign in. The top of the page is
+his name and The Real MJ, and nothing else, on purpose.
 
 ## Looking after it
 

@@ -91,30 +91,8 @@ body {
   margin: 8px 0 0;
 }
 
-.dates {
-  font-family: var(--serif);
-  font-size: clamp(17px, 3vw, 21px);
-  font-style: italic;
-  color: var(--soft);
-  margin: 12px 0 0;
-}
 
-.rule {
-  width: 54px;
-  height: 1px;
-  background: var(--accent);
-  opacity: .6;
-  margin: 34px auto;
-}
 
-.intro {
-  font-family: var(--serif);
-  font-size: clamp(19px, 2.6vw, 23px);
-  line-height: 1.6;
-  color: var(--ink);
-  margin: 0;
-  white-space: pre-wrap; /* keeps the caretaker's own line breaks */
-}
 
 /* ---------------------------------------------------------------- invite --- */
 
@@ -125,11 +103,6 @@ body {
   text-align: center;
 }
 
-.invite p {
-  color: var(--soft);
-  margin: 0 0 22px;
-  white-space: pre-wrap;
-}
 
 .add {
   font: 500 15px/1 var(--sans);

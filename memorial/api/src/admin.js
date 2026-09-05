@@ -105,10 +105,6 @@ export const ADMIN_HTML = `<!doctype html>
     <button id="out">Sign out</button>
   </header>
   <main>
-    <div class="tabs">
-      <button id="tabPhotos" aria-selected="true">Photos</button>
-      <button id="tabText" aria-selected="false">Page text</button>
-    </div>
 
     <section id="panePhotos">
       <div class="empty" id="loading">Loading…</div>
@@ -116,20 +112,6 @@ export const ADMIN_HTML = `<!doctype html>
       <button class="more" id="more" hidden>Load older photos</button>
     </section>
 
-    <section id="paneText" hidden>
-      <div class="card">
-        <label for="fName">Their name</label>
-        <input id="fName" placeholder="e.g. Sam Rivera">
-        <label for="fDates">Dates</label>
-        <input id="fDates" placeholder="e.g. 1994 – 2026">
-        <label for="fIntro">A few words at the top</label>
-        <textarea id="fIntro" placeholder="Whatever you want people to read first."></textarea>
-        <label for="fInvite">A line above the Add stuff button <span style="text-transform:none;letter-spacing:0;opacity:.7">(leave empty for none)</span></label>
-        <textarea id="fInvite"></textarea>
-        <div style="margin-top:18px"><button class="primary" id="saveText">Save</button></div>
-        <div class="msg" id="textMsg"></div>
-      </div>
-    </section>
   </main>
 </div>
 
@@ -272,51 +254,10 @@ export const ADMIN_HTML = `<!doctype html>
 
   document.getElementById('more').onclick = function () { loadPhotos(true); };
 
-  function loadText() {
-    return fetch('/api/memorial').then(function (r) { return r.json(); }).then(function (d) {
-      var s = d.settings || {};
-      document.getElementById('fName').value = s.name || '';
-      document.getElementById('fDates').value = s.dates || '';
-      document.getElementById('fIntro').value = s.intro || '';
-      document.getElementById('fInvite').value = s.invite || '';
-    });
-  }
-
-  document.getElementById('saveText').onclick = function () {
-    var msg = document.getElementById('textMsg');
-    msg.className = 'msg'; msg.textContent = 'Saving…';
-    api('/api/admin/settings', {
-      method: 'PUT',
-      body: JSON.stringify({
-        name: document.getElementById('fName').value,
-        dates: document.getElementById('fDates').value,
-        intro: document.getElementById('fIntro').value,
-        invite: document.getElementById('fInvite').value,
-      }),
-    }).then(function () {
-      msg.className = 'msg good'; msg.textContent = 'Saved. The site updates within a minute.';
-    }).catch(function (e) {
-      msg.className = 'msg bad'; msg.textContent = e.message;
-    });
-  };
-
-  var tp = document.getElementById('tabPhotos');
-  var tt = document.getElementById('tabText');
-  tp.onclick = function () {
-    tp.setAttribute('aria-selected', 'true'); tt.setAttribute('aria-selected', 'false');
-    show(document.getElementById('panePhotos'), true);
-    show(document.getElementById('paneText'), false);
-  };
-  tt.onclick = function () {
-    tt.setAttribute('aria-selected', 'true'); tp.setAttribute('aria-selected', 'false');
-    show(document.getElementById('paneText'), true);
-    show(document.getElementById('panePhotos'), false);
-  };
-
   function start() {
     show(gate, false); show(app, true);
     oldest = null;
-    Promise.all([loadPhotos(false), loadText()]).catch(function (e) {
+    loadPhotos(false).catch(function (e) {
       var l = document.getElementById('loading');
       l.hidden = false; l.textContent = e.message;
     });

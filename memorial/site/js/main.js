@@ -60,17 +60,12 @@
 
   function applySettings(s) {
     s = s || {};
-    // His name is written into index.html, so an empty database is not an error
-    // and must not blank the heading — the database only ever OVERRIDES what is
-    // already on the page, for when someone wants to change how it reads.
+    // The heading is written into the page. The database can only ever
+    // override it, for the day someone wants it to read differently.
     if (s.name) {
       $('name').textContent = s.name;
       document.title = s.name + ' — The Real MJ';
     }
-    if (s.dates) $('dates').textContent = s.dates;
-    if (s.intro) $('intro').textContent = s.intro;
-    // The line above the button is empty unless the caretaker writes one.
-    if (s.invite) { $('invite').textContent = s.invite; $('invite').hidden = false; }
   }
 
   /* --------------------------------------------------------- recordings --- */
