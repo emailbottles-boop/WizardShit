@@ -1,0 +1,501 @@
+/**
+ * The memorial page: loads the wall, opens photos, and takes new ones.
+ *
+ * No framework and no build step — one file, loaded directly. It is meant to
+ * be readable by whoever looks after this site in five years, which may well
+ * not be a programmer.
+ */
+(function () {
+  'use strict';
+
+  var API = (window.MEMORIAL_API || '').replace(/\/+$/, '');
+  var $ = function (id) { return document.getElementById(id); };
+
+  /* ------------------------------------------------------------- state --- */
+
+  var photos = [];      // everything currently on the wall, newest first
+  var oldest = null;    // id of the last one loaded, for paging
+  var loading = false;
+
+  /* ------------------------------------------------------------ helpers --- */
+
+  function api(path, opts) {
+    return fetch(API + path, opts).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (d) {
+        if (!r.ok) {
+          var e = new Error(d.error || 'Something went wrong');
+          e.status = r.status;
+          throw e;
+        }
+        return d;
+      });
+    });
+  }
+
+  // Captions and names are typed by the public, so they are only ever put on
+  // the page through textContent or through this. Never innerHTML with them.
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+
+  /* ------------------------------------------------------------ heading --- */
+
+  function applySettings(s) {
+    s = s || {};
+    if (s.name) {
+      $('name').textContent = s.name;
+      // The <title> in the HTML is a fallback; once we know the name, use it.
+      document.title = 'In memory of ' + s.name;
+    } else {
+      // Nothing set in the admin panel yet — say so plainly rather than
+      // leaving an empty banner that looks broken.
+      $('name').textContent = 'In memory';
+      $('intro').textContent = 'Open /admin and add their name to finish setting up this page.';
+    }
+    if (s.dates) $('dates').textContent = s.dates;
+    if (s.intro) $('intro').textContent = s.intro;
+    if (s.invite) $('invite').textContent = s.invite;
+  }
+
+  /* --------------------------------------------------------------- wall --- */
+
+  function tile(p, fresh) {
+    var fig = document.createElement('figure');
+    fig.className = 'tile' + (fresh ? ' fresh' : '');
+    fig.tabIndex = 0;
+    fig.setAttribute('role', 'button');
+
+    var img = document.createElement('img');
+    img.loading = 'lazy';
+    img.decoding = 'async';
+    img.src = p.image;
+    // The caption is the only description we have; without one the photo is
+    // decorative as far as a screen reader is concerned.
+    img.alt = p.caption || '';
+    // Reserving the real proportions stops the wall reflowing as photos load,
+    // which on a long wall is the difference between calm and chaotic.
+    if (p.width && p.height) {
+      img.width = p.width;
+      img.height = p.height;
+      img.style.aspectRatio = p.width + ' / ' + p.height;
+    }
+    fig.appendChild(img);
+
+    if (p.caption || p.uploader) {
+      var cap = document.createElement('figcaption');
+      if (p.caption) {
+        var c = document.createElement('div');
+        c.className = 'cap';
+        c.textContent = p.caption;
+        cap.appendChild(c);
+      }
+      if (p.uploader) {
+        var b = document.createElement('div');
+        b.className = 'by';
+        b.textContent = 'added by ' + p.uploader;
+        cap.appendChild(b);
+      }
+      fig.appendChild(cap);
+    }
+
+    function open() { openLight(photos.indexOf(p)); }
+    fig.addEventListener('click', open);
+    fig.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); }
+    });
+    return fig;
+  }
+
+  function render(list, append) {
+    var wall = $('wall');
+    if (!append) wall.innerHTML = '';
+    list.forEach(function (p) { wall.appendChild(tile(p, false)); });
+  }
+
+  function loadFirst() {
+    return api('/api/memorial').then(function (d) {
+      applySettings(d.settings);
+      photos = d.photos || [];
+      oldest = photos.length ? photos[photos.length - 1].id : null;
+      render(photos, false);
+      $('state').hidden = photos.length > 0;
+      if (!photos.length) $('state').textContent = 'No photographs yet. Yours can be the first.';
+      $('more').hidden = !d.more;
+    }).catch(function () {
+      // The wall is the whole page, so a failure here needs saying out loud
+      // rather than leaving a blank screen.
+      $('state').hidden = false;
+      $('state').textContent = 'The photographs could not be loaded just now. Please refresh in a moment.';
+    });
+  }
+
+  function loadMore() {
+    if (loading || !oldest) return;
+    loading = true;
+    $('more').textContent = 'Loading…';
+    api('/api/photos?before=' + oldest).then(function (d) {
+      var list = d.photos || [];
+      photos = photos.concat(list);
+      if (list.length) oldest = list[list.length - 1].id;
+      render(list, true);
+      $('more').hidden = !d.more;
+      $('more').textContent = 'Show older photos';
+    }).catch(function () {
+      $('more').textContent = 'Could not load more — tap to try again';
+    }).then(function () { loading = false; });
+  }
+
+  $('more').addEventListener('click', loadMore);
+
+  /* ----------------------------------------------------------- lightbox --- */
+
+  var lightAt = -1;
+
+  function openLight(i) {
+    if (i < 0 || i >= photos.length) return;
+    lightAt = i;
+    var p = photos[i];
+    $('lightImg').src = p.image;
+    $('lightImg').alt = p.caption || '';
+    $('lightCap').textContent = p.caption || '';
+    $('lightBy').textContent = p.uploader ? 'added by ' + p.uploader : '';
+    $('light').hidden = false;
+    document.body.style.overflow = 'hidden';
+    $('closeLight').focus();
+  }
+
+  function closeLight() {
+    $('light').hidden = true;
+    // Drop the source so a large photo is not held in memory behind a closed
+    // lightbox while someone keeps scrolling.
+    $('lightImg').removeAttribute('src');
+    document.body.style.overflow = '';
+  }
+
+  function step(by) {
+    var n = lightAt + by;
+    // Reaching the end of what is loaded pulls the next page in, so arrowing
+    // through the wall never stops at an arbitrary boundary.
+    if (n >= photos.length && !$('more').hidden) {
+      loadMore();
+      return;
+    }
+    if (n < 0 || n >= photos.length) return;
+    openLight(n);
+  }
+
+  $('closeLight').addEventListener('click', closeLight);
+  $('prev').addEventListener('click', function () { step(-1); });
+  $('next').addEventListener('click', function () { step(1); });
+  $('light').addEventListener('click', function (e) {
+    // Clicking the backdrop closes; clicking the photo itself does not.
+    if (e.target === $('light') || e.target.tagName === 'FIGURE') closeLight();
+  });
+
+  document.addEventListener('keydown', function (e) {
+    if (!$('light').hidden) {
+      if (e.key === 'Escape') closeLight();
+      else if (e.key === 'ArrowLeft') step(-1);
+      else if (e.key === 'ArrowRight') step(1);
+    } else if (!$('sheet').hidden && e.key === 'Escape') {
+      closeSheet();
+    }
+  });
+
+  /* ------------------------------------------------------------- adding --- */
+
+  var chosen = [];
+
+  function openSheet() {
+    $('sheet').hidden = false;
+    document.body.style.overflow = 'hidden';
+  }
+  function closeSheet() {
+    $('sheet').hidden = true;
+    document.body.style.overflow = '';
+  }
+
+  $('openAdd').addEventListener('click', openSheet);
+  $('closeAdd').addEventListener('click', closeSheet);
+  $('sheet').addEventListener('click', function (e) {
+    if (e.target === $('sheet')) closeSheet();
+  });
+
+  function niceSize(n) {
+    return n < 1024 * 1024 ? Math.max(1, Math.round(n / 1024)) + ' KB'
+                           : (n / 1024 / 1024).toFixed(1) + ' MB';
+  }
+
+  function listChosen() {
+    var ul = $('picked');
+    ul.innerHTML = '';
+    chosen.forEach(function (f, i) {
+      var li = document.createElement('li');
+      li.innerHTML = '<span class="nm"></span><span class="sz"></span>';
+      li.querySelector('.nm').textContent = f.name;
+      li.querySelector('.sz').textContent = niceSize(f.size);
+      li.dataset.i = i;
+      ul.appendChild(li);
+    });
+    $('send').disabled = chosen.length === 0;
+    $('send').textContent = chosen.length > 1
+      ? 'Add ' + chosen.length + ' photos to the wall'
+      : 'Add to the wall';
+  }
+
+  // Note the class list is rebuilt rather than replaced: 'sz' is the hook this
+  // very function uses to find the element again, so overwriting className
+  // outright would make the next call unable to find it.
+  function mark(i, cls, text) {
+    var li = $('picked').querySelector('li[data-i="' + i + '"]');
+    if (!li) return;
+    var sz = li.querySelector('.sz');
+    if (!sz) return;
+    sz.className = 'sz' + (cls ? ' ' + cls : '');
+    sz.textContent = text;
+  }
+
+  function take(files) {
+    // Only ever add to what is already chosen, so picking twice (or picking
+    // then dragging) does not silently throw the first batch away.
+    for (var i = 0; i < files.length; i++) {
+      if (chosen.length >= 40) break;
+      chosen.push(files[i]);
+    }
+    listChosen();
+  }
+
+  $('files').addEventListener('change', function (e) { take(e.target.files); });
+
+  var drop = $('drop');
+  ['dragenter', 'dragover'].forEach(function (t) {
+    drop.addEventListener(t, function (e) { e.preventDefault(); drop.classList.add('over'); });
+  });
+  ['dragleave', 'drop'].forEach(function (t) {
+    drop.addEventListener(t, function (e) { e.preventDefault(); drop.classList.remove('over'); });
+  });
+  drop.addEventListener('drop', function (e) {
+    if (e.dataTransfer && e.dataTransfer.files) take(e.dataTransfer.files);
+  });
+
+  /* ---------------------------------------------------------- preparing --- */
+
+  // Long enough that a photo still looks good full-screen on a large monitor,
+  // small enough that thirty of them are a quick upload on a phone.
+  var MAX_EDGE = 2400;
+  var SEND_AS_IS = 4 * 1024 * 1024;
+  var SERVER_MAX = 12 * 1024 * 1024;
+  var KEEP = { 'image/jpeg': 1, 'image/png': 1, 'image/webp': 1 };
+
+  function toBlob(canvas) {
+    return new Promise(function (res) { canvas.toBlob(res, 'image/jpeg', 0.88); });
+  }
+
+  /**
+   * Decode a picked file to something we can draw.
+   *
+   * createImageBitmap is the good path: it is fast, it does not block the page,
+   * and `from-image` applies the EXIF rotation so photos taken sideways on a
+   * phone are not stored sideways forever. Not every browser accepts the
+   * options argument, so an <img> is the fallback — browsers apply EXIF
+   * orientation when rendering one of those anyway.
+   */
+  function decode(file) {
+    if (window.createImageBitmap) {
+      return createImageBitmap(file, { imageOrientation: 'from-image' })
+        .catch(function () { return createImageBitmap(file); })
+        .catch(function () { return decodeViaImg(file); });
+    }
+    return decodeViaImg(file);
+  }
+
+  function decodeViaImg(file) {
+    return new Promise(function (res, rej) {
+      var url = URL.createObjectURL(file);
+      var img = new Image();
+      img.onload = function () { URL.revokeObjectURL(url); res(img); };
+      img.onerror = function () { URL.revokeObjectURL(url); rej(new Error('could not read')); };
+      img.src = url;
+    });
+  }
+
+  /**
+   * Turn whatever someone picked into something the server will accept.
+   *
+   * Re-encoding in the browser is what makes this work on a phone: it handles
+   * HEIC (which iPhones shoot by default and the server does not accept),
+   * strips the GPS coordinates and camera serial that ride along in EXIF, bakes
+   * in the rotation, and turns a 9MB photo into a few hundred KB before it
+   * touches the network.
+   *
+   * Files already small and already in an accepted format are passed straight
+   * through, so nothing gets quietly degraded for no reason.
+   */
+  function prepare(file) {
+    var type = (file.type || '').toLowerCase();
+
+    // Animated GIFs only survive as GIFs — drawing one to a canvas would keep
+    // the first frame and throw the animation away.
+    if (type === 'image/gif') {
+      return file.size <= SERVER_MAX
+        ? Promise.resolve(file)
+        : Promise.reject(new Error('too large'));
+    }
+
+    if (KEEP[type] && file.size <= SEND_AS_IS) return Promise.resolve(file);
+
+    return decode(file).then(function (src) {
+      var w = src.width, h = src.height;
+      if (!w || !h) throw new Error('could not read');
+      var scale = Math.min(1, MAX_EDGE / Math.max(w, h));
+      var cw = Math.max(1, Math.round(w * scale));
+      var ch = Math.max(1, Math.round(h * scale));
+
+      var canvas = document.createElement('canvas');
+      canvas.width = cw;
+      canvas.height = ch;
+      var ctx = canvas.getContext('2d');
+      // JPEG has no transparency, so anything see-through would come out black.
+      // White reads as paper, which is what a scan of a print wants anyway.
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, cw, ch);
+      ctx.drawImage(src, 0, 0, cw, ch);
+      if (src.close) src.close();
+
+      return toBlob(canvas).then(function (blob) {
+        if (!blob) throw new Error('could not read');
+        // Re-encoding a small PNG can come out bigger than the original; keep
+        // whichever is smaller, as long as the server takes the format.
+        if (KEEP[type] && file.size <= blob.size && file.size <= SERVER_MAX) return file;
+        return blob;
+      });
+    });
+  }
+
+  /* ---------------------------------------------------------- uploading --- */
+
+  function send(blob, caption, by) {
+    var q = '?caption=' + encodeURIComponent(caption) + '&by=' + encodeURIComponent(by);
+    var trap = $('website').value;
+    if (trap) q += '&website=' + encodeURIComponent(trap);
+    return api('/api/photos' + q, {
+      method: 'POST',
+      headers: { 'Content-Type': blob.type || 'image/jpeg' },
+      body: blob,
+    });
+  }
+
+  function wait(ms) {
+    return new Promise(function (r) { setTimeout(r, ms); });
+  }
+
+  $('send').addEventListener('click', function () {
+    if (!chosen.length) return;
+
+    var caption = $('caption').value.trim();
+    var by = $('by').value.trim();
+    var msg = $('msg');
+    var btn = $('send');
+    btn.disabled = true;
+    msg.className = 'msg';
+
+    var added = [];
+    var stuck = [];   // the actual File objects that did not make it
+
+    // One at a time, on purpose. Photos off a phone are large, and firing
+    // twenty parallel uploads over a weak connection is how you get twenty
+    // timeouts instead of twenty photos.
+    var chain = Promise.resolve();
+    chosen.forEach(function (file, i) {
+      chain = chain.then(function () {
+        msg.textContent = 'Adding photo ' + (i + 1) + ' of ' + chosen.length + '…';
+        try { mark(i, '', 'adding…'); } catch (e) { /* cosmetic only */ }
+        return prepare(file)
+          .then(function (blob) {
+            if (blob.size > SERVER_MAX) throw new Error('too large');
+            return send(blob, caption, by).catch(function (err) {
+              // The per-IP budget is generous but a big album can still reach
+              // it. Wait it out once rather than making someone re-pick files.
+              if (err.status !== 429) throw err;
+              msg.textContent = 'Pausing a moment so the server keeps up…';
+              return wait(20000).then(function () { return send(blob, caption, by); });
+            });
+          })
+          .then(function (d) {
+            if (d && d.photo) added.push(d.photo);
+            mark(i, 'ok', 'added');
+          })
+          .catch(function (err) {
+            stuck.push(file);
+            mark(i, 'err', err.message === 'could not read'
+              ? "couldn't read this one"
+              : (err.message === 'too large' ? 'too large' : (err.message || 'failed')));
+          });
+      });
+    });
+
+    // A rejection anywhere above would otherwise leave the button disabled and
+    // the message frozen mid-sentence, with no way out but a page reload. The
+    // per-photo catch should make that impossible; this is here so that if it
+    // ever is possible, the person still gets an answer and a working button.
+    chain.catch(function () {}).then(function () {
+      if (added.length) {
+        // Put them straight on the wall rather than making anyone reload to
+        // see that their photo arrived.
+        photos = added.concat(photos);
+        var wall = $('wall');
+        added.slice().reverse().forEach(function (p) {
+          wall.insertBefore(tile(p, true), wall.firstChild);
+        });
+        $('state').hidden = true;
+      }
+
+      var CANT_READ = ' A photo straight off a phone is sometimes in a format' +
+        ' this site cannot read — screenshotting it and adding the screenshot' +
+        ' almost always works.';
+
+      if (stuck.length && !added.length) {
+        msg.className = 'msg bad';
+        msg.textContent = (stuck.length === 1 ? 'That photo could not be added.' : 'None of those photos could be added.') + CANT_READ;
+        btn.disabled = false;
+        return;
+      }
+
+      // Some worked, some did not. Saying only "Added, thank you" here would
+      // send someone away believing a photo is on the wall when it never
+      // arrived — so the failures are always named, the ones that failed stay
+      // on screen with their reason, and the panel does not close itself.
+      if (stuck.length) {
+        msg.className = 'msg bad';
+        msg.textContent = (added.length === 1 ? 'One photo was added, but ' : added.length + ' photos were added, but ') +
+          (stuck.length === 1 ? 'one could not be.' : stuck.length + ' could not be.') + CANT_READ;
+        chosen = stuck;
+        $('files').value = '';
+        listChosen();
+        btn.disabled = false;
+        return;
+      }
+
+      msg.className = 'msg good';
+      msg.textContent = added.length === 1 ? 'Added. Thank you.' : 'Added ' + added.length + ' photos. Thank you.';
+
+      // Clear the picker but leave their name filled in — most people add a
+      // few photos in a row and retyping it every time is a small cruelty.
+      chosen = [];
+      $('files').value = '';
+      $('caption').value = '';
+      listChosen();
+      setTimeout(function () {
+        closeSheet();
+        msg.textContent = '';
+        btn.disabled = true;
+      }, 1600);
+    });
+  });
+
+  /* --------------------------------------------------------------- boot --- */
+
+  loadFirst();
+})();

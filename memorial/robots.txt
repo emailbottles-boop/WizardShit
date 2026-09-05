@@ -1,0 +1,6 @@
+# The photo wall is public, but nothing here should be indexed by default —
+# a memorial is for the people who knew him, not for search results. Delete
+# the two Disallow lines if you would rather it be findable.
+User-agent: *
+Disallow: /admin
+Disallow: /api/

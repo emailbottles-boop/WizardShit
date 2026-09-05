@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+<!--
+  The name, the dates and the words at the top are NOT written in this file.
+  They live in the database and are edited at /admin, so they can be changed
+  without touching code. What is below is only the fallback shown for the
+  half-second before the page loads them, and for anyone with JavaScript off.
+
+  The three tags marked EDIT ME are the exception: search engines and link
+  previews read them straight out of the HTML, so those need his name typed in
+  once, by hand.
+-->
+
+<!-- EDIT ME -->
+<title>In memory</title>
+<!-- EDIT ME -->
+<meta name="description" content="A place to keep photographs and memories.">
+<meta name="theme-color" content="#f7f3ec">
+
+<meta property="og:type" content="website">
+<!-- EDIT ME -->
+<meta property="og:title" content="In memory">
+<meta property="og:description" content="A place to keep photographs and memories.">
+
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>&#128337;</text></svg>">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;1,300&display=swap">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<header class="hero">
+  <p class="eyebrow">In loving memory of</p>
+  <h1 id="name">&nbsp;</h1>
+  <p class="dates" id="dates"></p>
+  <div class="rule" aria-hidden="true"></div>
+  <p class="intro" id="intro"></p>
+</header>
+
+<section class="invite">
+  <p id="invite">If you have a photo of them, add it here. Any photo, from any time.</p>
+  <button class="add" id="openAdd" type="button">Add a photo</button>
+</section>
+
+<main>
+  <div class="wall" id="wall" aria-live="polite"></div>
+  <p class="state" id="state">Loading the photographs…</p>
+  <button class="more" id="more" type="button" hidden>Show older photos</button>
+</main>
+
+<footer>
+  <p>Photographs added here are visible to anyone who has the link.</p>
+</footer>
+
+<!-- ---------------------------------------------------------------- add --- -->
+<div class="sheet" id="sheet" hidden>
+  <div class="sheet-inner" role="dialog" aria-modal="true" aria-labelledby="addTitle">
+    <button class="x" id="closeAdd" type="button" aria-label="Close">&times;</button>
+    <h2 id="addTitle">Add a photo</h2>
+
+    <div class="drop" id="drop">
+      <input type="file" id="files" accept="image/*" multiple>
+      <p><strong>Choose photos</strong><br><span>or drag them here</span></p>
+    </div>
+    <ul class="picked" id="picked"></ul>
+
+    <label for="caption">A few words about it <span class="opt">optional</span></label>
+    <textarea id="caption" maxlength="600" placeholder="Where it was, when it was, what was happening…"></textarea>
+
+    <label for="by">Your name <span class="opt">optional</span></label>
+    <input id="by" maxlength="80" autocomplete="name" placeholder="So people know who shared it">
+
+    <!--
+      Honeypot. Kept out of the tab order and hidden from screen readers, so
+      only an automated form-filler ever puts anything in it.
+    -->
+    <div class="trap" aria-hidden="true">
+      <label for="website">Website</label>
+      <input id="website" tabindex="-1" autocomplete="off">
+    </div>
+
+    <button class="add wide" id="send" type="button" disabled>Add to the wall</button>
+    <p class="msg" id="msg"></p>
+  </div>
+</div>
+
+<!-- ----------------------------------------------------------- lightbox --- -->
+<div class="light" id="light" hidden>
+  <button class="x" id="closeLight" type="button" aria-label="Close">&times;</button>
+  <button class="nav prev" id="prev" type="button" aria-label="Previous">&#8249;</button>
+  <button class="nav next" id="next" type="button" aria-label="Next">&#8250;</button>
+  <figure>
+    <img id="lightImg" alt="">
+    <figcaption>
+      <span id="lightCap"></span>
+      <span id="lightBy"></span>
+    </figcaption>
+  </figure>
+</div>
+
+<script src="js/config.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>

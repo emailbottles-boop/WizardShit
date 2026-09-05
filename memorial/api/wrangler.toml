@@ -1,0 +1,77 @@
+# Memorial site backend — Cloudflare Worker.
+#
+# Deploy from this api/ folder with:  bash deploy.sh
+# Step-by-step setup:                 see api/README.md
+#
+# This is a SEPARATE worker, database and bucket from anything else in your
+# Cloudflare account. Nothing here touches wizardshit-api, the wizardshit
+# database or the wizardshit-images bucket, so deploying this can never affect
+# your other sites.
+
+name = "memorial-api"
+main = "src/index.js"
+compatibility_date = "2026-08-01"
+
+# Keeps the free memorial-api.<your-subdomain>.workers.dev URL working even
+# after you add the custom-domain routes below. Adding routes silently turns
+# that URL off otherwise, which would leave no way into /admin if the domain
+# or its DNS ever had a bad day.
+workers_dev = true
+
+# ---------------------------------------------------------------------------
+# Custom domain routes — fill these in AFTER you buy the domain and add it to
+# Cloudflare (README step 7), then deploy again.
+#
+# Only these four paths go to the worker. Everything else — the memorial page
+# itself, the CSS, the photos of him you commit to the repo — keeps being
+# served by GitHub Pages.
+#
+# Do NOT add a bare "example.com/*" route: that would put the worker in front
+# of the whole site, including the homepage it does not know how to serve.
+#
+# The trailing * on /admin is load-bearing. An exact pattern matches the path
+# only, so "/admin?x=1" would miss the worker and fall through to Pages.
+# ---------------------------------------------------------------------------
+# routes = [
+#   { pattern = "YOURDOMAIN.com/api/*",  zone_name = "YOURDOMAIN.com" },
+#   { pattern = "YOURDOMAIN.com/img/*",  zone_name = "YOURDOMAIN.com" },
+#   { pattern = "YOURDOMAIN.com/admin*", zone_name = "YOURDOMAIN.com" },
+# ]
+
+# D1 database — create it with:
+#   npx wrangler d1 create memorial
+# then paste the database_id it prints in below.
+[[d1_databases]]
+binding = "DB"
+database_name = "memorial"
+database_id = "PASTE_YOUR_DATABASE_ID_HERE"
+
+# R2 bucket for the photos — create it with:
+#   npx wrangler r2 bucket create memorial-photos
+[[r2_buckets]]
+binding = "IMAGES"
+bucket_name = "memorial-photos"
+
+[vars]
+# Which sites may POST an upload from someone's browser. Reading the wall is
+# open to everyone; this governs writes only.
+#
+# EMPTY MEANS "ANY SITE", and that is the deliberate default: it is the setting
+# that cannot silently break uploads while you are still getting set up.
+#
+# The moment you fill it in it is ENFORCED, and any origin not listed has its
+# uploads refused by the browser with nothing shown on the page. So if you set
+# it, list every address the site is reachable at — including the GitHub Pages
+# one, if you use it — and add www as a separate entry:
+#
+#   ALLOWED_ORIGINS = "https://yourdomain.com,https://www.yourdomain.com,https://yourname.github.io"
+ALLOWED_ORIGINS = ""
+
+# --- Secrets (never written in this file — it is committed to a public repo) ---
+#
+# The caretaker password for /admin. Required before /admin will let anyone in:
+#   npx wrangler secret put ADMIN_PASSWORD
+#
+# Optional. Signs admin session tokens; falls back to ADMIN_PASSWORD if unset.
+# Setting it means changing the password does not sign you out everywhere:
+#   npx wrangler secret put SESSION_SECRET
