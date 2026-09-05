@@ -16,34 +16,37 @@ expires, and there is no monthly bill to forget about.
 ## How it fits together
 
 ```
-Visitor ─▶ your domain (GitHub Pages: the page, the CSS, the layout)
-              │  fetches /api/memorial
-              ▼
-         Cloudflare Worker ──▶ D1  (captions, names, dates)
-              ▲                └──▶ R2  (the photo files)
-              │
+Visitor ─▶ mahoganyjr.com
+              ├─ the page, CSS, JavaScript ──▶ Cloudflare Pages
+              └─ /api/*  /img/*  /admin  ──▶ Cloudflare Worker
+                                                 ├──▶ D1  (captions, names, dates)
+                                                 └──▶ R2  (the photos and recordings)
 You ────▶ /admin  (password protected)
 ```
 
-Two moving parts: this repo, and one Cloudflare Worker in [`api/`](api/). The
-page itself is plain HTML, CSS and JavaScript — no build step, no framework,
-nothing to update. If you open it in five years it will still make sense.
+Everything is on Cloudflare, in your existing account: the page on Pages, the
+backend a Worker in [`api/`](api/). The page itself is plain HTML, CSS and
+JavaScript — no build step, no framework, nothing to update. If you open it in
+five years it will still make sense.
 
 ## Setting it up
 
-Full walkthrough in **[api/README.md](api/README.md)**. Short version:
+Full walkthrough, including the DNS, in **[api/README.md](api/README.md)**.
+Short version, all from your terminal:
 
 1. `cd api && npx wrangler login`
 2. `npx wrangler d1 create memorial` — paste the id it prints into `wrangler.toml`
 3. `npx wrangler r2 bucket create memorial-photos`
 4. `npx wrangler secret put ADMIN_PASSWORD` — choose the caretaker password
-5. `bash deploy.sh`
-6. Paste the worker URL it prints into `js/config.js`, commit, push
-7. Turn on GitHub Pages for this repo (Settings → Pages → deploy from `main`)
+5. `bash deploy.sh` — the backend
+6. `cd .. && bash deploy-site.sh` — the page; live at `mahoganyjr.pages.dev`
+7. Attach the domain: Cloudflare dashboard → Workers & Pages → mahoganyjr →
+   Custom domains → add `mahoganyjr.com` and `www.mahoganyjr.com`
 
-Then open `/admin`, sign in, and fill in his dates and whatever you want people
-to read first, in the **Page text** tab. His name is already on the page; the
-database version overrides it if you ever want to change how it reads.
+Then open `https://mahoganyjr.com/admin`, sign in, and fill in his dates and
+whatever you want people to read first, in the **Page text** tab. His name is
+already on the page; the database version overrides it if you ever want to
+change how it reads.
 
 ## Looking after it
 
@@ -95,6 +98,8 @@ Keep it somewhere that isn't Cloudflare.
 | `api/src/index.js` | the Worker — uploads, the wall, admin |
 | `api/src/admin.js` | the caretaker panel |
 | `api/schema.sql` | the two database tables |
+| `deploy-site.sh` | puts the page live on Cloudflare Pages |
+| `api/deploy.sh` | puts the backend live |
 | `api/backup.sh` | downloads everything onto your computer |
 | `tools/crop-screenshots.py` | trims phone/Facebook furniture off screenshots |
 

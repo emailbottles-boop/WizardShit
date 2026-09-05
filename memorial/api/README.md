@@ -67,17 +67,26 @@ something like `https://memorial-api.yourname.workers.dev`.
 Try `https://memorial-api.yourname.workers.dev/admin` now — your password
 should get you in, to an empty panel.
 
-### 6. Point the page at it
+### 6. Put the page live
 
-In the repo root, open `js/config.js` and put that address in:
+From the repo root (one folder up):
+
+```
+cd ..
+bash deploy-site.sh
+```
+
+The first run creates a Cloudflare Pages project called `mahoganyjr`; it
+prints the address, `https://mahoganyjr.pages.dev`. The page is live there
+straight away, but it can't talk to the backend yet — that happens when both
+share the domain in the next section. To try it before then, put the worker's
+address into `js/config.js` temporarily:
 
 ```js
 window.MEMORIAL_API = "https://memorial-api.yourname.workers.dev";
 ```
 
-Commit and push. Then turn on GitHub Pages: repo **Settings → Pages → Deploy
-from a branch → main → / (root)**. A few minutes later the site is live at
-`https://yourname.github.io/<repo>/`.
+and run `bash deploy-site.sh` again. Set it back to `""` once the domain is on.
 
 ### 7. Write his name
 
@@ -90,31 +99,54 @@ own domain.
 
 ---
 
-## Putting it on mahoganyjr.com
+## Putting it on mahoganyjr.com — the DNS
 
-The routes are already written for `mahoganyjr.com`, and the repo root has a
-`CNAME` file with that domain in it. What's left is telling Cloudflare and
-GitHub about each other.
+There is no list of records to type in. Cloudflare writes them itself; your
+job is two clicks in the right place. In order:
 
-**1. Add the domain to Cloudflare.** Dashboard → **Add a site** → enter
-`mahoganyjr.com` → it gives you two nameservers to paste in at whoever you
-bought the domain from. That switch can take anywhere from minutes to a day.
+**1. Get the domain into your Cloudflare account** (skip this if you bought it
+through Cloudflare — it's already there).
 
-The `routes` block in `wrangler.toml` sends only `/api/*`, `/img/*` and
-`/admin` to the worker. Do **not** widen it to `mahoganyjr.com/*` — that would
-put the worker in front of the whole site, including the homepage it doesn't
-serve.
+Dashboard → **Add a site** → `mahoganyjr.com` → Free plan. It shows you two
+nameservers, unique to your account, like `xxxx.ns.cloudflare.com`. Go to
+wherever you bought the domain, find its nameserver setting, and replace what's
+there with those two. Cloudflare emails you when it's active — anywhere from a
+few minutes to a day.
 
-**2. Point the domain at GitHub Pages.** In Cloudflare's **DNS** tab:
+Nothing else works until this step is done, so if something below doesn't
+take, this is the first thing to check.
 
-| Type | Name | Content | Proxy |
+**2. Attach the domain to the page.** Dashboard → **Workers & Pages** →
+**mahoganyjr** (the Pages project `deploy-site.sh` made) → **Custom domains**
+→ **Set up a custom domain** → `mahoganyjr.com` → Activate. Then the same
+again for `www.mahoganyjr.com`.
+
+That's the whole DNS. Cloudflare creates the records for you; afterwards the
+**DNS** tab of the zone shows exactly this, and if it doesn't, something above
+didn't finish:
+
+| Type | Name | Content | Proxy status |
 |---|---|---|---|
-| CNAME | `@` | `<your-github-username>.github.io` | Proxied |
-| CNAME | `www` | `<your-github-username>.github.io` | Proxied |
+| CNAME | `mahoganyjr.com` | `mahoganyjr.pages.dev` | Proxied (orange cloud) |
+| CNAME | `www` | `mahoganyjr.pages.dev` | Proxied (orange cloud) |
 
-Then in the repo: **Settings → Pages → Custom domain** → `mahoganyjr.com`.
+Both must be **Proxied**. That is what lets the worker's routes in the next
+step intercept `/api/*`, `/img/*` and `/admin` on the same hostname while
+everything else goes to the page. HTTPS is automatic.
 
-**3. Only once mahoganyjr.com is actually loading the site**, you can narrow
+**3. Attach the backend.** The `routes` block in `wrangler.toml` is already
+written for `mahoganyjr.com`. If you ran `bash deploy.sh` before the domain
+was in your account, run it once more now so the routes take. Do **not**
+widen the routes to `mahoganyjr.com/*` — that would put the worker in front of
+the whole site, including the homepage it doesn't serve.
+
+**4. Check it.** All three should work:
+
+- `https://mahoganyjr.com` — the page, with his name on it
+- `https://mahoganyjr.com/admin` — the caretaker sign-in
+- `https://mahoganyjr.com/api/memorial` — a block of JSON
+
+**5. Only once mahoganyjr.com is actually loading the site**, you can narrow
 who may upload:
 
 ```toml
@@ -126,12 +158,11 @@ left out has its uploads refused by the browser, with nothing shown to the
 person uploading to explain why. Leaving it empty is not a security hole in any
 way that matters here: the wall is public and uploads are open by design.
 
-**4. Deploy again:** `bash deploy.sh`
+Then `bash deploy.sh` again for it to take.
 
-`js/config.js` is already `""`, which means "call `/api/...` on whatever
-address the page is being served from". Once the routes above are live that is
-mahoganyjr.com, and nothing further needs changing. Before then, put your
-`workers.dev` address in there so you can test.
+`js/config.js` should be `""`, which means "call `/api/...` on whatever address
+the page is being served from". Once the domain is on, that is mahoganyjr.com
+and the page and backend are one site.
 
 The `workers.dev` address keeps working alongside the domain — deliberately, so
 there's still a way into `/admin` if DNS ever has a bad day.
