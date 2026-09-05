@@ -64,7 +64,7 @@ bash deploy.sh
 
 That creates the tables and deploys the worker — page, backend, domain, all in
 one. It prints two addresses: `https://mahoganyjr.com` and a spare,
-`https://mahoganyjr.yourname.workers.dev`, which is the same site and stays
+`https://memorial-api.yourname.workers.dev`, which is the same site and stays
 working forever as a back door if the domain ever has a bad day.
 
 Try `/admin` on either now — your password should get you in, to an empty

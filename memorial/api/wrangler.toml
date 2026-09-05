@@ -8,11 +8,11 @@
 # database or the wizardshit-images bucket, so deploying this can never affect
 # your other sites.
 
-name = "mahoganyjr"
+name = "memorial-api"
 main = "src/index.js"
 compatibility_date = "2026-08-01"
 
-# Keeps the free mahoganyjr.<your-subdomain>.workers.dev URL working alongside
+# Keeps the free memorial-api.<your-subdomain>.workers.dev URL working alongside
 # the real domain. It is a complete second front door to the whole site — if
 # the domain or its DNS ever has a bad day, /admin is still reachable there.
 workers_dev = true
@@ -44,13 +44,12 @@ routes = [
 directory = "../site"
 binding = "ASSETS"
 
-# D1 database — create it with:
-#   npx wrangler d1 create memorial
-# then paste the database_id it prints in below.
+# D1 database. Already created in the account (2026-09-05); the id below is
+# that database. A D1 id is an identifier, not a credential — it is fine here.
 [[d1_databases]]
 binding = "DB"
 database_name = "memorial"
-database_id = "PASTE_YOUR_DATABASE_ID_HERE"
+database_id = "6b4f0a8e-98a9-4871-bd1a-e8ff93a396b7"
 
 # R2 bucket for the photos — create it with:
 #   npx wrangler r2 bucket create memorial-photos
