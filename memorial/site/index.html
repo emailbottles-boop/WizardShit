@@ -105,7 +105,7 @@
     <div class="or" aria-hidden="true"><span>or tell a story</span></div>
 
     <label for="story">A story about him</label>
-    <textarea id="story" class="tall" maxlength="5000" placeholder="A memory, a moment, something he said… It goes in its own frame under the photographs. Your name above is shown only when someone opens it."></textarea>
+    <textarea id="story" class="tall" maxlength="5000" placeholder="A memory, a moment, something he said… It goes in its own frame under the photographs. Choose one photo above to go with it, or none. Your name above is shown only when someone opens it."></textarea>
     <button class="add wide" id="sendStory" type="button" disabled>Add the story</button>
 
     <p class="msg" id="msg"></p>
@@ -116,6 +116,7 @@
 <div class="reader" id="reader" hidden>
   <div class="reader-inner" role="dialog" aria-modal="true" aria-label="A story">
     <button class="x" id="closeReader" type="button" aria-label="Close">&times;</button>
+    <img id="readerImg" alt="" hidden>
     <div class="reader-text" id="readerText"></div>
     <p class="reader-by" id="readerBy" hidden></p>
   </div>

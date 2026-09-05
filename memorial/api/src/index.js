@@ -476,7 +476,7 @@ async function listPhotos(env, beforeId) {
 
 async function listStories(env) {
   const { results } = await env.DB.prepare(
-    'SELECT ' + ROW_COLS + " FROM photos WHERE hidden = 0 AND kind = 'story' ORDER BY id DESC LIMIT ?",
+    'SELECT ' + ROW_COLS + " FROM photos WHERE hidden = 0 AND kind = 'story' ORDER BY (r2_key <> '') DESC, id DESC LIMIT ?",
   ).bind(MAX_STORIES).all();
   return (results || []).map(photoRow);
 }
@@ -722,7 +722,12 @@ async function receivePhotoForm(request, env, origin) {
     }
   }
 
-  const caption = str(form.get('caption'), 600);
+  // A photo that comes with a story is a story with a picture: it goes in
+  // its own frame among the stories rather than on the wall, and the story
+  // text is what is written with it.
+  const storyText = str(form.get('story'), MAX_STORY_CHARS).trim();
+  const kind = storyText.length >= 2 ? 'story' : 'photo';
+  const caption = kind === 'story' ? storyText : str(form.get('caption'), 600);
   const uploader = str(form.get('by'), 80);
   const photographer = str(form.get('photo_by'), 80);
 
@@ -741,7 +746,7 @@ async function receivePhotoForm(request, env, origin) {
       'INSERT INTO photos (kind, mime, image, r2_key, thumb_key, original_key, original_bytes, caption, uploader, photographer, width, height, duration, bytes) ' +
       'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING ' + ROW_COLS,
     )
-      .bind('photo', dtype, '/img/' + key, key, tkey, okey, obuf ? obuf.byteLength : 0, caption, uploader, photographer, size.width, size.height, 0, dbuf.byteLength)
+      .bind(kind, dtype, '/img/' + key, key, tkey, okey, obuf ? obuf.byteLength : 0, caption, uploader, photographer, size.width, size.height, 0, dbuf.byteLength)
       .first();
   } catch (err) {
     await Promise.all([key, tkey, okey].filter(Boolean).map((k) => env.IMAGES.delete(k).catch(() => {})));
@@ -1003,7 +1008,7 @@ async function route(request, env, ctx, url, path, method) {
         'SELECT id, kind, mime, r2_key, thumb_key, width, height, bytes, trimmed, pre_key, pre_thumb_key FROM photos WHERE id = ?',
       ).bind(id).first();
       if (!row) return json({ error: 'That photo is gone' }, 404);
-      if (row.kind !== 'photo') return json({ error: 'Only photos can be trimmed' }, 400);
+      if (!row.r2_key) return json({ error: 'Only photos can be trimmed' }, 400);
       // Pinned now, before anything changes. A first trim keeps the copies it
       // replaces (as pre_*), so Untrim can put them back. Trimming an already
       // trimmed photo keeps the ORIGINAL pre-trim copies and drops only the
