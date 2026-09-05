@@ -122,7 +122,7 @@
 
   /* --------------------------------------------------------------- wall --- */
 
-  function tile(p, fresh) {
+  function tile(p, fresh, eager) {
     var fig = document.createElement('figure');
     fig.className = 'tile' + (fresh ? ' fresh' : '');
     fig.dataset.id = p.id;
@@ -130,7 +130,10 @@
     fig.setAttribute('role', 'button');
 
     var img = document.createElement('img');
-    img.loading = 'lazy';
+    // The first few photos are what the page opens on, so they are asked for
+    // straight away; everything below the fold waits until it is scrolled to.
+    img.loading = eager ? 'eager' : 'lazy';
+    if (eager === 'high') img.fetchPriority = 'high';
     img.decoding = 'async';
     img.src = thumbUrl(p);
     // The caption is the only description we have; without one the photo is
@@ -152,9 +155,15 @@
       img.style.aspectRatio = '';
       img.removeAttribute('width');
       img.removeAttribute('height');
+      img.classList.add('in');
     }
     if (img.complete && img.naturalWidth) settle();
-    else img.addEventListener('load', settle, { once: true });
+    else {
+      img.addEventListener('load', settle, { once: true });
+      // A photo that cannot be shown still gets its box revealed, rather than
+      // an empty patch that looks like something is about to happen.
+      img.addEventListener('error', function () { img.classList.add('in'); }, { once: true });
+    }
     fig.appendChild(img);
 
     // Nothing is written under a photo on the wall. The words that came with
@@ -170,7 +179,11 @@
   function render(list, append) {
     var wall = $('wall');
     if (!append) wall.innerHTML = '';
-    list.forEach(function (p) { wall.appendChild(tile(p, false)); });
+    list.forEach(function (p, i) {
+      var eager = append ? false : (i < 2 ? 'high' : i < 8);
+      wall.appendChild(tile(p, false, eager));
+    });
+    $('wallTitle').hidden = photos.length === 0;
   }
 
   function loadFirst() {
@@ -185,6 +198,7 @@
       if (!photos.length) $('state').textContent = recordings.length ? 'No photographs yet.' : 'Nothing here yet. Yours can be the first.';
       $('more').hidden = !d.more;
       cursor = d.cursor || 0;
+      stripRefresh();
       startLive();
     }).catch(function () {
       // The wall is the whole page, so a failure here needs saying out loud
@@ -223,7 +237,13 @@
     $('lightImg').src = fileUrl(p);
     $('lightImg').alt = p.caption || '';
     $('lightCap').textContent = p.caption || '';
+    $('lightCap').hidden = !p.caption;
     $('light').hidden = false;
+    // Fetch the neighbours now, so the arrows feel instant rather than each
+    // one starting a download.
+    [i + 1, i - 1].forEach(function (n) {
+      if (n >= 0 && n < photos.length) { var pre = new Image(); pre.src = fileUrl(photos[n]); }
+    });
     document.body.style.overflow = 'hidden';
     $('closeLight').focus();
   }
@@ -591,6 +611,8 @@
             wall.insertBefore(tile(p, true), wall.firstChild);
           });
           $('state').hidden = true;
+          $('wallTitle').hidden = false;
+          stripRefresh();
         }
         if (newRecs.length) {
           recordings = newRecs.concat(recordings);
@@ -645,6 +667,142 @@
     });
   });
 
+  /* -------------------------------------------------------------- strip --- */
+
+  // A row of his photographs under his name that turn over one at a time,
+  // like pages. They are the same small copies the wall loads, so the row
+  // costs nothing extra to show. It only moves while it is on screen and the
+  // tab is being looked at, and it stops moving altogether for anyone who has
+  // asked their phone for less motion.
+
+  var STRIP_EVERY = 4200;      // how often one photo turns over
+  var STRIP_MIN = 3;           // fewer photographs than this and there is no row
+  var slots = [];              // { el, imgs:[a,b], face:0|1, photo }
+  var stripTimer = null;
+  var stripNext = 0;           // which slot turns over next
+  var stripSeen = false;       // is the row on screen right now
+  var stripStill = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  function stripCount() {
+    var w = window.innerWidth;
+    return w >= 1100 ? 4 : w >= 700 ? 3 : 2;
+  }
+
+  function stripPick(except) {
+    // A photo not already in the row, chosen at random; failing that, any
+    // photo that is not the one being replaced.
+    var showing = {};
+    slots.forEach(function (s) { if (s.photo) showing[s.photo.id] = true; });
+    var pool = photos.filter(function (p) { return !showing[p.id]; });
+    if (!pool.length) pool = photos.filter(function (p) { return !except || p.id !== except.id; });
+    if (!pool.length) return null;
+    return pool[Math.floor(Math.random() * pool.length)];
+  }
+
+  function stripShow(slot, p, instant) {
+    if (!p) return;
+    var back = slot.imgs[1 - slot.face];
+    var front = slot.imgs[slot.face];
+    var prev = slot.photo;
+    slot.photo = p;
+    slot.el.setAttribute('aria-label', p.caption ? p.caption : 'Photograph');
+    back.alt = p.caption || '';
+    var swap = function () {
+      back.classList.add('show');
+      front.classList.remove('show');
+      slot.face = 1 - slot.face;
+    };
+    if (instant) {
+      back.src = thumbUrl(p);
+      swap();
+      return;
+    }
+    back.classList.remove('show');
+    back.onload = function () { back.onload = null; swap(); };
+    back.onerror = function () { back.onerror = null; slot.photo = prev; };
+    back.src = thumbUrl(p);
+  }
+
+  function stripBuild() {
+    var row = $('stripRow');
+    row.innerHTML = '';
+    slots = [];
+    var n = stripCount();
+    for (var i = 0; i < n; i++) {
+      var el = document.createElement('button');
+      el.type = 'button';
+      el.className = 'slot';
+      var imgs = [];
+      for (var k = 0; k < 2; k++) {
+        var img = document.createElement('img');
+        img.decoding = 'async';
+        img.alt = '';
+        el.appendChild(img);
+        imgs.push(img);
+      }
+      var slot = { el: el, imgs: imgs, face: 0, photo: null };
+      (function (slot) {
+        slot.el.addEventListener('click', function () {
+          var at = slot.photo ? photos.indexOf(slot.photo) : -1;
+          if (at >= 0) openLight(at);
+        });
+      })(slot);
+      row.appendChild(el);
+      slots.push(slot);
+    }
+    slots.forEach(function (slot) { stripShow(slot, stripPick(), true); });
+  }
+
+  function stripTurn() {
+    if (!slots.length || photos.length < STRIP_MIN) return;
+    var slot = slots[stripNext % slots.length];
+    stripNext++;
+    stripShow(slot, stripPick(slot.photo), false);
+  }
+
+  function stripRun() {
+    var go = stripSeen && !document.hidden && !stripStill && photos.length > slots.length;
+    if (go && !stripTimer) stripTimer = setInterval(stripTurn, STRIP_EVERY);
+    if (!go && stripTimer) { clearInterval(stripTimer); stripTimer = null; }
+  }
+
+  // Called whenever the set of photos changes: first load, an upload, a live
+  // update. Shows or hides the row and fills any slot that has nothing in it.
+  function stripRefresh() {
+    var strip = $('strip');
+    if (photos.length < STRIP_MIN) { strip.hidden = true; stripRun(); return; }
+    if (!slots.length || slots.length !== stripCount()) stripBuild();
+    else slots.forEach(function (slot) { if (!slot.photo) stripShow(slot, stripPick(), true); });
+    strip.hidden = false;
+    stripRun();
+  }
+
+  // A photo the caretaker just hid must not sit in the row.
+  function stripDrop(id) {
+    slots.forEach(function (slot) {
+      if (slot.photo && slot.photo.id === id) { slot.photo = null; stripShow(slot, stripPick(), false); }
+    });
+    if (photos.length < STRIP_MIN) stripRefresh();
+  }
+
+  var resizeWait = null;
+  window.addEventListener('resize', function () {
+    clearTimeout(resizeWait);
+    resizeWait = setTimeout(function () {
+      if (slots.length && slots.length !== stripCount()) stripRefresh();
+    }, 200);
+  });
+
+  if ('IntersectionObserver' in window) {
+    new IntersectionObserver(function (entries) {
+      stripSeen = entries.some(function (e) { return e.isIntersecting; });
+      stripRun();
+    }, { threshold: 0.2 }).observe($('strip'));
+  } else {
+    stripSeen = true;
+  }
+  document.addEventListener('visibilitychange', stripRun);
+
   /* --------------------------------------------------------------- live --- */
 
   // Nobody should have to refresh. Every few seconds the page asks the server
@@ -669,7 +827,8 @@
     photos = photos.filter(function (p) { return p.id !== id; });
     recordings = recordings.filter(function (p) { return p.id !== id; });
     if (!recordings.length) $('recordings').hidden = true;
-    if (!photos.length) { $('state').hidden = false; $('state').textContent = emptyText(); }
+    if (!photos.length) { $('state').hidden = false; $('state').textContent = emptyText(); $('wallTitle').hidden = true; }
+    stripDrop(id);
   }
 
   function placeItem(p) {
@@ -696,6 +855,8 @@
     photos.push(p); photos.sort(byId);
     $('wall').insertBefore(tile(p, true), before($('wall')));
     $('state').hidden = true;
+    $('wallTitle').hidden = false;
+    stripRefresh();
   }
 
   function applyEvents(evs) {

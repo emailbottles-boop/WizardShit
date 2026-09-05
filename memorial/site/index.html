@@ -29,18 +29,29 @@
 <header class="hero">
   <h1 id="name">Santana</h1>
   <p class="sub">The Real MJ</p>
+  <div class="rule" aria-hidden="true"></div>
 </header>
+
+<!--
+  A row of his photographs that quietly turn over, one at a time, drawn from
+  whatever is on the wall. Tapping one opens it. Appears once there are a few
+  photographs to show; until then the row simply is not there.
+-->
+<section class="strip" id="strip" hidden aria-label="A few of the photographs">
+  <div class="strip-row" id="stripRow"></div>
+</section>
 
 <section class="invite">
   <button class="add" id="openAdd" type="button">Add stuff</button>
 </section>
 
 <section class="recordings" id="recordings" hidden>
-  <h2>Recordings</h2>
+  <h2 class="section-title"><span>Recordings</span></h2>
   <div class="rec-list" id="recList"></div>
 </section>
 
 <main>
+  <h2 class="section-title" id="wallTitle" hidden><span>Photographs</span></h2>
   <div class="wall" id="wall" aria-live="polite"></div>
   <p class="state" id="state">Loading the photographs…</p>
   <button class="more" id="more" type="button" hidden>Show older photos</button>
