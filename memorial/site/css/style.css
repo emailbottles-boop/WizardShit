@@ -250,6 +250,11 @@ footer {
   text-align: center;
 }
 footer p { margin: 0; color: var(--soft); font-size: 13px; }
+/* The way in for whoever looks after the site. Quiet on purpose — it is
+   password-protected, so it can be visible without being an invitation. */
+footer .care { margin-top: 10px; }
+footer .care a { color: var(--soft); text-decoration: none; border-bottom: 1px solid var(--line); }
+footer .care a:hover { color: var(--accent); border-color: var(--accent); }
 
 /* ------------------------------------------------------------- add sheet --- */
 

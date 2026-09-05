@@ -17,16 +17,6 @@ compatibility_date = "2026-08-01"
 # the domain or its DNS ever has a bad day, /admin is still reachable there.
 workers_dev = true
 
-# The page itself — index.html, the CSS and JavaScript, the 404 page — is
-# served by this same worker straight out of ../site. A request that matches a
-# file in there gets the file; anything else (/api/*, /img/*, /admin) falls
-# through to the code in src/. One deploy puts the whole site live, and the
-# page and its backend are always the same origin, so there is no CORS to get
-# wrong and nothing to point at anything.
-[assets]
-directory = "../site"
-binding = "ASSETS"
-
 # ---------------------------------------------------------------------------
 # The domain. These are Workers Custom Domains, not plain routes: on deploy,
 # Cloudflare creates the DNS records and the HTTPS certificate for each one
@@ -43,6 +33,16 @@ routes = [
   { pattern = "mahoganyjr.com",     custom_domain = true },
   { pattern = "www.mahoganyjr.com", custom_domain = true },
 ]
+
+# The page itself — index.html, the CSS and JavaScript, the 404 page — is
+# served by this same worker straight out of ../site. A request that matches a
+# file in there gets the file; anything else (/api/*, /img/*, /admin) falls
+# through to the code in src/. One deploy puts the whole site live, and the
+# page and its backend are always the same origin, so there is no CORS to get
+# wrong and nothing to point at anything.
+[assets]
+directory = "../site"
+binding = "ASSETS"
 
 # D1 database — create it with:
 #   npx wrangler d1 create memorial
