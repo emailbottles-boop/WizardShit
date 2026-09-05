@@ -143,6 +143,18 @@
       img.height = p.height;
       img.style.aspectRatio = p.width + ' / ' + p.height;
     }
+    // The reserved shape is only a guess until the photo arrives. Once it has,
+    // the photo's own proportions take over, no matter what was recorded for
+    // it — so a photo can never be squashed or stretched to fit a box of the
+    // wrong shape (which is what happened to older phone photos whose
+    // recorded width and height were the wrong way round).
+    function settle() {
+      img.style.aspectRatio = '';
+      img.removeAttribute('width');
+      img.removeAttribute('height');
+    }
+    if (img.complete && img.naturalWidth) settle();
+    else img.addEventListener('load', settle, { once: true });
     fig.appendChild(img);
 
     // Nothing is written under a photo on the wall. The words that came with
