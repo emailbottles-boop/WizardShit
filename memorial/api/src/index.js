@@ -431,14 +431,16 @@ function readImageSize(buf, type) {
 
 /* --------------------------------------------------------------- wall --- */
 
+// What a visitor's browser is given about a photo. Deliberately NO names in
+// here: who added it and who took it are kept in the database for the
+// caretaker (/api/admin/photos returns them) and never leave through any
+// public endpoint, so they cannot be seen even by opening the API directly.
 function photoRow(r) {
   return {
     id: r.id,
     kind: r.kind || 'photo',
     image: r.image,
     caption: r.caption || '',
-    uploader: r.uploader || '',
-    photographer: r.photographer || '',
     thumb: r.thumb_key ? '/img/' + r.thumb_key : '',
     original_bytes: r.original_bytes || 0,
     width: r.width || 0,
@@ -450,12 +452,11 @@ function photoRow(r) {
 
 const ROW_COLS = 'id, kind, image, caption, uploader, photographer, width, height, duration, created_at, thumb_key, original_bytes';
 
-async function listPhotos(env, beforeId, by) {
+async function listPhotos(env, beforeId) {
   const before = Number(beforeId);
   const paged = Number.isFinite(before) && before > 0;
   const where = ["hidden = 0", "kind = 'photo'"];
   const binds = [];
-  if (by) { where.push('uploader = ?'); binds.push(by); }
   if (paged) { where.push('id < ?'); binds.push(before); }
   binds.push(PAGE_SIZE);
   const { results } = await env.DB.prepare(
@@ -463,19 +464,6 @@ async function listPhotos(env, beforeId, by) {
   ).bind(...binds).all();
   const photos = (results || []).map(photoRow);
   return { photos, more: photos.length === PAGE_SIZE };
-}
-
-// Everyone who has put their name to a visible photo, most photos first. This
-// is what lets the page show one person's photos as a set.
-async function listPeople(env) {
-  try {
-    const { results } = await env.DB.prepare(
-      "SELECT uploader AS name, COUNT(*) AS n FROM photos WHERE hidden = 0 AND kind = 'photo' AND uploader <> '' GROUP BY uploader ORDER BY n DESC, name ASC LIMIT 200",
-    ).all();
-    return (results || []).map((r) => ({ name: r.name, count: r.n }));
-  } catch {
-    return [];
-  }
 }
 
 async function listRecordings(env) {
@@ -836,10 +824,10 @@ async function route(request, env, ctx, url, path, method) {
     const cacheKey = new Request(origin + '/api/memorial');
     const hit = await cache.match(cacheKey);
     if (hit) return hit;
-    const [settings, wall, recordings, cursor, people] = await Promise.all([
-      readSettings(env), listPhotos(env, null), listRecordings(env), latestCursor(env), listPeople(env),
+    const [settings, wall, recordings, cursor] = await Promise.all([
+      readSettings(env), listPhotos(env, null), listRecordings(env), latestCursor(env),
     ]);
-    const res = json({ ...wall, recordings, settings, cursor, people }, 200, {
+    const res = json({ ...wall, recordings, settings, cursor }, 200, {
       ...PUBLIC_CORS,
       // Short, because a photo added now should appear almost at once for
       // everyone; the explicit purge above covers the uploader themselves.
@@ -871,7 +859,7 @@ async function route(request, env, ctx, url, path, method) {
   // Older pages are not cached: they are read far less often, and they shift
   // as photos are hidden.
   if (path === '/api/photos' && method === 'GET') {
-    return json(await listPhotos(env, url.searchParams.get('before'), str(url.searchParams.get('by'), 80)), 200, PUBLIC_CORS);
+    return json(await listPhotos(env, url.searchParams.get('before')), 200, PUBLIC_CORS);
   }
 
   if (path === '/api/photos' && method === 'POST') {

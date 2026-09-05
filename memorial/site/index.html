@@ -41,7 +41,6 @@
 </section>
 
 <main>
-  <nav class="people" id="people" hidden aria-label="Photos by person"></nav>
   <div class="wall" id="wall" aria-live="polite"></div>
   <p class="state" id="state">Loading the photographs…</p>
   <button class="more" id="more" type="button" hidden>Show older photos</button>
@@ -67,10 +66,10 @@
     <textarea id="caption" maxlength="600" placeholder="Where it was, when it was, what was happening… (for a recording, its name)"></textarea>
 
     <label for="by">Your name <span class="opt">optional</span></label>
-    <input id="by" maxlength="80" autocomplete="name" placeholder="So people know who shared it">
+    <input id="by" maxlength="80" autocomplete="name" placeholder="Kept for the family only — not shown on the site">
 
     <label for="photoBy">Photographer <span class="opt">optional</span></label>
-    <input id="photoBy" maxlength="80" placeholder="Who took the photo">
+    <input id="photoBy" maxlength="80" placeholder="Kept for the family only — not shown on the site">
 
     <!--
       Honeypot. Kept out of the tab order and hidden from screen readers, so
@@ -95,8 +94,6 @@
     <img id="lightImg" alt="">
     <figcaption>
       <span id="lightCap"></span>
-      <span id="lightBy"></span>
-      <span id="lightPhotoBy"></span>
     </figcaption>
   </figure>
 </div>
