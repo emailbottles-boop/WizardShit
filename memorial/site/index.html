@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+<!--
+  The top of the page is his name and The Real MJ, and nothing else — that is
+  deliberate. Both are written here, not in a database.
+-->
+
+<title>Santana — The Real MJ</title>
+<meta name="description" content="Santana Turner — The Real MJ. A place to keep photographs and recordings of him. If you have one, add it here.">
+<meta name="theme-color" content="#f7f3ec">
+
+<meta property="og:type" content="website">
+<meta property="og:title" content="Santana — The Real MJ">
+<meta property="og:description" content="Santana Turner — The Real MJ. A place to keep photographs and recordings of him. If you have one, add it here.">
+
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>&#128337;</text></svg>">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;1,300&display=swap">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<header class="hero">
+  <h1 id="name">Santana</h1>
+  <p class="sub">The Real MJ</p>
+</header>
+
+<section class="invite">
+  <button class="add" id="openAdd" type="button">Add stuff</button>
+</section>
+
+<section class="recordings" id="recordings" hidden>
+  <h2>Recordings</h2>
+  <div class="rec-list" id="recList"></div>
+</section>
+
+<main>
+  <nav class="people" id="people" hidden aria-label="Photos by person"></nav>
+  <div class="wall" id="wall" aria-live="polite"></div>
+  <p class="state" id="state">Loading the photographs…</p>
+  <button class="more" id="more" type="button" hidden>Show older photos</button>
+</main>
+
+<footer>
+  <p>Anything added here is visible to anyone who has the link.</p>
+</footer>
+
+<!-- ---------------------------------------------------------------- add --- -->
+<div class="sheet" id="sheet" hidden>
+  <div class="sheet-inner" role="dialog" aria-modal="true" aria-labelledby="addTitle">
+    <button class="x" id="closeAdd" type="button" aria-label="Close">&times;</button>
+    <h2 id="addTitle">Add stuff</h2>
+
+    <div class="drop" id="drop">
+      <input type="file" id="files" accept="image/*,audio/*,.mp3,.wav,.m4a,.ogg,.flac" multiple>
+      <p><strong>Choose files</strong><br><span>or drag them here</span></p>
+    </div>
+    <ul class="picked" id="picked"></ul>
+
+    <label for="caption">A few words about it <span class="opt">optional</span></label>
+    <textarea id="caption" maxlength="600" placeholder="Where it was, when it was, what was happening… (for a recording, its name)"></textarea>
+
+    <label for="by">Your name <span class="opt">optional</span></label>
+    <input id="by" maxlength="80" autocomplete="name" placeholder="So people know who shared it">
+
+    <label for="photoBy">Photographer <span class="opt">optional</span></label>
+    <input id="photoBy" maxlength="80" placeholder="Who took the photo">
+
+    <!--
+      Honeypot. Kept out of the tab order and hidden from screen readers, so
+      only an automated form-filler ever puts anything in it.
+    -->
+    <div class="trap" aria-hidden="true">
+      <label for="website">Website</label>
+      <input id="website" tabindex="-1" autocomplete="off">
+    </div>
+
+    <button class="add wide" id="send" type="button" disabled>Add to the wall</button>
+    <p class="msg" id="msg"></p>
+  </div>
+</div>
+
+<!-- ----------------------------------------------------------- lightbox --- -->
+<div class="light" id="light" hidden>
+  <button class="x" id="closeLight" type="button" aria-label="Close">&times;</button>
+  <button class="nav prev" id="prev" type="button" aria-label="Previous">&#8249;</button>
+  <button class="nav next" id="next" type="button" aria-label="Next">&#8250;</button>
+  <figure>
+    <img id="lightImg" alt="">
+    <figcaption>
+      <span id="lightCap"></span>
+      <span id="lightBy"></span>
+      <span id="lightPhotoBy"></span>
+    </figcaption>
+  </figure>
+</div>
+
+<script src="js/config.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>

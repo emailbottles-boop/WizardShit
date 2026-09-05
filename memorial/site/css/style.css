@@ -1,0 +1,438 @@
+/* ---------------------------------------------------------------------------
+   Memorial site.
+
+   The palette is warm rather than cold — cream and bronze instead of grey and
+   blue — because the page should feel like an album left open on a table, not
+   like software. Everything below is one file with no build step, so it can be
+   edited by anyone who can read CSS.
+--------------------------------------------------------------------------- */
+
+:root {
+  --bg:     #f7f3ec;
+  --panel:  #fffdfa;
+  --ink:    #2c2622;
+  --soft:   #7a6f66;
+  --accent: #9c6b33;
+  --line:   #e3dacd;
+  --shadow: 0 1px 2px rgba(44, 38, 34, .05), 0 8px 24px rgba(44, 38, 34, .07);
+  --serif:  "Cormorant Garamond", "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  --sans:   ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  color-scheme: light;
+}
+
+/* Anyone reading this at 3am should not get a screenful of white. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg:     #15120f;
+    --panel:  #1e1a16;
+    --ink:    #f0e9e0;
+    --soft:   #a2968a;
+    --accent: #d9a463;
+    --line:   #322b25;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 8px 24px rgba(0, 0, 0, .35);
+    color-scheme: dark;
+  }
+}
+
+* { box-sizing: border-box; }
+
+/* The overlays below are display:flex, and a class beats the browser's own
+   [hidden] { display: none } rule — so without this a "closed" lightbox stays
+   laid out on top of the page as an invisible sheet that swallows every click.
+   Nothing is hidden with style.display anywhere; the `hidden` attribute is the
+   single switch, and this is what makes it authoritative. */
+[hidden] { display: none !important; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 16px;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ------------------------------------------------------------------ hero --- */
+
+.hero {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: clamp(56px, 12vw, 110px) 24px clamp(28px, 5vw, 48px);
+  text-align: center;
+}
+
+.eyebrow {
+  margin: 0 0 14px;
+  font-size: 12px;
+  letter-spacing: .22em;
+  text-transform: uppercase;
+  color: var(--soft);
+}
+
+.hero h1 {
+  font-family: var(--serif);
+  font-weight: 400;
+  font-size: clamp(44px, 10vw, 82px);
+  line-height: 1.06;
+  letter-spacing: .01em;
+  margin: 0;
+}
+
+/* The line under his name. Set once here, not in the database: it is who he
+   was, not something that needs editing. */
+.sub {
+  font-family: var(--serif);
+  font-style: italic;
+  font-weight: 400;
+  font-size: clamp(24px, 4.6vw, 34px);
+  line-height: 1.2;
+  color: var(--soft);
+  margin: 8px 0 0;
+}
+
+
+
+
+/* ---------------------------------------------------------------- invite --- */
+
+.invite {
+  max-width: 620px;
+  margin: 0 auto;
+  padding: 8px 24px clamp(40px, 7vw, 70px);
+  text-align: center;
+}
+
+
+.add {
+  font: 500 15px/1 var(--sans);
+  letter-spacing: .02em;
+  color: var(--panel);
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  padding: 14px 32px;
+  cursor: pointer;
+  transition: transform .12s ease, filter .12s ease;
+}
+.add:hover { filter: brightness(1.08); }
+.add:active { transform: translateY(1px); }
+.add:disabled { opacity: .45; cursor: default; filter: none; transform: none; }
+.add.wide { display: block; width: 100%; margin-top: 26px; }
+
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+/* ------------------------------------------------------------ recordings --- */
+
+.recordings {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 0 24px clamp(40px, 7vw, 70px);
+}
+
+.recordings h2 {
+  font-family: var(--serif);
+  font-weight: 400;
+  font-size: clamp(26px, 4vw, 34px);
+  text-align: center;
+  margin: 0 0 22px;
+}
+
+.rec-list { display: flex; flex-direction: column; gap: 12px; }
+
+.rec {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 14px 16px 12px;
+  box-shadow: var(--shadow);
+}
+.rec.fresh { animation: settle .5s ease both; }
+.rec-meta { margin-bottom: 8px; }
+.rec .cap { font-family: var(--serif); font-size: 19px; line-height: 1.35; overflow-wrap: anywhere; }
+.rec .by  { color: var(--soft); font-size: 12.5px; margin-top: 3px; }
+.rec audio { width: 100%; display: block; }
+
+/* ------------------------------------------------------------------ wall --- */
+
+main {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 0 20px 90px;
+}
+
+/* CSS columns rather than grid: photos keep their own proportions and stack
+   without the gaps a fixed-row grid leaves under portrait shots. */
+.wall {
+  column-count: 4;
+  column-gap: 10px;
+}
+@media (max-width: 1100px) { .wall { column-count: 3; } }
+/* Two columns all the way down to the smallest phone. Dropping to one made
+   every photo the width of the screen, so barely two fitted above the fold —
+   the opposite of a wall you can take in at a glance. */
+@media (max-width: 760px)  { .wall { column-count: 2; column-gap: 8px; } }
+
+.tile {
+  break-inside: avoid;
+  margin: 0 0 10px;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--line);
+  cursor: zoom-in;
+  transition: transform .15s ease, box-shadow .15s ease;
+}
+.tile:hover { transform: translateY(-1px); box-shadow: 0 10px 28px rgba(44, 38, 34, .14); }
+
+.tile img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+/* A photo that arrived a moment ago, so the person who added it can see that
+   it landed. */
+@keyframes settle {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: none; }
+}
+.tile.fresh { animation: settle .5s ease both; }
+
+/* ---------------------------------------------------------------- people --- */
+
+.people {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  max-width: 900px;
+  margin: 0 auto 18px;
+}
+.people button {
+  font: 500 13px/1 var(--sans);
+  color: var(--soft);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 8px 14px;
+  cursor: pointer;
+}
+.people button:hover { color: var(--ink); border-color: var(--soft); }
+.people button[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); }
+
+.state {
+  text-align: center;
+  color: var(--soft);
+  padding: 40px 0;
+  font-family: var(--serif);
+  font-size: 19px;
+}
+
+.more {
+  display: block;
+  margin: 10px auto 0;
+  font: 500 14px/1 var(--sans);
+  color: var(--ink);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 13px 30px;
+  cursor: pointer;
+}
+.more:hover { border-color: var(--accent); color: var(--accent); }
+
+footer {
+  border-top: 1px solid var(--line);
+  padding: 30px 24px 46px;
+  text-align: center;
+}
+footer p { margin: 0; color: var(--soft); font-size: 13px; }
+/* The way in for whoever looks after the site. Quiet on purpose — it is
+   password-protected, so it can be visible without being an invitation. */
+footer .care { margin-top: 10px; }
+footer .care a { color: var(--soft); text-decoration: none; border-bottom: 1px solid var(--line); }
+footer .care a:hover { color: var(--accent); border-color: var(--accent); }
+
+/* ------------------------------------------------------------- add sheet --- */
+
+.sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgba(28, 23, 19, .58);
+  backdrop-filter: blur(3px);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 24px;
+  overflow-y: auto;
+}
+
+.sheet-inner {
+  position: relative;
+  width: 100%;
+  max-width: 520px;
+  margin: auto;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 30px 28px 28px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, .3);
+}
+
+.sheet-inner h2 {
+  font-family: var(--serif);
+  font-weight: 400;
+  font-size: 30px;
+  margin: 0 0 22px;
+}
+
+.x {
+  position: absolute;
+  top: 12px; right: 14px;
+  background: none;
+  border: 0;
+  color: var(--soft);
+  font-size: 30px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+.x:hover { color: var(--ink); }
+
+.drop {
+  position: relative;
+  border: 1.5px dashed var(--line);
+  border-radius: 10px;
+  padding: 30px 20px;
+  text-align: center;
+  color: var(--soft);
+  transition: border-color .15s ease, background .15s ease;
+}
+.drop p { margin: 0; font-size: 15px; }
+.drop strong { color: var(--accent); font-weight: 500; }
+.drop.over, .drop:hover { border-color: var(--accent); background: rgba(156, 107, 51, .05); }
+
+/* The real input covers the whole box so the entire area is clickable and
+   keyboard-reachable, without needing a click handler to fake it. */
+.drop input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.picked {
+  list-style: none;
+  margin: 14px 0 0;
+  padding: 0;
+  font-size: 14px;
+}
+.picked li {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--line);
+  color: var(--soft);
+}
+.picked li:last-child { border-bottom: 0; }
+.picked .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); }
+.picked .ok   { color: var(--accent); }
+.picked .err  { color: #b4483a; }
+@media (prefers-color-scheme: dark) { .picked .err { color: #e8887b; } }
+
+.sheet-inner label {
+  display: block;
+  font-size: 12px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--soft);
+  margin: 22px 0 7px;
+}
+.opt { text-transform: none; letter-spacing: 0; opacity: .75; font-size: 12px; }
+
+.sheet-inner textarea,
+.sheet-inner input:not([type="file"]) {
+  width: 100%;
+  font: 15px/1.55 var(--sans);
+  color: var(--ink);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 11px 13px;
+}
+.sheet-inner textarea { min-height: 84px; resize: vertical; }
+
+/* Off-screen rather than display:none — a bot that skips hidden fields should
+   still find this one. */
+.trap {
+  position: absolute;
+  left: -9999px;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+}
+
+.msg { margin: 14px 0 0; font-size: 14px; min-height: 20px; text-align: center; color: var(--soft); }
+.msg.bad  { color: #b4483a; }
+.msg.good { color: var(--accent); }
+@media (prefers-color-scheme: dark) { .msg.bad { color: #e8887b; } }
+
+/* -------------------------------------------------------------- lightbox --- */
+
+.light {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(18, 15, 12, .93);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5vh 6vw;
+}
+.light figure { margin: 0; max-width: 100%; max-height: 100%; text-align: center; }
+.light img {
+  max-width: 100%;
+  max-height: 78vh;
+  border-radius: 6px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, .5);
+}
+.light figcaption {
+  color: #efe7dc;
+  margin-top: 18px;
+  font-size: 15px;
+  line-height: 1.6;
+  max-width: 70ch;
+  margin-inline: auto;
+}
+.light figcaption span { display: block; }
+.light #lightBy, .light #lightPhotoBy { color: #a9998a; font-size: 13px; margin-top: 6px; }
+.light .x { color: #cdbfae; font-size: 38px; top: 10px; right: 16px; }
+
+.nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: 0;
+  color: #cdbfae;
+  font-size: 54px;
+  line-height: 1;
+  padding: 16px 20px;
+  cursor: pointer;
+}
+.nav:hover { color: #fff; }
+.prev { left: 4px; }
+.next { right: 4px; }
+@media (max-width: 620px) {
+  .nav { font-size: 40px; padding: 10px 12px; }
+  .light { padding: 8vh 4vw; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}

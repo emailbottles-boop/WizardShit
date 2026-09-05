@@ -1,0 +1,74 @@
+# Memorial site backend — Cloudflare Worker.
+#
+# Deploy from this api/ folder with:  bash deploy.sh
+# Step-by-step setup:                 see api/README.md
+#
+# This is a SEPARATE worker, database and bucket from anything else in your
+# Cloudflare account. Nothing here touches wizardshit-api, the wizardshit
+# database or the wizardshit-images bucket, so deploying this can never affect
+# your other sites.
+
+name = "memorial-api"
+main = "src/index.js"
+compatibility_date = "2026-08-01"
+
+# Keeps the free memorial-api.<your-subdomain>.workers.dev URL working alongside
+# the real domain. It is a complete second front door to the whole site — if
+# the domain or its DNS ever has a bad day, /admin is still reachable there.
+workers_dev = true
+
+# ---------------------------------------------------------------------------
+# The domain. These are Workers Custom Domains, not plain routes: on deploy,
+# Cloudflare creates the DNS records and the HTTPS certificate for each one
+# itself. There is nothing to type into a DNS panel.
+#
+# The one thing it needs is for mahoganyjr.com to be a zone in this Cloudflare
+# account. Bought through Cloudflare: it already is. Bought elsewhere: add the
+# site in the dashboard once and point the registrar's nameservers at the two
+# it gives you — that step lives at the registrar and no command can do it.
+# Until then, deploy still succeeds on the workers.dev address; it just says
+# the custom domain could not be attached.
+# ---------------------------------------------------------------------------
+routes = [
+  { pattern = "mahoganyjr.com",     custom_domain = true },
+  { pattern = "www.mahoganyjr.com", custom_domain = true },
+]
+
+# The page itself — index.html, the CSS and JavaScript, the 404 page — is
+# served by this same worker straight out of ../site. A request that matches a
+# file in there gets the file; anything else (/api/*, /img/*, /admin) falls
+# through to the code in src/. One deploy puts the whole site live, and the
+# page and its backend are always the same origin, so there is no CORS to get
+# wrong and nothing to point at anything.
+[assets]
+directory = "../site"
+binding = "ASSETS"
+
+# D1 database. Already created in the account (2026-09-05); the id below is
+# that database. A D1 id is an identifier, not a credential — it is fine here.
+[[d1_databases]]
+binding = "DB"
+database_name = "memorial"
+database_id = "6b4f0a8e-98a9-4871-bd1a-e8ff93a396b7"
+
+# R2 bucket for the photos — create it with:
+#   npx wrangler r2 bucket create memorial-photos
+[[r2_buckets]]
+binding = "IMAGES"
+bucket_name = "memorial-photos"
+
+[vars]
+# Which OTHER sites may POST an upload from someone's browser. The page and its
+# backend are served from the same origin here, so this never applies to the
+# site's own uploads — it only matters if some other website ever embeds an
+# upload form pointing at this API. Empty means any; it can stay empty.
+ALLOWED_ORIGINS = ""
+
+# --- Secrets (never written in this file — it is committed to a public repo) ---
+#
+# The caretaker password for /admin. Required before /admin will let anyone in:
+#   npx wrangler secret put ADMIN_PASSWORD
+#
+# Optional. Signs admin session tokens; falls back to ADMIN_PASSWORD if unset.
+# Setting it means changing the password does not sign you out everywhere:
+#   npx wrangler secret put SESSION_SECRET
