@@ -17,6 +17,11 @@
   var recordings = [];  // every visible recording, newest first
   var oldest = null;    // id of the last one loaded, for paging
   var cursor = 0;       // the last change event this page has applied
+
+  // How tall a photo may stand on the wall, as height ÷ width. A normal
+  // upright phone photo is 1.33 and passes through untouched; only the much
+  // taller story-shaped ones are reined in.
+  var MAX_TILE_RATIO = 1.4;
   var people = [];      // everyone who has put a name to a photo
   var filter = '';      // '' = everyone, else one person's photos
   var loading = false;
@@ -142,7 +147,19 @@
     if (p.width && p.height) {
       img.width = p.width;
       img.height = p.height;
-      img.style.aspectRatio = p.width + ' / ' + p.height;
+      // Nearly every photo keeps its exact shape. The exception is the very
+      // tall ones — a phone story screenshot is around 1:1.78 — which left
+      // alone would tower over a whole column and push everything else off
+      // the screen. Those get boxed at the cap with the middle of the picture
+      // filling it: trimmed at top and bottom, never squashed, and tapping
+      // still opens the photo whole.
+      var ratio = p.height / p.width;
+      if (ratio > MAX_TILE_RATIO) {
+        img.style.aspectRatio = '1 / ' + MAX_TILE_RATIO;
+        img.style.objectFit = 'cover';
+      } else {
+        img.style.aspectRatio = p.width + ' / ' + p.height;
+      }
     }
     fig.appendChild(img);
 
