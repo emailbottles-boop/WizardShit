@@ -53,6 +53,51 @@ being in your Cloudflare account yet, which the walkthrough covers.
 Then open `https://mahoganyjr.com/admin` and sign in. The top of the page is
 his name and The Real MJ, and nothing else, on purpose.
 
+## HTTPS — the five-minute checklist
+
+The worker already sends anyone who arrives on plain `http://` across to
+`https://` (a 302, so it is undoable from the dashboard alone), and a Workers
+Custom Domain gets its certificate made by Cloudflare on deploy. So HTTPS is
+mostly a matter of making sure the live site is running the current code and
+that two dashboard switches are on. Do these in order, at a computer:
+
+1. **Make sure the live site is current.** The scheduled task on the
+   caretaker's computer deploys this branch on its own within a few minutes
+   of a change. To do it by hand instead, from the `api/` folder:
+
+   ```
+   bash deploy.sh
+   ```
+
+   The output must list `mahoganyjr.com` and `www.mahoganyjr.com` as attached.
+   If it says a custom domain could not be attached, the domain is not a zone
+   in this Cloudflare account yet — see "The domain" in `api/README.md`.
+
+2. **Cloudflare dashboard → mahoganyjr.com → SSL/TLS → Overview.** Set the
+   encryption mode to **Full (strict)**. (A Workers Custom Domain terminates
+   at Cloudflare, so Full (strict) is correct and Flexible is never needed.)
+
+3. **SSL/TLS → Edge Certificates.** Turn on **Always Use HTTPS** and
+   **Automatic HTTPS Rewrites**. Leave HSTS alone: it cannot be undone quickly
+   and the redirect in the worker already does the job.
+
+4. **Check it, on a phone on mobile data, not Wi-Fi:**
+
+   - `http://mahoganyjr.com` — should land on `https://mahoganyjr.com` with a
+     padlock, not "Not Secure".
+   - `https://www.mahoganyjr.com` — same page, padlock.
+   - `https://mahoganyjr.com/admin` — the caretaker sign-in.
+
+   If the padlock is missing on the `www` address only, go to **Workers &
+   Pages → memorial-api → Settings → Domains & Routes** and confirm both
+   domains show a green certificate status; a freshly attached domain can
+   take a few minutes for its certificate.
+
+5. **If a work or school Wi-Fi shows a Fortinet "Newly Registered Domain"
+   block page,** that is their filter, not the site. Anyone on mobile data or
+   home Wi-Fi sees it fine. Fortinet's own re-rating form (linked from that
+   block page) takes a day or two and lifts it on every network they filter.
+
 ## Looking after it
 
 **Taking something down.** Go to `/admin`. Every photo and recording has

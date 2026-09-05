@@ -3,3 +3,5 @@ node_modules/
 .dev.vars
 .DS_Store
 autodeploy.log
+.admin-password
+tools/trim-all.log

@@ -1,0 +1,8 @@
+# Cache hints for the static files. Repeat visits load the page's CSS and
+# JavaScript from the phone rather than the network, and a change still
+# reaches everyone within ten minutes. The HTML itself is not listed, so it is
+# always checked fresh.
+/css/*
+  Cache-Control: public, max-age=600, stale-while-revalidate=86400
+/js/*
+  Cache-Control: public, max-age=600, stale-while-revalidate=86400

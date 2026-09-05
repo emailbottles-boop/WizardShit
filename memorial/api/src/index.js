@@ -17,6 +17,8 @@
  *   POST   /api/admin/login       -> exchange the password for a session token
  *   GET    /api/admin/photos      -> every photo, including hidden ones
  *   POST   /api/admin/photos/<id> -> hide / unhide / re-caption a photo
+ *   POST   /api/admin/photos/<id>/trim   -> replace the shown copy with a trimmed one (kept, reversible)
+ *   POST   /api/admin/photos/<id>/untrim -> put the pre-trim copy back
  *   DELETE /api/admin/photos/<id> -> delete a photo and its file, for good
  *   PUT    /api/admin/settings    -> save the headline text
  *
@@ -431,6 +433,9 @@ function readImageSize(buf, type) {
 
 /* --------------------------------------------------------------- wall --- */
 
+// What a visitor's browser is given about a photo. Who added it and who took
+// it ride along, but the page shows them in one place only: inside the opened
+// photo. Never on the wall, in the row, or under a recording.
 function photoRow(r) {
   return {
     id: r.id,
@@ -450,12 +455,11 @@ function photoRow(r) {
 
 const ROW_COLS = 'id, kind, image, caption, uploader, photographer, width, height, duration, created_at, thumb_key, original_bytes';
 
-async function listPhotos(env, beforeId, by) {
+async function listPhotos(env, beforeId) {
   const before = Number(beforeId);
   const paged = Number.isFinite(before) && before > 0;
   const where = ["hidden = 0", "kind = 'photo'"];
   const binds = [];
-  if (by) { where.push('uploader = ?'); binds.push(by); }
   if (paged) { where.push('id < ?'); binds.push(before); }
   binds.push(PAGE_SIZE);
   const { results } = await env.DB.prepare(
@@ -463,19 +467,6 @@ async function listPhotos(env, beforeId, by) {
   ).bind(...binds).all();
   const photos = (results || []).map(photoRow);
   return { photos, more: photos.length === PAGE_SIZE };
-}
-
-// Everyone who has put their name to a visible photo, most photos first. This
-// is what lets the page show one person's photos as a set.
-async function listPeople(env) {
-  try {
-    const { results } = await env.DB.prepare(
-      "SELECT uploader AS name, COUNT(*) AS n FROM photos WHERE hidden = 0 AND kind = 'photo' AND uploader <> '' GROUP BY uploader ORDER BY n DESC, name ASC LIMIT 200",
-    ).all();
-    return (results || []).map((r) => ({ name: r.name, count: r.n }));
-  } catch {
-    return [];
-  }
 }
 
 async function listRecordings(env) {
@@ -836,10 +827,10 @@ async function route(request, env, ctx, url, path, method) {
     const cacheKey = new Request(origin + '/api/memorial');
     const hit = await cache.match(cacheKey);
     if (hit) return hit;
-    const [settings, wall, recordings, cursor, people] = await Promise.all([
-      readSettings(env), listPhotos(env, null), listRecordings(env), latestCursor(env), listPeople(env),
+    const [settings, wall, recordings, cursor] = await Promise.all([
+      readSettings(env), listPhotos(env, null), listRecordings(env), latestCursor(env),
     ]);
-    const res = json({ ...wall, recordings, settings, cursor, people }, 200, {
+    const res = json({ ...wall, recordings, settings, cursor }, 200, {
       ...PUBLIC_CORS,
       // Short, because a photo added now should appear almost at once for
       // everyone; the explicit purge above covers the uploader themselves.
@@ -871,7 +862,7 @@ async function route(request, env, ctx, url, path, method) {
   // Older pages are not cached: they are read far less often, and they shift
   // as photos are hidden.
   if (path === '/api/photos' && method === 'GET') {
-    return json(await listPhotos(env, url.searchParams.get('before'), str(url.searchParams.get('by'), 80)), 200, PUBLIC_CORS);
+    return json(await listPhotos(env, url.searchParams.get('before')), 200, PUBLIC_CORS);
   }
 
   if (path === '/api/photos' && method === 'POST') {
@@ -956,14 +947,106 @@ async function route(request, env, ctx, url, path, method) {
     if (path === '/api/admin/photos' && method === 'GET') {
       const before = Number(url.searchParams.get('before'));
       const sql = Number.isFinite(before) && before > 0
-        ? 'SELECT ' + ROW_COLS + ', bytes, hidden FROM photos WHERE id < ? ORDER BY id DESC LIMIT ?'
-        : 'SELECT ' + ROW_COLS + ', bytes, hidden FROM photos ORDER BY id DESC LIMIT ?';
+        ? 'SELECT ' + ROW_COLS + ', bytes, hidden, trimmed, mime FROM photos WHERE id < ? ORDER BY id DESC LIMIT ?'
+        : 'SELECT ' + ROW_COLS + ', bytes, hidden, trimmed, mime FROM photos ORDER BY id DESC LIMIT ?';
       const stmt = Number.isFinite(before) && before > 0
         ? env.DB.prepare(sql).bind(before, PAGE_SIZE)
         : env.DB.prepare(sql).bind(PAGE_SIZE);
       const { results } = await stmt.all();
       const total = await env.DB.prepare('SELECT COUNT(*) AS n FROM photos').first();
       return json({ photos: results || [], more: (results || []).length === PAGE_SIZE, total: total?.n || 0 });
+    }
+
+    // Replace what the site shows for one photo with a trimmed copy from the
+    // caretaker panel: `display` (required) and `thumb` (optional), checked
+    // exactly like a public upload. The untouched original is kept as it is,
+    // so a trim can always be undone from it. New keys, so nothing cached
+    // anywhere can show the old shape; the old files are removed afterwards.
+    const trimMatch = path.match(/^\/api\/admin\/photos\/(\d+)\/trim$/);
+    if (trimMatch && method === 'POST') {
+      const id = Number(trimMatch[1]);
+      const row = await env.DB.prepare(
+        'SELECT id, kind, mime, r2_key, thumb_key, width, height, bytes, trimmed, pre_key, pre_thumb_key FROM photos WHERE id = ?',
+      ).bind(id).first();
+      if (!row) return json({ error: 'That photo is gone' }, 404);
+      if (row.kind !== 'photo') return json({ error: 'Only photos can be trimmed' }, 400);
+      // Pinned now, before anything changes. A first trim keeps the copies it
+      // replaces (as pre_*), so Untrim can put them back. Trimming an already
+      // trimmed photo keeps the ORIGINAL pre-trim copies and drops only the
+      // intermediate ones, so Untrim always goes back to how it was uploaded.
+      const keepPre = row.trimmed && row.pre_key;
+      const dropKeys = keepPre ? [row.r2_key, row.thumb_key].filter(Boolean) : [];
+      const length = Number(request.headers.get('Content-Length') || '0');
+      if (length > MAX_UPLOAD_BYTES + MAX_THUMB_BYTES + 65536) return json({ error: 'That upload is too large' }, 413);
+      let form;
+      try { form = await request.formData(); } catch { return json({ error: 'Could not read that upload' }, 400); }
+      const display = form.get('display');
+      if (!display || typeof display === 'string') return json({ error: 'No photo in that upload' }, 400);
+      const dtype = (display.type || '').toLowerCase();
+      const dext = IMAGE_TYPES[dtype];
+      if (!dext) return json({ error: 'Photos (jpg, png, gif, webp) only' }, 415);
+      const dbuf = await display.arrayBuffer();
+      if (!dbuf.byteLength) return json({ error: 'That file was empty' }, 400);
+      if (dbuf.byteLength > MAX_UPLOAD_BYTES) return json({ error: 'That photo is larger than 12MB' }, 413);
+      const size = readImageSize(dbuf, dtype);
+      if (typeof size === 'string') return json({ error: size }, 415);
+      let tbuf = null, ttype = '';
+      const thumb = form.get('thumb');
+      if (thumb && typeof thumb !== 'string') {
+        ttype = (thumb.type || '').toLowerCase();
+        if (IMAGE_TYPES[ttype]) {
+          const b = await thumb.arrayBuffer();
+          if (b.byteLength && b.byteLength <= MAX_THUMB_BYTES && typeof readImageSize(b, ttype) !== 'string') tbuf = b;
+        }
+      }
+      const base = Date.now().toString(36) + '-' + crypto.randomUUID().slice(0, 12);
+      const key = base + '.' + dext;
+      const tkey = tbuf ? 'thumb-' + base + '.' + IMAGE_TYPES[ttype] : '';
+      await env.IMAGES.put(key, dbuf, { httpMetadata: { contentType: dtype } });
+      if (tbuf) await env.IMAGES.put(tkey, tbuf, { httpMetadata: { contentType: ttype } });
+      try {
+        if (keepPre) {
+          await env.DB.prepare(
+            'UPDATE photos SET mime = ?, image = ?, r2_key = ?, thumb_key = ?, width = ?, height = ?, bytes = ? WHERE id = ?',
+          ).bind(dtype, '/img/' + key, key, tkey, size.width, size.height, dbuf.byteLength, id).run();
+        } else {
+          await env.DB.prepare(
+            'UPDATE photos SET trimmed = 1, pre_key = ?, pre_thumb_key = ?, pre_width = ?, pre_height = ?, pre_bytes = ?, pre_mime = ?, ' +
+            'mime = ?, image = ?, r2_key = ?, thumb_key = ?, width = ?, height = ?, bytes = ? WHERE id = ?',
+          ).bind(row.r2_key, row.thumb_key || '', row.width, row.height, row.bytes, row.mime,
+                 dtype, '/img/' + key, key, tkey, size.width, size.height, dbuf.byteLength, id).run();
+        }
+      } catch (err) {
+        await Promise.all([key, tkey].filter(Boolean).map((k) => env.IMAGES.delete(k).catch(() => {})));
+        throw err;
+      }
+      // Only now are intermediate copies removed: if anything above had
+      // failed, the photo would still be on the wall exactly as before.
+      await Promise.all(dropKeys.map((k) => env.IMAGES.delete(k).catch(() => {})));
+      await logChange(env, 'show', id);
+      await purgeWallCache(origin);
+      return json({ ok: true, trimmed: 1, image: '/img/' + key, thumb: tkey ? '/img/' + tkey : '', width: size.width, height: size.height });
+    }
+
+    // Put the copy from before the trim back on the wall, and drop the
+    // trimmed one. Nothing is ever lost by trimming.
+    const untrimMatch = path.match(/^\/api\/admin\/photos\/(\d+)\/untrim$/);
+    if (untrimMatch && method === 'POST') {
+      const id = Number(untrimMatch[1]);
+      const row = await env.DB.prepare(
+        'SELECT id, r2_key, thumb_key, trimmed, pre_key, pre_thumb_key, pre_width, pre_height, pre_bytes, pre_mime FROM photos WHERE id = ?',
+      ).bind(id).first();
+      if (!row) return json({ error: 'That photo is gone' }, 404);
+      if (!row.trimmed || !row.pre_key) return json({ error: 'That photo has not been trimmed' }, 400);
+      const trimmedKeys = [row.r2_key, row.thumb_key].filter(Boolean);
+      await env.DB.prepare(
+        'UPDATE photos SET trimmed = 0, mime = ?, image = ?, r2_key = ?, thumb_key = ?, width = ?, height = ?, bytes = ?, ' +
+        "pre_key = '', pre_thumb_key = '', pre_width = 0, pre_height = 0, pre_bytes = 0, pre_mime = '' WHERE id = ?",
+      ).bind(row.pre_mime, '/img/' + row.pre_key, row.pre_key, row.pre_thumb_key || '', row.pre_width, row.pre_height, row.pre_bytes, id).run();
+      await Promise.all(trimmedKeys.map((k) => env.IMAGES.delete(k).catch(() => {})));
+      await logChange(env, 'show', id);
+      await purgeWallCache(origin);
+      return json({ ok: true, trimmed: 0, image: '/img/' + row.pre_key, thumb: row.pre_thumb_key ? '/img/' + row.pre_thumb_key : '', width: row.pre_width, height: row.pre_height });
     }
 
     const photoMatch = path.match(/^\/api\/admin\/photos\/(\d+)$/);
@@ -989,10 +1072,10 @@ async function route(request, env, ctx, url, path, method) {
       if (method === 'DELETE') {
         // Read the key first: once the row is gone there is no way left to
         // find the file, and it would sit in R2 forever.
-        const row = await env.DB.prepare('SELECT r2_key, thumb_key, original_key FROM photos WHERE id = ?').bind(id).first();
+        const row = await env.DB.prepare('SELECT r2_key, thumb_key, original_key, pre_key, pre_thumb_key FROM photos WHERE id = ?').bind(id).first();
         if (!row) return json({ error: 'Already gone' }, 404);
         await env.DB.prepare('DELETE FROM photos WHERE id = ?').bind(id).run();
-        await Promise.all([row.r2_key, row.thumb_key, row.original_key].filter(Boolean).map((k) => env.IMAGES.delete(k).catch(() => {})));
+        await Promise.all([row.r2_key, row.thumb_key, row.original_key, row.pre_key, row.pre_thumb_key].filter(Boolean).map((k) => env.IMAGES.delete(k).catch(() => {})));
         await logChange(env, 'remove', id);
         await purgeWallCache(origin);
         return json({ ok: true });

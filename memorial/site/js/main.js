@@ -17,9 +17,11 @@
   var recordings = [];  // every visible recording, newest first
   var oldest = null;    // id of the last one loaded, for paging
   var cursor = 0;       // the last change event this page has applied
-  var people = [];      // everyone who has put a name to a photo
-  var filter = '';      // '' = everyone, else one person's photos
   var loading = false;
+
+  // Names are never written on the wall, in the row, or under a recording.
+  // Who added a photo and who took it are shown in one place only: inside
+  // the photo, once it is opened.
 
   /* ------------------------------------------------------------ helpers --- */
 
@@ -87,13 +89,10 @@
     cap.className = 'cap';
     cap.textContent = r.caption || 'Untitled recording';
     meta.appendChild(cap);
-    var bits = [];
-    if (r.uploader) bits.push('added by ' + r.uploader);
-    if (r.duration) bits.push(fmtDur(r.duration));
-    if (bits.length) {
+    if (r.duration) {
       var by = document.createElement('div');
       by.className = 'by';
-      by.textContent = bits.join(' \u00b7 ');
+      by.textContent = fmtDur(r.duration);
       meta.appendChild(by);
     }
     el.appendChild(meta);
@@ -123,7 +122,7 @@
 
   /* --------------------------------------------------------------- wall --- */
 
-  function tile(p, fresh) {
+  function tile(p, fresh, eager) {
     var fig = document.createElement('figure');
     fig.className = 'tile' + (fresh ? ' fresh' : '');
     fig.dataset.id = p.id;
@@ -131,7 +130,10 @@
     fig.setAttribute('role', 'button');
 
     var img = document.createElement('img');
-    img.loading = 'lazy';
+    // The first few photos are what the page opens on, so they are asked for
+    // straight away; everything below the fold waits until it is scrolled to.
+    img.loading = eager ? 'eager' : 'lazy';
+    if (eager === 'high') img.fetchPriority = 'high';
     img.decoding = 'async';
     img.src = thumbUrl(p);
     // The caption is the only description we have; without one the photo is
@@ -144,11 +146,28 @@
       img.height = p.height;
       img.style.aspectRatio = p.width + ' / ' + p.height;
     }
+    // The reserved shape is only a guess until the photo arrives. Once it has,
+    // the photo's own proportions take over, no matter what was recorded for
+    // it — so a photo can never be squashed or stretched to fit a box of the
+    // wrong shape (which is what happened to older phone photos whose
+    // recorded width and height were the wrong way round).
+    function settle() {
+      img.style.aspectRatio = '';
+      img.removeAttribute('width');
+      img.removeAttribute('height');
+      img.classList.add('in');
+    }
+    if (img.complete && img.naturalWidth) settle();
+    else {
+      img.addEventListener('load', settle, { once: true });
+      // A photo that cannot be shown still gets its box revealed, rather than
+      // an empty patch that looks like something is about to happen.
+      img.addEventListener('error', function () { img.classList.add('in'); }, { once: true });
+    }
     fig.appendChild(img);
 
-    // Nothing is written under a photo on the wall. Whatever came with it —
-    // the words, who added it, who took it — is kept and shown when the photo
-    // is opened.
+    // Nothing is written under a photo on the wall. The words that came with
+    // it, and who added it, are shown only when the photo is opened.
     function open() { openLight(photos.indexOf(p)); }
     fig.addEventListener('click', open);
     fig.addEventListener('keydown', function (e) {
@@ -160,7 +179,11 @@
   function render(list, append) {
     var wall = $('wall');
     if (!append) wall.innerHTML = '';
-    list.forEach(function (p) { wall.appendChild(tile(p, false)); });
+    list.forEach(function (p, i) {
+      var eager = append ? false : (i < 2 ? 'high' : i < 8);
+      wall.appendChild(tile(p, false, eager));
+    });
+    $('wallTitle').hidden = photos.length === 0;
   }
 
   function loadFirst() {
@@ -174,9 +197,8 @@
       $('state').hidden = photos.length > 0;
       if (!photos.length) $('state').textContent = recordings.length ? 'No photographs yet.' : 'Nothing here yet. Yours can be the first.';
       $('more').hidden = !d.more;
-      people = d.people || [];
-      renderPeople();
       cursor = d.cursor || 0;
+      stripRefresh();
       startLive();
     }).catch(function () {
       // The wall is the whole page, so a failure here needs saying out loud
@@ -190,7 +212,7 @@
     if (loading || !oldest) return;
     loading = true;
     $('more').textContent = 'Loading…';
-    api('/api/photos?before=' + oldest + (filter ? '&by=' + encodeURIComponent(filter) : '')).then(function (d) {
+    api('/api/photos?before=' + oldest).then(function (d) {
       var list = d.photos || [];
       photos = photos.concat(list);
       if (list.length) oldest = list[list.length - 1].id;
@@ -215,9 +237,17 @@
     $('lightImg').src = fileUrl(p);
     $('lightImg').alt = p.caption || '';
     $('lightCap').textContent = p.caption || '';
+    $('lightCap').hidden = !p.caption;
     $('lightBy').textContent = p.uploader ? 'added by ' + p.uploader : '';
+    $('lightBy').hidden = !p.uploader;
     $('lightPhotoBy').textContent = p.photographer ? 'photo by ' + p.photographer : '';
+    $('lightPhotoBy').hidden = !p.photographer;
     $('light').hidden = false;
+    // Fetch the neighbours now, so the arrows feel instant rather than each
+    // one starting a download.
+    [i + 1, i - 1].forEach(function (n) {
+      if (n >= 0 && n < photos.length) { var pre = new Image(); pre.src = fileUrl(photos[n]); }
+    });
     document.body.style.overflow = 'hidden';
     $('closeLight').focus();
   }
@@ -579,13 +609,14 @@
         var newPhotos = added.filter(function (p) { return p.kind !== 'audio'; });
         var newRecs = added.filter(function (p) { return p.kind === 'audio'; });
         if (newPhotos.length) {
-          newPhotos.forEach(function (p) { notePerson(p.uploader); });
           photos = newPhotos.concat(photos);
           var wall = $('wall');
           newPhotos.slice().reverse().forEach(function (p) {
             wall.insertBefore(tile(p, true), wall.firstChild);
           });
           $('state').hidden = true;
+          $('wallTitle').hidden = false;
+          stripRefresh();
         }
         if (newRecs.length) {
           recordings = newRecs.concat(recordings);
@@ -640,56 +671,159 @@
     });
   });
 
-  /* ------------------------------------------------------------- people --- */
+  /* -------------------------------------------------------------- strip --- */
 
-  // A row of names above the wall. Tap one to see just that person's photos
-  // as a set; tap Everyone to come back. Only appears once two or more people
-  // have put a name to something.
-  function renderPeople() {
-    var nav = $('people');
-    nav.innerHTML = '';
-    if (people.length < 2 && !filter) { nav.hidden = true; return; }
-    var all = [{ name: '' }].concat(people);
-    all.forEach(function (person) {
-      var b = document.createElement('button');
-      b.type = 'button';
-      b.textContent = person.name || 'Everyone';
-      b.setAttribute('aria-pressed', person.name === filter ? 'true' : 'false');
-      b.addEventListener('click', function () { setFilter(person.name); });
-      nav.appendChild(b);
+  // A row of his photographs under his name that turn over one at a time,
+  // like pages. They are the same small copies the wall loads, so the row
+  // costs nothing extra to show. It only moves while it is on screen and the
+  // tab is being looked at, and it stops moving altogether for anyone who has
+  // asked their phone for less motion.
+
+  var STRIP_EVERY = 4200;      // how often one photo turns over
+  var STRIP_MIN = 3;           // fewer photographs than this and there is no row
+  var slots = [];              // { el, imgs:[a,b], face:0|1, photo }
+  var stripTimer = null;
+  var stripNext = 0;           // which slot turns over next
+  var stripSeen = false;       // is the row on screen right now
+  var stripStill = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  function stripCount() {
+    var w = window.innerWidth;
+    return w >= 1100 ? 4 : w >= 700 ? 3 : 2;
+  }
+
+  // The row runs through the photographs in the order they were added,
+  // starting from the bottom of the wall (the first ones up) and working
+  // towards the newest, then around again. Ids only ever go up as photos are
+  // added, so "the next one" is simply the smallest id above the last shown,
+  // which stays right even as new photos arrive or the caretaker hides some.
+  var stripLast = 0;           // id of the photo most recently put in the row
+
+  function stripPick() {
+    var next = null;
+    for (var i = photos.length - 1; i >= 0; i--) {
+      if (photos[i].id > stripLast) { next = photos[i]; break; }
+    }
+    if (!next) {
+      // Reached the newest. If the wall has older pages it has not fetched
+      // yet, bring the next one in first so the row can start from the true
+      // bottom; otherwise go around again from the oldest that is loaded.
+      if (!$('more').hidden) { if (!loading) loadMore(); return null; }
+      stripLast = 0;
+      next = photos.length ? photos[photos.length - 1] : null;
+    }
+    if (next) stripLast = next.id;
+    return next;
+  }
+
+  function stripShow(slot, p, instant) {
+    if (!p) return;
+    var back = slot.imgs[1 - slot.face];
+    var front = slot.imgs[slot.face];
+    var prev = slot.photo;
+    slot.photo = p;
+    slot.el.setAttribute('aria-label', p.caption ? p.caption : 'Photograph');
+    back.alt = p.caption || '';
+    var swap = function () {
+      back.classList.add('show');
+      front.classList.remove('show');
+      slot.face = 1 - slot.face;
+    };
+    if (instant) {
+      back.src = thumbUrl(p);
+      swap();
+      return;
+    }
+    back.classList.remove('show');
+    back.onload = function () { back.onload = null; swap(); };
+    back.onerror = function () { back.onerror = null; slot.photo = prev; };
+    back.src = thumbUrl(p);
+  }
+
+  function stripBuild() {
+    var row = $('stripRow');
+    row.innerHTML = '';
+    slots = [];
+    var n = stripCount();
+    for (var i = 0; i < n; i++) {
+      var el = document.createElement('button');
+      el.type = 'button';
+      el.className = 'slot';
+      var imgs = [];
+      for (var k = 0; k < 2; k++) {
+        var img = document.createElement('img');
+        img.decoding = 'async';
+        img.alt = '';
+        el.appendChild(img);
+        imgs.push(img);
+      }
+      var slot = { el: el, imgs: imgs, face: 0, photo: null };
+      (function (slot) {
+        slot.el.addEventListener('click', function () {
+          var at = slot.photo ? photos.indexOf(slot.photo) : -1;
+          if (at >= 0) openLight(at);
+        });
+      })(slot);
+      row.appendChild(el);
+      slots.push(slot);
+    }
+    // Fill left to right with the first photographs that went up.
+    stripLast = 0;
+    stripNext = 0;
+    slots.forEach(function (slot) { stripShow(slot, stripPick(), true); });
+  }
+
+  function stripTurn() {
+    if (!slots.length || photos.length < STRIP_MIN) return;
+    var p = stripPick();
+    if (!p) return;                       // an older page is on its way; try next time
+    var slot = slots[stripNext % slots.length];
+    stripNext++;
+    stripShow(slot, p, false);
+  }
+
+  function stripRun() {
+    var go = stripSeen && !document.hidden && !stripStill && photos.length > slots.length;
+    if (go && !stripTimer) stripTimer = setInterval(stripTurn, STRIP_EVERY);
+    if (!go && stripTimer) { clearInterval(stripTimer); stripTimer = null; }
+  }
+
+  // Called whenever the set of photos changes: first load, an upload, a live
+  // update. Shows or hides the row and fills any slot that has nothing in it.
+  function stripRefresh() {
+    var strip = $('strip');
+    if (photos.length < STRIP_MIN) { strip.hidden = true; stripRun(); return; }
+    if (!slots.length || slots.length !== stripCount()) stripBuild();
+    else slots.forEach(function (slot) { if (!slot.photo) stripShow(slot, stripPick(), true); });
+    strip.hidden = false;
+    stripRun();
+  }
+
+  // A photo the caretaker just hid must not sit in the row.
+  function stripDrop(id) {
+    slots.forEach(function (slot) {
+      if (slot.photo && slot.photo.id === id) { slot.photo = null; stripShow(slot, stripPick(), false); }
     });
-    nav.hidden = false;
+    if (photos.length < STRIP_MIN) stripRefresh();
   }
 
-  // Someone put their name to a photo: make sure they have a chip.
-  function notePerson(name) {
-    if (!name || people.some(function (x) { return x.name === name; })) return;
-    people.push({ name: name, count: 1 });
-    renderPeople();
-  }
+  var resizeWait = null;
+  window.addEventListener('resize', function () {
+    clearTimeout(resizeWait);
+    resizeWait = setTimeout(function () {
+      if (slots.length && slots.length !== stripCount()) stripRefresh();
+    }, 200);
+  });
 
-  function setFilter(name) {
-    if (name === filter) return;
-    filter = name;
-    renderPeople();
-    loadWall();
+  if ('IntersectionObserver' in window) {
+    new IntersectionObserver(function (entries) {
+      stripSeen = entries.some(function (e) { return e.isIntersecting; });
+      stripRun();
+    }, { threshold: 0.2 }).observe($('strip'));
+  } else {
+    stripSeen = true;
   }
-
-  function loadWall() {
-    loading = true;
-    $('more').hidden = true;
-    api('/api/photos' + (filter ? '?by=' + encodeURIComponent(filter) : '')).then(function (d) {
-      photos = d.photos || [];
-      oldest = photos.length ? photos[photos.length - 1].id : null;
-      render(photos, false);
-      $('state').hidden = photos.length > 0;
-      if (!photos.length) $('state').textContent = filter ? 'Nothing from ' + filter + ' yet.' : 'Nothing here yet. Yours can be the first.';
-      $('more').hidden = !d.more;
-    }).catch(function () {
-      $('state').hidden = false;
-      $('state').textContent = 'Could not load those just now. Please try again in a moment.';
-    }).then(function () { loading = false; });
-  }
+  document.addEventListener('visibilitychange', stripRun);
 
   /* --------------------------------------------------------------- live --- */
 
@@ -715,19 +849,30 @@
     photos = photos.filter(function (p) { return p.id !== id; });
     recordings = recordings.filter(function (p) { return p.id !== id; });
     if (!recordings.length) $('recordings').hidden = true;
-    if (!photos.length) { $('state').hidden = false; $('state').textContent = emptyText(); }
+    if (!photos.length) { $('state').hidden = false; $('state').textContent = emptyText(); $('wallTitle').hidden = true; }
+    stripDrop(id);
   }
 
   function placeItem(p) {
-    if (p.kind !== 'audio') notePerson(p.uploader);
     // Already on the page — this device uploaded it, or an earlier poll
     // delivered it. Refresh the words under it and leave it where it is.
     var existing = p.kind === 'audio' ? findRec(p.id) : findTile(p.id);
     if (existing) {
       var cap = existing.querySelector('.cap');
       if (cap) cap.textContent = p.caption || (p.kind === 'audio' ? 'Untitled recording' : '');
-      var by = existing.querySelector('.by');
-      if (by) by.textContent = p.uploader ? 'added by ' + p.uploader : '';
+      // The caretaker may have trimmed it: the file behind it changed, so
+      // the picture on the wall, in the row and in the opened view follow.
+      var list = p.kind === 'audio' ? recordings : photos;
+      var at = -1;
+      for (var k = 0; k < list.length; k++) if (list[k].id === p.id) { at = k; break; }
+      if (at >= 0 && (list[at].image !== p.image || list[at].thumb !== p.thumb)) {
+        list[at] = p;
+        var img = existing.querySelector('img');
+        if (img) { img.style.aspectRatio = ''; img.removeAttribute('width'); img.removeAttribute('height'); img.src = thumbUrl(p); }
+        slots.forEach(function (slot) { if (slot.photo && slot.photo.id === p.id) stripShow(slot, p, true); });
+      } else if (at >= 0) {
+        list[at].caption = p.caption;
+      }
       return;
     }
     // New to this page. Slot it by id so order stays newest-first even when
@@ -742,12 +887,11 @@
       $('recordings').hidden = false;
       return;
     }
-    // Looking at one person's set: photos from anyone else wait until the
-    // page is back on Everyone.
-    if (filter && p.uploader !== filter) return;
     photos.push(p); photos.sort(byId);
     $('wall').insertBefore(tile(p, true), before($('wall')));
     $('state').hidden = true;
+    $('wallTitle').hidden = false;
+    stripRefresh();
   }
 
   function applyEvents(evs) {

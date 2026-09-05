@@ -20,5 +20,12 @@ LOCAL=$(git rev-parse HEAD); REMOTE=$(git rev-parse '@{u}')
   git checkout -q -- . && git pull -q
   ( cd api && bash deploy.sh )
   bash seed/seed.sh || true
+  # With the caretaker password in tools/.admin-password (never committed),
+  # every deploy also trims the bars off any new photos. Without the file
+  # this line does nothing.
+  if [ -s tools/.admin-password ]; then
+    ( cd tools && [ -d node_modules ] || npm install --silent ) || true
+    ADMIN_PASSWORD="$(cat tools/.admin-password)" node tools/trim-all.mjs || true
+  fi
   echo "==== $(date -u +%FT%TZ) done"
 } >> "$LOG" 2>&1

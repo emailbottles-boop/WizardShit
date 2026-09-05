@@ -26,6 +26,13 @@ CREATE TABLE IF NOT EXISTS photos (
   duration   REAL    NOT NULL DEFAULT 0,     -- recordings: seconds, as the uploader's browser read it
   bytes      INTEGER NOT NULL DEFAULT 0,
   hidden     INTEGER NOT NULL DEFAULT 0,     -- 1 = removed from the public wall
+  trimmed    INTEGER NOT NULL DEFAULT 0,     -- 1 = the shown copy was trimmed; pre_* hold what it replaced
+  pre_key    TEXT NOT NULL DEFAULT '',       -- the shown copy before the trim (R2 key), so Untrim can put it back
+  pre_thumb_key TEXT NOT NULL DEFAULT '',
+  pre_width  INTEGER NOT NULL DEFAULT 0,
+  pre_height INTEGER NOT NULL DEFAULT 0,
+  pre_bytes  INTEGER NOT NULL DEFAULT 0,
+  pre_mime   TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
