@@ -15,6 +15,7 @@
 
   var photos = [];      // everything currently on the wall, newest first
   var recordings = [];  // every visible recording, newest first
+  var stories = [];     // every visible story, newest first
   var oldest = null;    // id of the last one loaded, for paging
   var cursor = 0;       // the last change event this page has applied
   var loading = false;
@@ -120,6 +121,51 @@
     $('recordings').hidden = recordings.length === 0;
   }
 
+  /* ------------------------------------------------------------ stories --- */
+
+  function storyCard(st, fresh) {
+    var el = document.createElement('article');
+    el.className = 'story' + (fresh ? ' fresh' : '');
+    el.dataset.id = st.id;
+    el.tabIndex = 0;
+    el.setAttribute('role', 'button');
+    var text = document.createElement('p');
+    text.textContent = st.caption || '';
+    el.appendChild(text);
+    var hint = document.createElement('div');
+    hint.className = 'more-hint';
+    hint.textContent = 'Read';
+    el.appendChild(hint);
+    function open() { openReader(st); }
+    el.addEventListener('click', open);
+    el.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); }
+    });
+    return el;
+  }
+
+  function renderStories() {
+    var list = $('storyList');
+    list.innerHTML = '';
+    stories.forEach(function (st) { list.appendChild(storyCard(st, false)); });
+    $('stories').hidden = stories.length === 0;
+  }
+
+  function openReader(st) {
+    $('readerText').textContent = st.caption || '';
+    $('readerBy').textContent = st.uploader ? 'told by ' + st.uploader : '';
+    $('readerBy').hidden = !st.uploader;
+    $('reader').hidden = false;
+    document.body.style.overflow = 'hidden';
+    $('closeReader').focus();
+  }
+  function closeReader() {
+    $('reader').hidden = true;
+    document.body.style.overflow = '';
+  }
+  $('closeReader').addEventListener('click', closeReader);
+  $('reader').addEventListener('click', function (e) { if (e.target === $('reader')) closeReader(); });
+
   /* --------------------------------------------------------------- wall --- */
 
   function tile(p, fresh, eager) {
@@ -191,6 +237,8 @@
       applySettings(d.settings);
       recordings = d.recordings || [];
       renderRecordings();
+      stories = d.stories || [];
+      renderStories();
       photos = d.photos || [];
       oldest = photos.length ? photos[photos.length - 1].id : null;
       render(photos, false);
@@ -285,6 +333,8 @@
       if (e.key === 'Escape') closeLight();
       else if (e.key === 'ArrowLeft') step(-1);
       else if (e.key === 'ArrowRight') step(1);
+    } else if (!$('reader').hidden && e.key === 'Escape') {
+      closeReader();
     } else if (!$('sheet').hidden && e.key === 'Escape') {
       closeSheet();
     }
@@ -671,6 +721,47 @@
     });
   });
 
+  /* -------------------------------------------------------------- story --- */
+
+  $('story').addEventListener('input', function () {
+    $('sendStory').disabled = $('story').value.trim().length < 2;
+  });
+
+  $('sendStory').addEventListener('click', function () {
+    var text = $('story').value.trim();
+    if (text.length < 2) return;
+    var msg = $('msg');
+    var btn = $('sendStory');
+    btn.disabled = true;
+    msg.className = 'msg';
+    msg.textContent = 'Adding…';
+    api('/api/stories', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ story: text, by: $('by').value.trim(), website: $('website').value }),
+    }).then(function (d) {
+      if (d && d.story) {
+        stories.unshift(d.story);
+        var list = $('storyList');
+        list.insertBefore(storyCard(d.story, true), list.firstChild);
+        $('stories').hidden = false;
+      }
+      msg.className = 'msg good';
+      msg.textContent = 'Added. Thank you.';
+      $('story').value = '';
+      setTimeout(function () {
+        closeSheet();
+        msg.textContent = '';
+        // Let them see it: the new frame is at the top of the stories.
+        $('stories').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 1400);
+    }).catch(function (err) {
+      msg.className = 'msg bad';
+      msg.textContent = err.message || 'Could not add that just now. Please try again.';
+      btn.disabled = false;
+    });
+  });
+
   /* -------------------------------------------------------------- strip --- */
 
   // A row of his photographs under his name that turn over one at a time,
@@ -838,6 +929,7 @@
 
   function findTile(id) { return $('wall').querySelector('.tile[data-id="' + id + '"]'); }
   function findRec(id)  { return $('recList').querySelector('.rec[data-id="' + id + '"]'); }
+  function findStory(id) { return $('storyList').querySelector('.story[data-id="' + id + '"]'); }
 
   function emptyText() {
     return recordings.length ? 'No photographs yet.' : 'Nothing here yet. Yours can be the first.';
@@ -846,14 +938,31 @@
   function dropItem(id) {
     var t = findTile(id); if (t) t.remove();
     var r = findRec(id);  if (r) r.remove();
+    var st = findStory(id); if (st) st.remove();
     photos = photos.filter(function (p) { return p.id !== id; });
     recordings = recordings.filter(function (p) { return p.id !== id; });
+    stories = stories.filter(function (p) { return p.id !== id; });
     if (!recordings.length) $('recordings').hidden = true;
+    if (!stories.length) $('stories').hidden = true;
     if (!photos.length) { $('state').hidden = false; $('state').textContent = emptyText(); $('wallTitle').hidden = true; }
     stripDrop(id);
   }
 
   function placeItem(p) {
+    if (p.kind === 'story') {
+      var have = findStory(p.id);
+      if (have) {
+        var tx = have.querySelector('p'); if (tx) tx.textContent = p.caption || '';
+        for (var si = 0; si < stories.length; si++) if (stories[si].id === p.id) { stories[si] = p; break; }
+        return;
+      }
+      stories.push(p); stories.sort(function (a, b) { return b.id - a.id; });
+      var sl = $('storyList');
+      var sBefore = Array.prototype.find.call(sl.children, function (el) { return Number(el.dataset.id) < p.id; }) || null;
+      sl.insertBefore(storyCard(p, true), sBefore);
+      $('stories').hidden = false;
+      return;
+    }
     // Already on the page — this device uploaded it, or an earlier poll
     // delivered it. Refresh the words under it and leave it where it is.
     var existing = p.kind === 'audio' ? findRec(p.id) : findTile(p.id);
