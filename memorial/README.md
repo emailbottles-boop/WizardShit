@@ -4,9 +4,9 @@ A quiet website where the people who knew Santana can put their photographs in
 one place, so the pictures that only exist on one person's phone don't stay
 there.
 
-Anyone with the link can add a photo. No account, no app, no sign-in. Photos
-appear on the wall straight away. You keep a private `/admin` page where you
-can hide or delete anything.
+Anyone with the link can add a photo or a recording. No account, no app, no
+sign-in. Photos go on the wall and recordings into their own section, straight
+away. You keep a private `/admin` page where you can hide or delete anything.
 
 It runs entirely on Cloudflare's free tier and costs nothing to keep online:
 100,000 requests a day, a 5GB database, 10GB of photo storage. Roughly ten
@@ -47,10 +47,15 @@ database version overrides it if you ever want to change how it reads.
 
 ## Looking after it
 
-**Taking something down.** Go to `/admin`. Every photo has **Hide** (comes off
-the wall, file kept, reversible) and **Delete** (gone permanently, including the
-file). Uploads are public the moment they are made, so `/admin` is worth having
-bookmarked on your phone.
+**Taking something down.** Go to `/admin`. Every photo and recording has
+**Hide** (comes off the site, file kept, reversible) and **Delete** (gone
+permanently, including the file). Uploads are public the moment they are made,
+so `/admin` is worth having bookmarked on your phone.
+
+**Recordings.** MP3, WAV, M4A, OGG and FLAC, up to 60MB each. They are stored
+exactly as uploaded — nothing re-encodes his music — so a WAV stays a WAV. A
+WAV is about ten times the size of an MP3 of the same song; the free 10GB
+bucket holds a couple of hundred of them, or a couple of thousand MP3s.
 
 **Getting photos off Facebook.** In the photo viewer, the `...` menu in the
 top corner has **Save/Download**, which gives you the real full-resolution
@@ -96,7 +101,7 @@ Keep it somewhere that isn't Cloudflare.
 ## A note on what this does with photos
 
 Before a photo leaves the browser it is resized to 2400px on its long edge and
-re-encoded. That is mostly for speed, but it has a side effect worth knowing:
+re-encoded. (Recordings are never touched.) That is mostly for speed, but it has a side effect worth knowing:
 it strips the EXIF metadata, so the GPS coordinates that phones quietly attach
 to photos are not published along with them.
 

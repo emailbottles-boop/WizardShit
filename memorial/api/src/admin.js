@@ -65,6 +65,9 @@ export const ADMIN_HTML = `<!doctype html>
   .photo { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; }
   .photo.is-hidden { opacity: .45; }
   .photo img { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; background: #0b0908; }
+  .photo .rec { aspect-ratio: 1; display: flex; flex-direction: column; justify-content: center; gap: 10px; padding: 16px; background: #0b0908; }
+  .photo .rec .tag { font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--accent); text-align: center; }
+  .photo .rec audio { width: 100%; }
   .photo .meta { padding: 12px; font-size: 13px; flex: 1; }
   .photo .cap { color: var(--ink); word-break: break-word; }
   .photo .by { color: var(--soft); font-size: 12px; margin-top: 5px; }
@@ -139,6 +142,12 @@ export const ADMIN_HTML = `<!doctype html>
   var grid = document.getElementById('grid');
   var oldest = null;
 
+  function fmtDur(sec) {
+    sec = Math.round(sec);
+    var m = Math.floor(sec / 60), s = sec % 60;
+    return m + ':' + (s < 10 ? '0' : '') + s;
+  }
+
   function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
@@ -199,8 +208,12 @@ export const ADMIN_HTML = `<!doctype html>
   function card(p) {
     var el = document.createElement('div');
     el.className = 'photo' + (p.hidden ? ' is-hidden' : '');
+    var media = p.kind === 'audio'
+      ? '<div class="rec"><div class="tag">Recording' + (p.duration ? ' \u00b7 ' + fmtDur(p.duration) : '') + '</div>' +
+        '<audio controls preload="none" src="' + esc(p.image) + '"></audio></div>'
+      : '<img loading="lazy" src="' + esc(p.image) + '" alt="">';
     el.innerHTML =
-      '<img loading="lazy" src="' + esc(p.image) + '" alt="">' +
+      media +
       '<div class="meta">' +
         '<div class="cap">' + (p.caption ? esc(p.caption) : '<span style="color:var(--soft)">No caption</span>') + '</div>' +
         '<div class="by">' + (p.uploader ? 'added by ' + esc(p.uploader) : 'added anonymously') +
@@ -243,7 +256,7 @@ export const ADMIN_HTML = `<!doctype html>
         oldest = p.id;
       });
       document.getElementById('count').textContent =
-        d.total === 1 ? '1 photo' : d.total + ' photos';
+        d.total === 1 ? '1 item' : d.total + ' items';
       show(document.getElementById('more'), !!d.more);
       if (!d.total) grid.innerHTML = '<div class="empty">No photos yet.</div>';
     });

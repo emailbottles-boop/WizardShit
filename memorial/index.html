@@ -42,7 +42,12 @@
 
 <section class="invite">
   <p id="invite">If you have a photo of them, add it here. Any photo, from any time.</p>
-  <button class="add" id="openAdd" type="button">Add a photo</button>
+  <button class="add" id="openAdd" type="button">Add a photo or a recording</button>
+</section>
+
+<section class="recordings" id="recordings" hidden>
+  <h2>Recordings</h2>
+  <div class="rec-list" id="recList"></div>
 </section>
 
 <main>
@@ -52,23 +57,23 @@
 </main>
 
 <footer>
-  <p>Photographs added here are visible to anyone who has the link.</p>
+  <p>Anything added here is visible to anyone who has the link.</p>
 </footer>
 
 <!-- ---------------------------------------------------------------- add --- -->
 <div class="sheet" id="sheet" hidden>
   <div class="sheet-inner" role="dialog" aria-modal="true" aria-labelledby="addTitle">
     <button class="x" id="closeAdd" type="button" aria-label="Close">&times;</button>
-    <h2 id="addTitle">Add a photo</h2>
+    <h2 id="addTitle">Add a photo or a recording</h2>
 
     <div class="drop" id="drop">
-      <input type="file" id="files" accept="image/*" multiple>
-      <p><strong>Choose photos</strong><br><span>or drag them here</span></p>
+      <input type="file" id="files" accept="image/*,audio/*,.mp3,.wav,.m4a,.ogg,.flac" multiple>
+      <p><strong>Choose photos or recordings</strong><br><span>or drag them here</span></p>
     </div>
     <ul class="picked" id="picked"></ul>
 
     <label for="caption">A few words about it <span class="opt">optional</span></label>
-    <textarea id="caption" maxlength="600" placeholder="Where it was, when it was, what was happening…"></textarea>
+    <textarea id="caption" maxlength="600" placeholder="Where it was, when it was, what was happening… (for a recording, its name)"></textarea>
 
     <label for="by">Your name <span class="opt">optional</span></label>
     <input id="by" maxlength="80" autocomplete="name" placeholder="So people know who shared it">

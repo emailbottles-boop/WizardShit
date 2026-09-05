@@ -11,6 +11,14 @@ set -euo pipefail
 echo "==> Applying the database schema (adds anything missing, changes nothing existing)"
 npx --yes wrangler d1 execute memorial --remote --file=schema.sql
 
+# A database made before recordings existed is missing three columns. Each
+# ALTER is run on its own so that "duplicate column name" — the normal answer
+# from a database that already has them — stops only that one line.
+echo "==> Making sure the recordings columns exist"
+for col in "kind TEXT NOT NULL DEFAULT 'photo'" "mime TEXT NOT NULL DEFAULT ''" "duration REAL NOT NULL DEFAULT 0"; do
+  npx --yes wrangler d1 execute memorial --remote --command "ALTER TABLE photos ADD COLUMN $col" >/dev/null 2>&1 || true
+done
+
 echo "==> Deploying the worker"
 npx --yes wrangler deploy
 

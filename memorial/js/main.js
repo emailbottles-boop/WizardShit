@@ -14,6 +14,7 @@
   /* ------------------------------------------------------------- state --- */
 
   var photos = [];      // everything currently on the wall, newest first
+  var recordings = [];  // every visible recording, newest first
   var oldest = null;    // id of the last one loaded, for paging
   var loading = false;
 
@@ -30,6 +31,13 @@
         return d;
       });
     });
+  }
+
+  // The database stores a file as a path (/img/<key>), so the same row works
+  // whichever address the page is talking to. Older rows may carry a full
+  // URL; those are used as they are.
+  function fileUrl(p) {
+    return /^https?:\/\//.test(p.image) ? p.image : API + p.image;
   }
 
   // Captions and names are typed by the public, so they are only ever put on
@@ -56,6 +64,58 @@
     if (s.invite) $('invite').textContent = s.invite;
   }
 
+  /* --------------------------------------------------------- recordings --- */
+
+  function fmtDur(sec) {
+    sec = Math.round(sec);
+    var m = Math.floor(sec / 60), s = sec % 60;
+    return m + ':' + (s < 10 ? '0' : '') + s;
+  }
+
+  function recCard(r, fresh) {
+    var el = document.createElement('div');
+    el.className = 'rec' + (fresh ? ' fresh' : '');
+
+    var meta = document.createElement('div');
+    meta.className = 'rec-meta';
+    var cap = document.createElement('div');
+    cap.className = 'cap';
+    cap.textContent = r.caption || 'Untitled recording';
+    meta.appendChild(cap);
+    var bits = [];
+    if (r.uploader) bits.push('added by ' + r.uploader);
+    if (r.duration) bits.push(fmtDur(r.duration));
+    if (bits.length) {
+      var by = document.createElement('div');
+      by.className = 'by';
+      by.textContent = bits.join(' \u00b7 ');
+      meta.appendChild(by);
+    }
+    el.appendChild(meta);
+
+    var a = document.createElement('audio');
+    a.controls = true;
+    // Nothing downloads until someone presses play — a page with twenty
+    // recordings on it should not pull twenty files just to be looked at.
+    a.preload = 'none';
+    a.src = fileUrl(r);
+    // One at a time. Two of his recordings playing over each other is not a
+    // thing anyone wants to happen by accident.
+    a.addEventListener('play', function () {
+      var all = document.querySelectorAll('.rec audio');
+      for (var i = 0; i < all.length; i++) if (all[i] !== a) all[i].pause();
+    });
+    el.appendChild(a);
+    return el;
+  }
+
+  function renderRecordings() {
+    var list = $('recList');
+    list.innerHTML = '';
+    recordings.forEach(function (r) { list.appendChild(recCard(r, false)); });
+    $('recordings').hidden = recordings.length === 0;
+  }
+
   /* --------------------------------------------------------------- wall --- */
 
   function tile(p, fresh) {
@@ -67,7 +127,7 @@
     var img = document.createElement('img');
     img.loading = 'lazy';
     img.decoding = 'async';
-    img.src = p.image;
+    img.src = fileUrl(p);
     // The caption is the only description we have; without one the photo is
     // decorative as far as a screen reader is concerned.
     img.alt = p.caption || '';
@@ -114,11 +174,13 @@
   function loadFirst() {
     return api('/api/memorial').then(function (d) {
       applySettings(d.settings);
+      recordings = d.recordings || [];
+      renderRecordings();
       photos = d.photos || [];
       oldest = photos.length ? photos[photos.length - 1].id : null;
       render(photos, false);
       $('state').hidden = photos.length > 0;
-      if (!photos.length) $('state').textContent = 'No photographs yet. Yours can be the first.';
+      if (!photos.length) $('state').textContent = recordings.length ? 'No photographs yet.' : 'Nothing here yet. Yours can be the first.';
       $('more').hidden = !d.more;
     }).catch(function () {
       // The wall is the whole page, so a failure here needs saying out loud
@@ -154,7 +216,7 @@
     if (i < 0 || i >= photos.length) return;
     lightAt = i;
     var p = photos[i];
-    $('lightImg').src = p.image;
+    $('lightImg').src = fileUrl(p);
     $('lightImg').alt = p.caption || '';
     $('lightCap').textContent = p.caption || '';
     $('lightBy').textContent = p.uploader ? 'added by ' + p.uploader : '';
@@ -284,7 +346,37 @@
   var MAX_EDGE = 2400;
   var SEND_AS_IS = 4 * 1024 * 1024;
   var SERVER_MAX = 12 * 1024 * 1024;
+  var AUDIO_MAX = 60 * 1024 * 1024;
   var KEEP = { 'image/jpeg': 1, 'image/png': 1, 'image/webp': 1 };
+
+  // Some browsers report no type at all for a picked audio file; the
+  // extension is the fallback, and the server checks the bytes regardless.
+  var AUDIO_EXT = { mp3: 'audio/mpeg', wav: 'audio/wav', m4a: 'audio/mp4', ogg: 'audio/ogg', flac: 'audio/flac' };
+
+  function audioType(file) {
+    var t = (file.type || '').toLowerCase();
+    if (t.indexOf('audio/') === 0) return t;
+    var m = /\.([a-z0-9]+)$/i.exec(file.name || '');
+    return m && AUDIO_EXT[m[1].toLowerCase()] ? AUDIO_EXT[m[1].toLowerCase()] : '';
+  }
+
+  // Best effort: ask the browser how long the recording is, for the label
+  // next to it. Anything goes wrong or takes too long, it just has no label.
+  function readDuration(file) {
+    return new Promise(function (res) {
+      var done = false;
+      var finish = function (v) { if (!done) { done = true; res(v); } };
+      try {
+        var url = URL.createObjectURL(file);
+        var a = document.createElement('audio');
+        a.preload = 'metadata';
+        a.onloadedmetadata = function () { URL.revokeObjectURL(url); finish(isFinite(a.duration) ? a.duration : 0); };
+        a.onerror = function () { URL.revokeObjectURL(url); finish(0); };
+        a.src = url;
+        setTimeout(function () { finish(0); }, 8000);
+      } catch (e) { finish(0); }
+    });
+  }
 
   function toBlob(canvas) {
     return new Promise(function (res) { canvas.toBlob(res, 'image/jpeg', 0.88); });
@@ -333,6 +425,17 @@
   function prepare(file) {
     var type = (file.type || '').toLowerCase();
 
+    // A recording is sent exactly as it is. Nothing here re-encodes sound,
+    // and nobody wants a memorial to have quietly turned his WAV into
+    // something smaller.
+    var at = audioType(file);
+    if (at) {
+      if (file.size > AUDIO_MAX) return Promise.reject(new Error('too large'));
+      return readDuration(file).then(function (d) {
+        return { blob: file, type: at, duration: d, isAudio: true };
+      });
+    }
+
     // Animated GIFs only survive as GIFs — drawing one to a canvas would keep
     // the first frame and throw the animation away.
     if (type === 'image/gif') {
@@ -373,13 +476,17 @@
 
   /* ---------------------------------------------------------- uploading --- */
 
-  function send(blob, caption, by) {
+  function send(item, caption, by) {
+    // `item` is either a Blob (a photo) or { blob, type, duration } (a recording).
+    var blob = item.blob || item;
+    var type = item.type || blob.type || 'image/jpeg';
     var q = '?caption=' + encodeURIComponent(caption) + '&by=' + encodeURIComponent(by);
+    if (item.isAudio && item.duration) q += '&duration=' + encodeURIComponent(Math.round(item.duration * 10) / 10);
     var trap = $('website').value;
     if (trap) q += '&website=' + encodeURIComponent(trap);
     return api('/api/photos' + q, {
       method: 'POST',
-      headers: { 'Content-Type': blob.type || 'image/jpeg' },
+      headers: { 'Content-Type': type },
       body: blob,
     });
   }
@@ -411,7 +518,8 @@
         try { mark(i, '', 'adding…'); } catch (e) { /* cosmetic only */ }
         return prepare(file)
           .then(function (blob) {
-            if (blob.size > SERVER_MAX) throw new Error('too large');
+            var size = blob.blob ? blob.blob.size : blob.size;
+            if (size > (blob.isAudio ? AUDIO_MAX : SERVER_MAX)) throw new Error('too large');
             return send(blob, caption, by).catch(function (err) {
               // The per-IP budget is generous but a big album can still reach
               // it. Wait it out once rather than making someone re-pick files.
@@ -439,19 +547,31 @@
     // ever is possible, the person still gets an answer and a working button.
     chain.catch(function () {}).then(function () {
       if (added.length) {
-        // Put them straight on the wall rather than making anyone reload to
+        // Put them straight on the page rather than making anyone reload to
         // see that their photo arrived.
-        photos = added.concat(photos);
-        var wall = $('wall');
-        added.slice().reverse().forEach(function (p) {
-          wall.insertBefore(tile(p, true), wall.firstChild);
-        });
-        $('state').hidden = true;
+        var newPhotos = added.filter(function (p) { return p.kind !== 'audio'; });
+        var newRecs = added.filter(function (p) { return p.kind === 'audio'; });
+        if (newPhotos.length) {
+          photos = newPhotos.concat(photos);
+          var wall = $('wall');
+          newPhotos.slice().reverse().forEach(function (p) {
+            wall.insertBefore(tile(p, true), wall.firstChild);
+          });
+          $('state').hidden = true;
+        }
+        if (newRecs.length) {
+          recordings = newRecs.concat(recordings);
+          var list = $('recList');
+          newRecs.slice().reverse().forEach(function (r) {
+            list.insertBefore(recCard(r, true), list.firstChild);
+          });
+          $('recordings').hidden = false;
+        }
       }
 
       var CANT_READ = ' A photo straight off a phone is sometimes in a format' +
         ' this site cannot read — screenshotting it and adding the screenshot' +
-        ' almost always works.';
+        ' almost always works. Recordings need to be mp3, wav, m4a, ogg or flac.';
 
       if (stuck.length && !added.length) {
         msg.className = 'msg bad';
@@ -476,7 +596,7 @@
       }
 
       msg.className = 'msg good';
-      msg.textContent = added.length === 1 ? 'Added. Thank you.' : 'Added ' + added.length + ' photos. Thank you.';
+      msg.textContent = added.length === 1 ? 'Added. Thank you.' : 'Added ' + added.length + '. Thank you.';
 
       // Clear the picker but leave their name filled in — most people add a
       // few photos in a row and retyping it every time is a small cruelty.

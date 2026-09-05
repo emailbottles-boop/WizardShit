@@ -1,8 +1,8 @@
 # The backend
 
-One Cloudflare Worker. It takes photo uploads, stores the files in R2 and the
-captions in D1, serves the wall to the page, and hosts the password-protected
-`/admin` panel.
+One Cloudflare Worker. It takes photo and recording uploads, stores the files
+in R2 and the captions in D1, serves the wall and the recordings to the page,
+and hosts the password-protected `/admin` panel.
 
 This is a **separate** worker, database and bucket from anything else in the
 account. It shares nothing with any other site you run — separate names,
@@ -143,9 +143,10 @@ there's still a way into `/admin` if DNS ever has a bad day.
 Anyone with the link can upload, with no account. That is the point, so nobody
 is stopped at a login box at a bad moment. What keeps it from being abused:
 
-- **Real images only.** The file's own magic numbers are checked, not the
-  content type the uploader claims. A renamed script, an HTML file or an
-  executable is refused.
+- **Real files only.** The file's own magic numbers are checked — a PNG's
+  signature, an MP3's frame sync, a WAV's RIFF/WAVE header — not the content
+  type the uploader claims. A renamed script, an HTML file or an executable
+  is refused whatever it calls itself.
 - **No SVG.** An SVG can carry JavaScript, and `/img/` is the same origin as
   `/admin` — allowing one would hand any uploader a way into your session.
 - **A pixel ceiling as well as a byte ceiling.** A tiny file can decode into a
@@ -153,8 +154,9 @@ is stopped at a login box at a bad moment. What keeps it from being abused:
   the file header and refused above 40MP.
 - **Photos are served inert** — `nosniff`, and a content policy that lets them
   do nothing but be pictures.
-- **A per-IP budget** of 30 photos a minute: enough for someone emptying a
-  camera roll, not enough to fill the bucket.
+- **A per-IP budget** of 30 uploads a minute: enough for someone emptying a
+  camera roll, not enough to fill the bucket. Photos are capped at 12MB and
+  recordings at 60MB — room for a real WAV of a real song.
 - **A honeypot field** that only automated form-fillers ever complete.
 - **Brute-force limits on the admin password** — ten wrong guesses per IP per
   ten minutes.

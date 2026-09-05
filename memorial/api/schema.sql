@@ -6,16 +6,20 @@
 --
 --   npx wrangler d1 execute memorial --remote --file=schema.sql
 
--- Uploaded photos. One row per photo; the file itself lives in R2 and `image`
--- is the /img/<key> URL that serves it.
+-- Everything people upload — photos and recordings — one row each. The file
+-- itself lives in R2 and `image` is the /img/<key> URL that serves it (the
+-- name predates recordings; the path serves audio just the same).
 CREATE TABLE IF NOT EXISTS photos (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind       TEXT NOT NULL DEFAULT 'photo',  -- photo | audio
+  mime       TEXT NOT NULL DEFAULT '',       -- content type as stored, so playback headers are right
   image      TEXT NOT NULL,                  -- /img/<key> URL in R2
   r2_key     TEXT NOT NULL,                  -- the bare R2 key, so delete can find it
-  caption    TEXT NOT NULL DEFAULT '',       -- what the photo is / the memory
+  caption    TEXT NOT NULL DEFAULT '',       -- what it is / the memory; a recording's title
   uploader   TEXT NOT NULL DEFAULT '',       -- who added it (free text, optional)
-  width      INTEGER NOT NULL DEFAULT 0,     -- from the file's own header
+  width      INTEGER NOT NULL DEFAULT 0,     -- photos: from the file's own header
   height     INTEGER NOT NULL DEFAULT 0,     -- lets the grid reserve space, no layout jump
+  duration   REAL    NOT NULL DEFAULT 0,     -- recordings: seconds, as the uploader's browser read it
   bytes      INTEGER NOT NULL DEFAULT 0,
   hidden     INTEGER NOT NULL DEFAULT 0,     -- 1 = removed from the public wall
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -24,7 +28,7 @@ CREATE TABLE IF NOT EXISTS photos (
 -- The public wall reads "newest visible first" on every load, so index exactly
 -- that. Without it D1 scans the whole table once the wall has a few thousand
 -- photos on it.
-CREATE INDEX IF NOT EXISTS photos_wall ON photos (hidden, id DESC);
+CREATE INDEX IF NOT EXISTS photos_wall ON photos (kind, hidden, id DESC);
 
 -- Editable text on the memorial page (his name, the dates, the few lines at the
 -- top). Kept in the database rather than baked into the HTML so it can be

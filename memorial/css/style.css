@@ -137,6 +137,37 @@ body {
 
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 
+/* ------------------------------------------------------------ recordings --- */
+
+.recordings {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 0 24px clamp(40px, 7vw, 70px);
+}
+
+.recordings h2 {
+  font-family: var(--serif);
+  font-weight: 400;
+  font-size: clamp(26px, 4vw, 34px);
+  text-align: center;
+  margin: 0 0 22px;
+}
+
+.rec-list { display: flex; flex-direction: column; gap: 12px; }
+
+.rec {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 14px 16px 12px;
+  box-shadow: var(--shadow);
+}
+.rec.fresh { animation: settle .5s ease both; }
+.rec-meta { margin-bottom: 8px; }
+.rec .cap { font-family: var(--serif); font-size: 19px; line-height: 1.35; overflow-wrap: anywhere; }
+.rec .by  { color: var(--soft); font-size: 12.5px; margin-top: 3px; }
+.rec audio { width: 100%; display: block; }
+
 /* ------------------------------------------------------------------ wall --- */
 
 main {

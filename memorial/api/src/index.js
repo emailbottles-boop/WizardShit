@@ -3,15 +3,16 @@
  *
  * It does three things:
  *
- *   1. Accepts photo uploads from anyone with the link and puts them in R2.
- *   2. Serves the photo wall (and the memorial's headline text) as JSON.
+ *   1. Accepts photos and recordings from anyone with the link, into R2.
+ *   2. Serves the wall, the recordings and the headline text as JSON.
  *   3. Hosts a password-protected /admin page for taking anything down.
  *
  * Routes
- *   GET    /api/memorial          -> headline text + the first page of photos
+ *   GET    /api/memorial          -> headline text, recordings, first page of photos
  *   GET    /api/photos?before=ID  -> older photos (infinite scroll)
- *   POST   /api/photos            -> upload one photo (raw image body)
- *   GET    /img/<key>             -> the photo file itself, out of R2
+ *   POST   /api/photos            -> upload one photo or recording (raw body)
+ *   GET    /img/<key>             -> the file itself, out of R2 (photos and audio;
+ *                                    honours Range so recordings can seek)
  *   GET    /admin                 -> the caretaker panel (HTML)
  *   POST   /api/admin/login       -> exchange the password for a session token
  *   GET    /api/admin/photos      -> every photo, including hidden ones
@@ -33,6 +34,16 @@ import { ADMIN_HTML } from './admin.js';
 // Phone photos land around 2-5MB and the uploader re-encodes anything larger
 // before it ever gets here, so 12MB is generous headroom rather than a target.
 const MAX_UPLOAD_BYTES = 12 * 1024 * 1024;
+
+// Recordings are a different animal: an MP3 is roughly a megabyte a minute,
+// but an uncompressed WAV is ten times that — a four-minute song is 40MB.
+// This is sized so a real WAV of a real song gets through, while the free
+// tier's 10GB bucket still holds a couple of hundred of them.
+const MAX_AUDIO_BYTES = 60 * 1024 * 1024;
+
+// Recordings are few and precious, so the page gets every visible one at once
+// rather than paging through them.
+const MAX_RECORDINGS = 200;
 
 // How many photos the wall asks for at a time.
 const PAGE_SIZE = 60;
@@ -240,8 +251,50 @@ const IMAGE_TYPES = {
 const MAX_IMAGE_DIM = 10000;
 const MAX_IMAGE_PIXELS = 40 * 1000 * 1000;
 
+// Browsers disagree on what to call the same audio file (a WAV arrives as
+// audio/wav, audio/x-wav or audio/wave depending on the OS), so every alias
+// maps to one extension, and the file is STORED under the one canonical type
+// in CANONICAL_AUDIO so the player is always handed a Content-Type it accepts.
+const AUDIO_TYPES = {
+  'audio/mpeg': 'mp3', 'audio/mp3': 'mp3',
+  'audio/wav': 'wav', 'audio/x-wav': 'wav', 'audio/wave': 'wav', 'audio/vnd.wave': 'wav',
+  'audio/mp4': 'm4a', 'audio/x-m4a': 'm4a', 'audio/m4a': 'm4a',
+  'audio/ogg': 'ogg',
+  'audio/flac': 'flac', 'audio/x-flac': 'flac',
+};
+const CANONICAL_AUDIO = { mp3: 'audio/mpeg', wav: 'audio/wav', m4a: 'audio/mp4', ogg: 'audio/ogg', flac: 'audio/flac' };
+
 function be32(b, o) {
   return ((b[o] << 24) | (b[o + 1] << 16) | (b[o + 2] << 8) | b[o + 3]) >>> 0;
+}
+
+function tag(b, o, text) {
+  for (let i = 0; i < text.length; i++) if (b[o + i] !== text.charCodeAt(i)) return false;
+  return true;
+}
+
+/**
+ * Same idea as readImageSize, for sound: the declared type proves nothing, so
+ * the file's own header decides. Returns null when the bytes really are the
+ * format claimed, else a short reason. There is no audio equivalent of a pixel
+ * bomb — the only thing a recording can do to a listener is be long — so the
+ * byte ceiling is the whole size story here.
+ */
+function checkAudioBytes(buf, ext) {
+  const b = new Uint8Array(buf);
+  if (b.length < 12) return 'That file is too small to be a recording';
+  if (ext === 'mp3') {
+    // Either an ID3v2 tag up front, or straight into an MPEG frame: 11 sync
+    // bits set, i.e. 0xFF then a byte whose top three bits are set.
+    if (tag(b, 0, 'ID3')) return null;
+    if (b[0] === 0xff && (b[1] & 0xe0) === 0xe0) return null;
+    return 'That is not a real MP3';
+  }
+  if (ext === 'wav') return tag(b, 0, 'RIFF') && tag(b, 8, 'WAVE') ? null : 'That is not a real WAV';
+  if (ext === 'm4a') return tag(b, 4, 'ftyp') ? null : 'That is not a real M4A';
+  if (ext === 'ogg') return tag(b, 0, 'OggS') ? null : 'That is not a real OGG';
+  if (ext === 'flac') return tag(b, 0, 'fLaC') ? null : 'That is not a real FLAC';
+  return 'Unsupported recording type';
 }
 
 /**
@@ -303,20 +356,24 @@ function readImageSize(buf, type) {
 function photoRow(r) {
   return {
     id: r.id,
+    kind: r.kind || 'photo',
     image: r.image,
     caption: r.caption || '',
     uploader: r.uploader || '',
     width: r.width || 0,
     height: r.height || 0,
+    duration: r.duration || 0,
     created_at: r.created_at,
   };
 }
 
+const ROW_COLS = 'id, kind, image, caption, uploader, width, height, duration, created_at';
+
 async function listPhotos(env, beforeId) {
   const before = Number(beforeId);
   const sql = Number.isFinite(before) && before > 0
-    ? 'SELECT id, image, caption, uploader, width, height, created_at FROM photos WHERE hidden = 0 AND id < ? ORDER BY id DESC LIMIT ?'
-    : 'SELECT id, image, caption, uploader, width, height, created_at FROM photos WHERE hidden = 0 ORDER BY id DESC LIMIT ?';
+    ? 'SELECT ' + ROW_COLS + " FROM photos WHERE hidden = 0 AND kind = 'photo' AND id < ? ORDER BY id DESC LIMIT ?"
+    : 'SELECT ' + ROW_COLS + " FROM photos WHERE hidden = 0 AND kind = 'photo' ORDER BY id DESC LIMIT ?";
   const stmt = Number.isFinite(before) && before > 0
     ? env.DB.prepare(sql).bind(before, PAGE_SIZE)
     : env.DB.prepare(sql).bind(PAGE_SIZE);
@@ -325,13 +382,20 @@ async function listPhotos(env, beforeId) {
   return { photos, more: photos.length === PAGE_SIZE };
 }
 
+async function listRecordings(env) {
+  const { results } = await env.DB.prepare(
+    'SELECT ' + ROW_COLS + " FROM photos WHERE hidden = 0 AND kind = 'audio' ORDER BY id DESC LIMIT ?",
+  ).bind(MAX_RECORDINGS).all();
+  return (results || []).map(photoRow);
+}
+
 // Defaults exist so the site is never blank and never shows a raw placeholder
 // before anyone has opened the admin panel.
 const DEFAULT_SETTINGS = {
   name: '',
   dates: '',
   intro: '',
-  invite: 'If you have a photo of them, add it here. Any photo, from any time.',
+  invite: 'If you have a photo of him, or a recording, add it here. Anything, from any time.',
 };
 
 async function readSettings(env) {
@@ -363,13 +427,15 @@ async function writeSettings(env, body) {
 /* ------------------------------------------------------------- upload --- */
 
 /**
- * Take one photo and put it on the wall.
+ * Take one photo or recording and put it on the site.
  *
- * The body is the raw image; the caption and the uploader's name ride along in
+ * The body is the raw file; the caption and the uploader's name ride along in
  * the query string. That keeps this endpoint trivial to call from the page and
- * avoids buffering a whole multipart parse for a single file.
+ * avoids buffering a whole multipart parse for a single file. Which of the two
+ * it is comes from the Content-Type — and then the bytes are checked against
+ * that claim, because the header is whatever the uploader says it is.
  */
-async function receivePhoto(request, env, origin) {
+async function receiveUpload(request, env, origin) {
   const url = new URL(request.url);
 
   // Bots fill in every field they find. A real person never sees this one, so
@@ -382,38 +448,63 @@ async function receivePhoto(request, env, origin) {
   }
 
   const type = (request.headers.get('Content-Type') || '').split(';')[0].trim().toLowerCase();
-  const ext = IMAGE_TYPES[type];
-  if (!ext) return json({ error: 'Photos only, please (jpg, png, gif or webp)' }, 415, PUBLIC_CORS);
+  const isImage = !!IMAGE_TYPES[type];
+  const ext = isImage ? IMAGE_TYPES[type] : AUDIO_TYPES[type];
+  if (!ext) {
+    return json({ error: 'Photos (jpg, png, gif, webp) or recordings (mp3, wav, m4a, ogg, flac) only' }, 415, PUBLIC_CORS);
+  }
+  const kind = isImage ? 'photo' : 'audio';
+  const limit = isImage ? MAX_UPLOAD_BYTES : MAX_AUDIO_BYTES;
+  const tooBig = isImage ? 'That photo is larger than 12MB' : 'That recording is larger than 60MB';
 
   // Refuse on the declared length before reading the body, so an oversized
   // upload is rejected without pulling all of it through the worker first.
   const length = Number(request.headers.get('Content-Length') || '0');
-  if (length > MAX_UPLOAD_BYTES) return json({ error: 'That photo is larger than 12MB' }, 413, PUBLIC_CORS);
+  if (length > limit) return json({ error: tooBig }, 413, PUBLIC_CORS);
 
   const body = await request.arrayBuffer();
   if (body.byteLength === 0) return json({ error: 'That file was empty' }, 400, PUBLIC_CORS);
-  if (body.byteLength > MAX_UPLOAD_BYTES) return json({ error: 'That photo is larger than 12MB' }, 413, PUBLIC_CORS);
+  if (body.byteLength > limit) return json({ error: tooBig }, 413, PUBLIC_CORS);
 
-  const size = readImageSize(body, type);
-  if (typeof size === 'string') return json({ error: size }, 415, PUBLIC_CORS);
+  let width = 0, height = 0, storedType = type;
+  if (isImage) {
+    const size = readImageSize(body, type);
+    if (typeof size === 'string') return json({ error: size }, 415, PUBLIC_CORS);
+    width = size.width;
+    height = size.height;
+  } else {
+    const bad = checkAudioBytes(body, ext);
+    if (bad) return json({ error: bad }, 415, PUBLIC_CORS);
+    storedType = CANONICAL_AUDIO[ext];
+  }
 
   const caption = str(url.searchParams.get('caption'), 600);
   const uploader = str(url.searchParams.get('by'), 80);
+  // The browser reads the length before uploading; it is display-only, so a
+  // wrong or missing value costs nothing but a label. Capped at ten hours.
+  const duration = isImage ? 0 : Math.max(0, Math.min(36000, Number(url.searchParams.get('duration')) || 0));
 
   // Random key, not the uploader's filename: a filename is attacker-controlled
   // and would otherwise let one upload overwrite another, or smuggle a path.
   const key = Date.now().toString(36) + '-' + crypto.randomUUID().slice(0, 12) + '.' + ext;
 
-  await env.IMAGES.put(key, body, { httpMetadata: { contentType: type } });
+  // Stored as a PATH, not a full URL. This worker answers on mahoganyjr.com
+  // and on its workers.dev address, and whichever one happened to receive an
+  // upload must not get baked into the database for good — the page prefixes
+  // the path with wherever it is talking to, so the same row works from any
+  // address, including a future one.
+  const image = '/img/' + key;
+
+  await env.IMAGES.put(key, body, { httpMetadata: { contentType: storedType } });
 
   // If the row fails to insert, the file is already in R2 and nothing points
   // at it. Clean it up rather than leaving an orphan quietly using storage.
   let row;
   try {
     row = await env.DB.prepare(
-      'INSERT INTO photos (image, r2_key, caption, uploader, width, height, bytes) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id, image, caption, uploader, width, height, created_at',
+      'INSERT INTO photos (kind, mime, image, r2_key, caption, uploader, width, height, duration, bytes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING ' + ROW_COLS,
     )
-      .bind(origin + '/img/' + key, key, caption, uploader, size.width, size.height, body.byteLength)
+      .bind(kind, storedType, image, key, caption, uploader, width, height, duration, body.byteLength)
       .first();
   } catch (err) {
     await env.IMAGES.delete(key).catch(() => {});
@@ -424,22 +515,46 @@ async function receivePhoto(request, env, origin) {
   return json({ ok: true, photo: photoRow(row) }, 200, PUBLIC_CORS);
 }
 
-async function serveImage(env, key) {
-  const obj = await env.IMAGES.get(key);
+async function serveFile(request, env, key) {
+  // Handing R2 the request headers lets it resolve a Range header itself.
+  // Without this an <audio> player still plays, but every seek restarts the
+  // download from byte zero — on a 40MB WAV that is the difference between
+  // scrubbing to the chorus and waiting for it.
+  // Only hand R2 the headers when a Range was actually asked for. Given
+  // headers with no Range in them, R2 still reports a `range` covering the
+  // whole object — and answering a plain GET with 206 is wrong, and stops
+  // Cloudflare's edge cache from keeping the file.
+  const wantsRange = request.headers.has('Range');
+  let obj;
+  try {
+    obj = await env.IMAGES.get(key, wantsRange ? { range: request.headers } : undefined);
+  } catch {
+    obj = await env.IMAGES.get(key); // an unsatisfiable range: fall back to the whole file
+  }
   if (!obj) return new Response('Not found', { status: 404 });
-  return new Response(obj.body, {
-    headers: {
-      'Content-Type': obj.httpMetadata?.contentType || 'application/octet-stream',
-      // Keys are unique per upload and a photo never changes, so it can be
-      // cached forever — which is what keeps the wall cheap to browse.
-      'Cache-Control': 'public, max-age=31536000, immutable',
-      // Belt and braces around the no-SVG rule: even if something slipped
-      // through, the browser will not sniff it into HTML or run script in it.
-      'X-Content-Type-Options': 'nosniff',
-      'Content-Security-Policy': "default-src 'none'; sandbox",
-      ...PUBLIC_CORS,
-    },
-  });
+
+  const headers = {
+    'Content-Type': obj.httpMetadata?.contentType || 'application/octet-stream',
+    // Keys are unique per upload and a file never changes, so it can be
+    // cached forever — which is what keeps the site cheap to browse.
+    'Cache-Control': 'public, max-age=31536000, immutable',
+    // Belt and braces around the no-SVG rule: even if something slipped
+    // through, the browser will not sniff it into HTML or run script in it.
+    'X-Content-Type-Options': 'nosniff',
+    'Content-Security-Policy': "default-src 'none'; sandbox",
+    'Accept-Ranges': 'bytes',
+    ...PUBLIC_CORS,
+  };
+
+  if (wantsRange && obj.range) {
+    const start = obj.range.offset != null ? obj.range.offset : Math.max(0, obj.size - obj.range.suffix);
+    const length = obj.range.length != null ? obj.range.length : obj.size - start;
+    headers['Content-Range'] = 'bytes ' + start + '-' + (start + length - 1) + '/' + obj.size;
+    headers['Content-Length'] = String(length);
+    return new Response(obj.body, { status: 206, headers });
+  }
+  headers['Content-Length'] = String(obj.size);
+  return new Response(obj.body, { headers });
 }
 
 /**
@@ -461,7 +576,7 @@ async function route(request, env, ctx, url, path, method) {
   const origin = url.origin;
 
   if (method === 'GET' && path.startsWith('/img/')) {
-    return serveImage(env, decodeURIComponent(path.slice('/img/'.length)));
+    return serveFile(request, env, decodeURIComponent(path.slice('/img/'.length)));
   }
 
   if (path === '/admin' || path === '/admin/') {
@@ -476,14 +591,15 @@ async function route(request, env, ctx, url, path, method) {
 
   /* ---- public ---- */
 
-  // The whole first paint in one call: headline text plus the newest photos.
+  // The whole first paint in one call: headline text, every recording, and
+  // the newest photos.
   if (path === '/api/memorial' && method === 'GET') {
     const cache = caches.default;
     const cacheKey = new Request(origin + '/api/memorial');
     const hit = await cache.match(cacheKey);
     if (hit) return hit;
-    const [settings, wall] = await Promise.all([readSettings(env), listPhotos(env, null)]);
-    const res = json({ ...wall, settings }, 200, {
+    const [settings, wall, recordings] = await Promise.all([readSettings(env), listPhotos(env, null), listRecordings(env)]);
+    const res = json({ ...wall, recordings, settings }, 200, {
       ...PUBLIC_CORS,
       // Short, because a photo added now should appear almost at once for
       // everyone; the explicit purge above covers the uploader themselves.
@@ -500,7 +616,7 @@ async function route(request, env, ctx, url, path, method) {
   }
 
   if (path === '/api/photos' && method === 'POST') {
-    return receivePhoto(request, env, origin);
+    return receiveUpload(request, env, origin);
   }
 
   /* ---- admin ---- */
@@ -527,8 +643,8 @@ async function route(request, env, ctx, url, path, method) {
     if (path === '/api/admin/photos' && method === 'GET') {
       const before = Number(url.searchParams.get('before'));
       const sql = Number.isFinite(before) && before > 0
-        ? 'SELECT id, image, caption, uploader, width, height, bytes, hidden, created_at FROM photos WHERE id < ? ORDER BY id DESC LIMIT ?'
-        : 'SELECT id, image, caption, uploader, width, height, bytes, hidden, created_at FROM photos ORDER BY id DESC LIMIT ?';
+        ? 'SELECT ' + ROW_COLS + ', bytes, hidden FROM photos WHERE id < ? ORDER BY id DESC LIMIT ?'
+        : 'SELECT ' + ROW_COLS + ', bytes, hidden FROM photos ORDER BY id DESC LIMIT ?';
       const stmt = Number.isFinite(before) && before > 0
         ? env.DB.prepare(sql).bind(before, PAGE_SIZE)
         : env.DB.prepare(sql).bind(PAGE_SIZE);
