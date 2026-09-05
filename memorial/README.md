@@ -113,6 +113,7 @@ into a dated folder. Keep it somewhere that isn't Cloudflare.
 | `api/deploy.sh` | puts the whole site live |
 | `api/backup.sh` | downloads everything onto your computer |
 | `tools/crop-screenshots.py` | trims phone/Facebook furniture off screenshots |
+| `tools/autodeploy.sh` | run from a scheduled task: pulls and deploys whenever the branch moves |
 | `seed/` | the first photos of him, and `seed.sh` to put them up; safe to re-run |
 
 ## A note on what this does with photos
