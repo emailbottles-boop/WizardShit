@@ -123,7 +123,7 @@ export const ADMIN_HTML = `<!doctype html>
         <input id="fDates" placeholder="e.g. 1994 – 2026">
         <label for="fIntro">A few words at the top</label>
         <textarea id="fIntro" placeholder="Whatever you want people to read first."></textarea>
-        <label for="fInvite">The line above the upload button</label>
+        <label for="fInvite">A line above the Add stuff button <span style="text-transform:none;letter-spacing:0;opacity:.7">(leave empty for none)</span></label>
         <textarea id="fInvite"></textarea>
         <div style="margin-top:18px"><button class="primary" id="saveText">Save</button></div>
         <div class="msg" id="textMsg"></div>

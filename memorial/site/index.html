@@ -41,8 +41,8 @@
 </header>
 
 <section class="invite">
-  <p id="invite">If you have a photo of them, add it here. Any photo, from any time.</p>
-  <button class="add" id="openAdd" type="button">Add a photo or a recording</button>
+  <p id="invite" hidden></p>
+  <button class="add" id="openAdd" type="button">Add stuff</button>
 </section>
 
 <section class="recordings" id="recordings" hidden>
@@ -65,11 +65,11 @@
 <div class="sheet" id="sheet" hidden>
   <div class="sheet-inner" role="dialog" aria-modal="true" aria-labelledby="addTitle">
     <button class="x" id="closeAdd" type="button" aria-label="Close">&times;</button>
-    <h2 id="addTitle">Add a photo or a recording</h2>
+    <h2 id="addTitle">Add stuff</h2>
 
     <div class="drop" id="drop">
       <input type="file" id="files" accept="image/*,audio/*,.mp3,.wav,.m4a,.ogg,.flac" multiple>
-      <p><strong>Choose photos or recordings</strong><br><span>or drag them here</span></p>
+      <p><strong>Choose files</strong><br><span>or drag them here</span></p>
     </div>
     <ul class="picked" id="picked"></ul>
 

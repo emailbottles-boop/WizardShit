@@ -446,7 +446,7 @@ const DEFAULT_SETTINGS = {
   name: '',
   dates: '',
   intro: '',
-  invite: 'If you have a photo of him, or a recording, add it here. Anything, from any time.',
+  invite: '',
 };
 
 async function readSettings(env) {

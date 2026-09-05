@@ -62,7 +62,8 @@
     }
     if (s.dates) $('dates').textContent = s.dates;
     if (s.intro) $('intro').textContent = s.intro;
-    if (s.invite) $('invite').textContent = s.invite;
+    // The line above the button is empty unless the caretaker writes one.
+    if (s.invite) { $('invite').textContent = s.invite; $('invite').hidden = false; }
   }
 
   /* --------------------------------------------------------- recordings --- */
