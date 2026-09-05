@@ -16,6 +16,7 @@
   var photos = [];      // everything currently on the wall, newest first
   var recordings = [];  // every visible recording, newest first
   var oldest = null;    // id of the last one loaded, for paging
+  var cursor = 0;       // the last change event this page has applied
   var loading = false;
 
   /* ------------------------------------------------------------ helpers --- */
@@ -75,6 +76,7 @@
   function recCard(r, fresh) {
     var el = document.createElement('div');
     el.className = 'rec' + (fresh ? ' fresh' : '');
+    el.dataset.id = r.id;
 
     var meta = document.createElement('div');
     meta.className = 'rec-meta';
@@ -121,6 +123,7 @@
   function tile(p, fresh) {
     var fig = document.createElement('figure');
     fig.className = 'tile' + (fresh ? ' fresh' : '');
+    fig.dataset.id = p.id;
     fig.tabIndex = 0;
     fig.setAttribute('role', 'button');
 
@@ -182,6 +185,8 @@
       $('state').hidden = photos.length > 0;
       if (!photos.length) $('state').textContent = recordings.length ? 'No photographs yet.' : 'Nothing here yet. Yours can be the first.';
       $('more').hidden = !d.more;
+      cursor = d.cursor || 0;
+      startLive();
     }).catch(function () {
       // The wall is the whole page, so a failure here needs saying out loud
       // rather than leaving a blank screen.
@@ -611,6 +616,87 @@
       }, 1600);
     });
   });
+
+  /* --------------------------------------------------------------- live --- */
+
+  // Nobody should have to refresh. Every few seconds the page asks the server
+  // what has happened since the last thing it heard about — a photo added
+  // from someone else's phone, a recording, the caretaker hiding something —
+  // and applies exactly that, in place. It only asks while the tab is actually
+  // being looked at, and asks the moment it is looked at again.
+  var LIVE_EVERY = 5000;
+  var liveTimer = null;
+  var polling = false;
+
+  function findTile(id) { return $('wall').querySelector('.tile[data-id="' + id + '"]'); }
+  function findRec(id)  { return $('recList').querySelector('.rec[data-id="' + id + '"]'); }
+
+  function emptyText() {
+    return recordings.length ? 'No photographs yet.' : 'Nothing here yet. Yours can be the first.';
+  }
+
+  function dropItem(id) {
+    var t = findTile(id); if (t) t.remove();
+    var r = findRec(id);  if (r) r.remove();
+    photos = photos.filter(function (p) { return p.id !== id; });
+    recordings = recordings.filter(function (p) { return p.id !== id; });
+    if (!recordings.length) $('recordings').hidden = true;
+    if (!photos.length) { $('state').hidden = false; $('state').textContent = emptyText(); }
+  }
+
+  function placeItem(p) {
+    // Already on the page — this device uploaded it, or an earlier poll
+    // delivered it. Refresh the words under it and leave it where it is.
+    var existing = p.kind === 'audio' ? findRec(p.id) : findTile(p.id);
+    if (existing) {
+      var cap = existing.querySelector('.cap');
+      if (cap) cap.textContent = p.caption || (p.kind === 'audio' ? 'Untitled recording' : '');
+      var by = existing.querySelector('.by');
+      if (by) by.textContent = p.uploader ? 'added by ' + p.uploader : '';
+      return;
+    }
+    // New to this page. Slot it by id so order stays newest-first even when
+    // several arrive at once.
+    var byId = function (a, b) { return b.id - a.id; };
+    var before = function (parent) {
+      return Array.prototype.find.call(parent.children, function (el) { return Number(el.dataset.id) < p.id; }) || null;
+    };
+    if (p.kind === 'audio') {
+      recordings.push(p); recordings.sort(byId);
+      $('recList').insertBefore(recCard(p, true), before($('recList')));
+      $('recordings').hidden = false;
+      return;
+    }
+    photos.push(p); photos.sort(byId);
+    $('wall').insertBefore(tile(p, true), before($('wall')));
+    $('state').hidden = true;
+  }
+
+  function applyEvents(evs) {
+    evs.forEach(function (e) {
+      if (e.kind === 'hide') dropItem(e.id);
+      else if (e.kind === 'show' && e.item) placeItem(e.item);
+    });
+  }
+
+  function poll() {
+    if (polling || document.hidden) return;
+    polling = true;
+    api('/api/changes?cursor=' + cursor).then(function (d) {
+      if (d && typeof d.cursor === 'number') {
+        if (d.events && d.events.length) applyEvents(d.events);
+        cursor = d.cursor;
+      }
+    }).catch(function () {
+      // A missed poll is nothing; the next one asks from the same cursor.
+    }).then(function () { polling = false; });
+  }
+
+  function startLive() {
+    if (liveTimer) return;
+    liveTimer = setInterval(poll, LIVE_EVERY);
+    document.addEventListener('visibilitychange', function () { if (!document.hidden) poll(); });
+  }
 
   /* --------------------------------------------------------------- boot --- */
 

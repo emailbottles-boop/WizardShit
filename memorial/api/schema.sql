@@ -37,3 +37,16 @@ CREATE TABLE IF NOT EXISTS settings (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL DEFAULT ''
 );
+
+-- Live updates. Every add, hide, un-hide and delete appends a row here, and an
+-- open page asks "what happened after event N?" every few seconds and applies
+-- just that — so nobody has to refresh to see a photo someone else added, or
+-- to see something the caretaker took down. Rows are tiny and nothing else
+-- reads them; a memorial will never have enough events for the growth to
+-- matter.
+CREATE TABLE IF NOT EXISTS changes (
+  seq     INTEGER PRIMARY KEY AUTOINCREMENT,
+  item_id INTEGER NOT NULL,
+  kind    TEXT NOT NULL,                       -- add | hide | show | remove
+  at      TEXT NOT NULL DEFAULT (datetime('now'))
+);

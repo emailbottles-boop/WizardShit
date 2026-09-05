@@ -389,6 +389,57 @@ async function listRecordings(env) {
   return (results || []).map(photoRow);
 }
 
+/* --------------------------------------------------------------- live --- */
+
+// Every add, hide, un-hide and delete is appended to `changes`, so an open page
+// can ask "what happened after event N?" with one indexed query and apply just
+// that. Viewers who are caught up all ask with the same N, so the edge cache
+// collapses them into a single database read every few seconds no matter how
+// many people are watching.
+async function logChange(env, kind, itemId) {
+  try {
+    await env.DB.prepare('INSERT INTO changes (item_id, kind) VALUES (?, ?)').bind(itemId, kind).run();
+  } catch {
+    // The table comes from schema.sql. A database that predates it just loses
+    // live updates until deploy.sh runs — the change itself still happened.
+  }
+}
+
+async function latestCursor(env) {
+  try {
+    const row = await env.DB.prepare('SELECT MAX(seq) AS seq FROM changes').first();
+    return (row && row.seq) || 0;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Everything after `cursor`, reduced to what a page needs to do: `show` an
+ * item (with its current data) or `hide` one. Present state wins — an item
+ * added and then hidden inside one window is simply not sent, rather than
+ * shown and snatched away — and only the last word about each item is kept.
+ */
+async function changesSince(env, cursor) {
+  const { results } = await env.DB.prepare(
+    'SELECT c.seq, c.kind AS ev, c.item_id, p.hidden, p.id, p.kind, p.image, p.caption, p.uploader, ' +
+    'p.width, p.height, p.duration, p.created_at ' +
+    'FROM changes c LEFT JOIN photos p ON p.id = c.item_id WHERE c.seq > ? ORDER BY c.seq ASC LIMIT 200',
+  ).bind(cursor).all();
+  const byItem = new Map();
+  let last = cursor;
+  for (const r of results || []) {
+    last = r.seq;
+    if (r.ev === 'add' || r.ev === 'show') {
+      if (r.id == null || r.hidden) byItem.set(r.item_id, { kind: 'hide', id: r.item_id });
+      else byItem.set(r.item_id, { kind: 'show', id: r.item_id, item: photoRow(r) });
+    } else {
+      byItem.set(r.item_id, { kind: 'hide', id: r.item_id });
+    }
+  }
+  return { events: Array.from(byItem.values()), cursor: last };
+}
+
 // Defaults exist so the site is never blank and never shows a raw placeholder
 // before anyone has opened the admin panel.
 const DEFAULT_SETTINGS = {
@@ -511,6 +562,7 @@ async function receiveUpload(request, env, origin) {
     throw err;
   }
 
+  await logChange(env, 'add', row.id);
   await purgeWallCache(origin);
   return json({ ok: true, photo: photoRow(row) }, 200, PUBLIC_CORS);
 }
@@ -598,13 +650,34 @@ async function route(request, env, ctx, url, path, method) {
     const cacheKey = new Request(origin + '/api/memorial');
     const hit = await cache.match(cacheKey);
     if (hit) return hit;
-    const [settings, wall, recordings] = await Promise.all([readSettings(env), listPhotos(env, null), listRecordings(env)]);
-    const res = json({ ...wall, recordings, settings }, 200, {
+    const [settings, wall, recordings, cursor] = await Promise.all([
+      readSettings(env), listPhotos(env, null), listRecordings(env), latestCursor(env),
+    ]);
+    const res = json({ ...wall, recordings, settings, cursor }, 200, {
       ...PUBLIC_CORS,
       // Short, because a photo added now should appear almost at once for
       // everyone; the explicit purge above covers the uploader themselves.
       'Cache-Control': 'public, max-age=30',
     });
+    ctx.waitUntil(cache.put(cacheKey, res.clone()));
+    return res;
+  }
+
+  // What happened after event N. Cached for a few seconds keyed on N, which is
+  // what lets a crowd of open pages cost one database read between them.
+  if (path === '/api/changes' && method === 'GET') {
+    const cursor = Math.max(0, Math.floor(Number(url.searchParams.get('cursor')) || 0));
+    const cache = caches.default;
+    const cacheKey = new Request(origin + '/api/changes?cursor=' + cursor);
+    const hit = await cache.match(cacheKey);
+    if (hit) return hit;
+    let out;
+    try {
+      out = await changesSince(env, cursor);
+    } catch {
+      out = { events: [], cursor };
+    }
+    const res = json(out, 200, { ...PUBLIC_CORS, 'Cache-Control': 'public, max-age=3' });
     ctx.waitUntil(cache.put(cacheKey, res.clone()));
     return res;
   }
@@ -667,6 +740,7 @@ async function route(request, env, ctx, url, path, method) {
         if (!sets.length) return json({ error: 'Nothing to change' }, 400);
         binds.push(id);
         await env.DB.prepare('UPDATE photos SET ' + sets.join(', ') + ' WHERE id = ?').bind(...binds).run();
+        await logChange(env, 'hidden' in body && body.hidden ? 'hide' : 'show', id);
         await purgeWallCache(origin);
         return json({ ok: true });
       }
@@ -678,6 +752,7 @@ async function route(request, env, ctx, url, path, method) {
         if (!row) return json({ error: 'Already gone' }, 404);
         await env.DB.prepare('DELETE FROM photos WHERE id = ?').bind(id).run();
         await env.IMAGES.delete(row.r2_key).catch(() => {});
+        await logChange(env, 'remove', id);
         await purgeWallCache(origin);
         return json({ ok: true });
       }
