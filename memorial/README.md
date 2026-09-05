@@ -6,9 +6,9 @@ there.
 
 Anyone with the link can add a photo or a recording. No account, no app, no
 sign-in. Photos go on the wall and recordings into their own section, straight
-away. You keep a private `/admin` page where you can hide or delete anything. — and on every other open copy of the page within a few seconds, without
-anyone refreshing. The same goes for anything you hide or delete from `/admin`:
-it disappears for everyone, live.
+away — and onto every other open copy of the page within a few seconds,
+without anyone refreshing. You keep a private `/admin` page where you can hide
+or delete anything, and that disappears for everyone just as fast.
 
 It runs entirely on Cloudflare's free tier and costs nothing to keep online:
 100,000 requests a day, a 5GB database, 10GB of photo storage. Roughly ten
