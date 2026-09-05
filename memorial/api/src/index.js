@@ -1025,6 +1025,30 @@ export default {
     const path = url.pathname.replace(/\/+$/, '') || '/';
     const method = request.method.toUpperCase();
 
+    // Someone who types "mahoganyjr.com" arrives over plain http, and every
+    // browser paints that "Not secure" whether or not the certificate is good.
+    // Send them to the encrypted address instead. Only on a plain page load --
+    // a redirect throws away the body of an upload -- and only when we can
+    // positively see http, so a misread can never put the site in a loop.
+    // A temporary redirect on purpose: browsers cache a permanent one forever,
+    // and this has to be undoable from the dashboard alone.
+    if (method === 'GET' || method === 'HEAD') {
+      let scheme = '';
+      try {
+        const visitor = request.headers.get('cf-visitor');
+        if (visitor) scheme = String(JSON.parse(visitor).scheme || '');
+      } catch (_) {
+        // A header we can't read tells us nothing; fall through to the URL.
+      }
+      const onThisMachine =
+        url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '[::1]';
+      if (!onThisMachine && (scheme === 'http' || (!scheme && url.protocol === 'http:'))) {
+        const secure = new URL(url.toString());
+        secure.protocol = 'https:';
+        return Response.redirect(secure.toString(), 302);
+      }
+    }
+
     if (method === 'OPTIONS') {
       return new Response(null, { status: 204, headers: writeCors(request, env) });
     }
