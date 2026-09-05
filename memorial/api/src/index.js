@@ -11,6 +11,7 @@
  *   GET    /api/memorial          -> headline text, recordings, first page of photos
  *   GET    /api/photos?before=ID  -> older photos (infinite scroll)
  *   POST   /api/photos            -> upload one photo or recording (raw body)
+ *   POST   /api/stories           -> add a written story (JSON: story, by)
  *   GET    /img/<key>             -> the file itself, out of R2 (photos and audio;
  *                                    honours Range so recordings can seek)
  *   GET    /admin                 -> the caretaker panel (HTML)
@@ -53,6 +54,10 @@ const MAX_THUMB_BYTES = 2 * 1024 * 1024;
 // Recordings are few and precious, so the page gets every visible one at once
 // rather than paging through them.
 const MAX_RECORDINGS = 200;
+// Stories: written memories with no file behind them. Longer than a caption
+// on purpose; a story is the point, not a label.
+const MAX_STORY_CHARS = 5000;
+const MAX_STORIES = 200;
 
 // How many photos the wall asks for at a time.
 const PAGE_SIZE = 60;
@@ -469,6 +474,13 @@ async function listPhotos(env, beforeId) {
   return { photos, more: photos.length === PAGE_SIZE };
 }
 
+async function listStories(env) {
+  const { results } = await env.DB.prepare(
+    'SELECT ' + ROW_COLS + " FROM photos WHERE hidden = 0 AND kind = 'story' ORDER BY id DESC LIMIT ?",
+  ).bind(MAX_STORIES).all();
+  return (results || []).map(photoRow);
+}
+
 async function listRecordings(env) {
   const { results } = await env.DB.prepare(
     'SELECT ' + ROW_COLS + " FROM photos WHERE hidden = 0 AND kind = 'audio' ORDER BY id DESC LIMIT ?",
@@ -827,10 +839,10 @@ async function route(request, env, ctx, url, path, method) {
     const cacheKey = new Request(origin + '/api/memorial');
     const hit = await cache.match(cacheKey);
     if (hit) return hit;
-    const [settings, wall, recordings, cursor] = await Promise.all([
-      readSettings(env), listPhotos(env, null), listRecordings(env), latestCursor(env),
+    const [settings, wall, recordings, stories, cursor] = await Promise.all([
+      readSettings(env), listPhotos(env, null), listRecordings(env), listStories(env), latestCursor(env),
     ]);
-    const res = json({ ...wall, recordings, settings, cursor }, 200, {
+    const res = json({ ...wall, recordings, stories, settings, cursor }, 200, {
       ...PUBLIC_CORS,
       // Short, because a photo added now should appear almost at once for
       // everyone; the explicit purge above covers the uploader themselves.
@@ -867,6 +879,28 @@ async function route(request, env, ctx, url, path, method) {
 
   if (path === '/api/photos' && method === 'POST') {
     return receiveUpload(request, env, origin);
+  }
+
+  // A story: words only, no file. Same honeypot and the same per-address
+  // budget as an upload, so a script cannot fill the page any faster than it
+  // could with photos. Stored as a row like everything else, so hide, delete
+  // and live updates work on it unchanged.
+  if (path === '/api/stories' && method === 'POST') {
+    const body = await request.json().catch(() => null);
+    if (!body || typeof body !== 'object') return json({ error: 'Could not read that' }, 400, PUBLIC_CORS);
+    if (str(body.website, 100)) return json({ ok: true }, 200, PUBLIC_CORS);
+    if (!(await allowUpload(request))) {
+      return json({ error: 'That is a lot at once. Give it a minute and try again.' }, 429, { ...PUBLIC_CORS, 'Retry-After': String(UPLOAD_WINDOW) });
+    }
+    const story = str(body.story, MAX_STORY_CHARS).trim();
+    if (story.length < 2) return json({ error: 'Write the story first' }, 400, PUBLIC_CORS);
+    const uploader = str(body.by, 80);
+    const row = await env.DB.prepare(
+      "INSERT INTO photos (kind, mime, image, r2_key, caption, uploader, photographer, width, height, duration, bytes) VALUES ('story', '', '', '', ?, ?, '', 0, 0, 0, ?) RETURNING " + ROW_COLS,
+    ).bind(story, uploader, story.length).first();
+    await logChange(env, 'add', row.id);
+    await purgeWallCache(origin);
+    return json({ ok: true, story: photoRow(row) }, 200, PUBLIC_CORS);
   }
 
   /* ---- admin ---- */

@@ -69,6 +69,8 @@ export const ADMIN_HTML = `<!doctype html>
   .photo .rec { aspect-ratio: 1; display: flex; flex-direction: column; justify-content: center; gap: 10px; padding: 16px; background: #0b0908; }
   .photo .rec .tag { font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--accent); text-align: center; }
   .photo .rec audio { width: 100%; }
+  .photo .rec.story { justify-content: flex-start; overflow: auto; }
+  .photo .rec.story .txt { font-size: 13px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; color: var(--ink); }
   .photo .meta { padding: 12px; font-size: 13px; flex: 1; }
   .photo .cap { color: var(--ink); word-break: break-word; }
   .photo .by { color: var(--soft); font-size: 12px; margin-top: 5px; }
@@ -246,19 +248,21 @@ export const ADMIN_HTML = `<!doctype html>
     var media = p.kind === 'audio'
       ? '<div class="rec"><div class="tag">Recording' + (p.duration ? ' \u00b7 ' + fmtDur(p.duration) : '') + '</div>' +
         '<audio controls preload="none" src="' + esc(p.image) + '"></audio></div>'
+      : p.kind === 'story'
+      ? '<div class="rec story"><div class="tag">Story</div><div class="txt">' + esc(p.caption) + '</div></div>'
       : '<img loading="lazy" src="' + esc(p.image) + '" alt="">';
     el.innerHTML =
       media +
       '<div class="meta">' +
-        '<div class="cap">' + (p.caption ? esc(p.caption) : '<span style="color:var(--soft)">No caption</span>') + '</div>' +
+        (p.kind === 'story' ? '' : '<div class="cap">' + (p.caption ? esc(p.caption) : '<span style="color:var(--soft)">No caption</span>') + '</div>') +
         '<div class="by">' + (p.uploader ? 'added by ' + esc(p.uploader) : 'added anonymously') +
           (p.photographer ? ' \u00b7 photo by ' + esc(p.photographer) : '') +
-          ' \u00b7 <a href="/api/admin/original/' + p.id + '?token=' + encodeURIComponent(token) + '">original' + (p.original_bytes ? ' ' + niceSize(p.original_bytes) : '') + '</a>' +
+          (p.kind === 'story' ? '' : ' \u00b7 <a href="/api/admin/original/' + p.id + '?token=' + encodeURIComponent(token) + '">original' + (p.original_bytes ? ' ' + niceSize(p.original_bytes) : '') + '</a>') +
           ' · ' + esc(String(p.created_at || '').slice(0, 10)) +
           ' · <a href="#" data-act="names">edit names</a></div>' +
       '</div>' +
       '<div class="acts">' +
-        (p.kind === 'audio' || /\.gif$/i.test(p.image || '') ? '' : '<button data-act="trim">Trim</button>') +
+        (p.kind !== 'photo' || /\.gif$/i.test(p.image || '') ? '' : '<button data-act="trim">Trim</button>') +
         (p.trimmed ? '<button data-act="untrim">Untrim</button>' : '') +
         '<button data-act="hide">' + (p.hidden ? 'Put back' : 'Hide') + '</button>' +
         '<button class="danger" data-act="del">Delete</button>' +
