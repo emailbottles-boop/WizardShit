@@ -100,9 +100,12 @@
 
     var a = document.createElement('audio');
     a.controls = true;
-    // Nothing downloads until someone presses play — a page with twenty
-    // recordings on it should not pull twenty files just to be looked at.
-    a.preload = 'none';
+    // Only the file's header downloads up front, not the recording itself, so
+    // a page with twenty recordings on it does not pull twenty files just to
+    // be looked at. It is deliberately not 'none': with nothing loaded, Safari
+    // spends the first press of play fetching and needs a second one to
+    // actually start, and everyone with an iPhone thinks the player is broken.
+    a.preload = 'metadata';
     a.src = fileUrl(r);
     // One at a time. Two of his recordings playing over each other is not a
     // thing anyone wants to happen by accident.

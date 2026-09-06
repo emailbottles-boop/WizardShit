@@ -30,8 +30,10 @@ workers_dev = true
 # the custom domain could not be attached.
 # ---------------------------------------------------------------------------
 routes = [
-  { pattern = "mahoganyjr.com",     custom_domain = true },
-  { pattern = "www.mahoganyjr.com", custom_domain = true },
+  { pattern = "mahoganyjr.com",        custom_domain = true },
+  { pattern = "www.mahoganyjr.com",    custom_domain = true },
+  { pattern = "santanaturner.com",     custom_domain = true },
+  { pattern = "www.santanaturner.com", custom_domain = true },
 ]
 
 # The page itself — index.html, the CSS and JavaScript, the 404 page — is
