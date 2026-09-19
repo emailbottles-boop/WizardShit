@@ -1045,33 +1045,44 @@ form input.invalid {
 .cart-nav .count:not(:empty)::before { content: '·'; margin: 0 0.4em; }
 .cart-nav.has-items { border-color: rgba(255,220,120,0.85); }
 
-/* Floating cart that follows you around the site. It carries class .cart-nav so
-   js/shop.js wires its click and keeps its count/has-items in sync automatically. */
-.cart-float-wrap { position: fixed; right: 22px; bottom: 30px; z-index: 20; display: none; }
+/* Floating cart: a round orange badge, bottom-right, that only appears once
+   something is in the cart. It carries class .cart-nav so js/shop.js wires its
+   click and keeps its count/has-items in sync automatically. */
+.cart-float-wrap { position: fixed; right: 22px; bottom: 30px; z-index: 20; display: none; pointer-events: none; }
 .cart-float {
-  display: inline-flex;
+  display: none;
+  position: relative;
   align-items: center;
-  gap: 8px;
-  padding: 0.72rem 1.2rem;
-  border-radius: 999px;
-  background: rgba(22,10,32,0.72);
-  border: 1px solid rgba(180,80,255,0.45);
-  backdrop-filter: blur(10px);
-  color: #fff;
-  font-family: inherit;
-  font-size: 0.65rem;
-  letter-spacing: 0.22em;
-  font-weight: 800;
+  justify-content: center;
+  width: 60px; height: 60px;
+  padding: 0; margin: 0;
+  border-radius: 50%;
+  background: #ff8a1f;
+  border: none;
+  color: #120818;
   cursor: pointer;
-  box-shadow: 0 8px 26px rgba(0,0,0,0.45);
-  transition: transform 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
+  pointer-events: auto;
+  box-shadow: 0 10px 28px rgba(0,0,0,0.5), 0 0 0 3px rgba(255,138,31,0.28);
+  transition: transform 0.25s ease, box-shadow 0.25s ease;
+  animation: cartPop 0.35s cubic-bezier(0.2, 1.4, 0.4, 1) both;
 }
-.cart-float:hover { transform: scale(1.06); }
-.cart-float .cart-float-ico { font-size: 1rem; line-height: 1; }
-.cart-float.has-items {
-  border-color: rgba(255,220,120,0.9);
-  box-shadow: 0 8px 26px rgba(255,190,60,0.32);
+/* Only with items in it. The screen gate on .cart-float-wrap below still applies. */
+.cart-float.has-items { display: inline-flex; }
+.cart-float:hover { transform: scale(1.08); box-shadow: 0 12px 30px rgba(0,0,0,0.55), 0 0 0 5px rgba(255,138,31,0.32); }
+.cart-float:focus-visible { outline: 2px solid #ffe066; outline-offset: 3px; }
+.cart-float .cart-float-ico { width: 30px; height: 30px; display: block; fill: none; stroke: #120818; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.cart-float .count {
+  position: absolute; top: -4px; right: -4px;
+  min-width: 22px; height: 22px; padding: 0 6px; box-sizing: border-box;
+  border-radius: 11px;
+  background: #120818; color: #ff8a1f;
+  border: 2px solid #ff8a1f;
+  font-size: 0.62rem; font-weight: 900; letter-spacing: 0; line-height: 18px;
+  text-align: center;
 }
+.cart-float .count::before { content: none; margin: 0; }
+@keyframes cartPop { from { transform: scale(0.4); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .cart-float { animation: none; } }
 /* Show it while browsing; keep it off the landing, the cart page and the thank-you page. */
 /* Not on the product page — it has its own CART button, and a floating one there
    could sit on top of ADD TO CART on a phone. */
@@ -1080,6 +1091,9 @@ body[data-screen="updates"] .cart-float-wrap,
 body[data-screen="content"] .cart-float-wrap,
 body[data-screen="credits"] .cart-float-wrap,
 body[data-screen="donators"] .cart-float-wrap { display: block; }
+@media (max-width: 900px) {
+  .cart-float-wrap { right: 16px; bottom: 22px; }
+}
 
 .cart-lines { width: 100%; max-width: 900px; display: flex; flex-direction: column; gap: 1rem; }
 .cart-line {
@@ -1453,11 +1467,16 @@ input:focus-visible {
   </a>
 </div>
 
-<!-- FLOATING CART: follows you around the site so your cart is always one tap away.
-     js/shop.js wires it via the .cart-nav class (click opens the cart, count stays in sync). -->
+<!-- FLOATING CART: a round orange badge that appears once something is in the cart
+     and follows you around the site. js/shop.js wires it via the .cart-nav class
+     (click opens the cart, count and has-items stay in sync). -->
 <div class="cart-float-wrap">
   <button class="cart-nav cart-float" type="button" aria-label="Open your cart">
-    <span class="cart-float-ico" aria-hidden="true">🛒</span><span class="cart-float-label">CART</span><span class="count"></span>
+    <svg class="cart-float-ico" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M2.5 3.5h2.6l2.3 11.2a1.6 1.6 0 0 0 1.6 1.3h8.6a1.6 1.6 0 0 0 1.55-1.2L21 7H6.1"/>
+      <circle cx="9.6" cy="20" r="1.5"/>
+      <circle cx="17.4" cy="20" r="1.5"/>
+    </svg><span class="count"></span>
   </button>
 </div>
 
