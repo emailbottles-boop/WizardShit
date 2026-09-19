@@ -69,6 +69,7 @@ let draftStatus = 'draft';
 let confirmFails = new Set();
 let payoutCharges = [];
 let stripeFails = false;
+let stripeEmbeddedName = 'embedded_page'; // what the stand-in Stripe's API version calls the on-site mode
 
 function pfEnvelope(result, code = 200) {
   return new Response(JSON.stringify({ code, result }), { status: code, headers: { 'Content-Type': 'application/json' } });
@@ -112,6 +113,11 @@ function installFetch() {
     }
     if (url.startsWith('https://api.stripe.com/v1/checkout/sessions')) {
       if (stripeFails) return jsonRes({ error: { message: 'Your card was declined, sort of' } }, 402);
+      // Which name of the on-site mode this "API version" knows; the other is refused as Stripe does.
+      const mode = new URLSearchParams(body).get('ui_mode');
+      if (mode && mode !== stripeEmbeddedName) {
+        return jsonRes({ error: { message: 'The ui_mode value `' + mode + '` is no longer supported. Use `' + stripeEmbeddedName + '` instead.' } }, 400);
+      }
       return jsonRes({ id: 'cs_test_123', url: 'https://checkout.stripe.com/c/pay/cs_test_123', client_secret: 'cs_test_123_secret_abc' });
     }
     if (url.startsWith('https://api.stripe.com/v1/customers')) return jsonRes({ id: 'cus_1' });
@@ -241,6 +247,7 @@ beforeEach(() => {
   confirmFails = new Set();
   payoutCharges = [];
   stripeFails = false;
+  stripeEmbeddedName = 'embedded_page';
   installFetch();
   vi.stubGlobal('caches', fakeCaches());
 });
@@ -380,6 +387,35 @@ describe('the catalog', () => {
 });
 
 describe('placing an order', () => {
+  it('falls back to the older name of the on-site mode when Stripe refuses the new one, and vice versa', async () => {
+    stripeEmbeddedName = 'embedded'; // an account still on an API version that knows only the old name
+    let res = await handlePlaceOrder(
+      post('/api/shop/orders', { recipient: RECIPIENT, items: [{ product_id: 502, variant_id: 9101, quantity: 1 }], shipping_id: 'STANDARD', checkout: 'embedded' }, { 'CF-Connecting-IP': '198.51.100.71' }),
+      env(),
+      CORS,
+    );
+    expect(res.status).toBe(200);
+    expect((await res.json()).client_secret).toBe('cs_test_123_secret_abc');
+    const tries = calls.filter((c) => /checkout\/sessions/.test(c.url) && c.method === 'POST');
+    expect(tries.map((c) => new URLSearchParams(c.body).get('ui_mode'))).toEqual(['embedded_page', 'embedded']);
+    // The retry carries its own idempotency key, or Stripe would replay the refusal.
+    expect(tries[0].headers['Idempotency-Key']).not.toBe(tries[1].headers['Idempotency-Key']);
+    // Only one draft and one order row for the one order.
+    expect(calls.filter((c) => /api\.printful\.com\/orders\?/.test(c.url)).length).toBe(1);
+    expect(statements.filter((st) => st.sql.startsWith('INSERT INTO orders')).length).toBe(1);
+
+    // A refusal about anything else is not retried.
+    calls = [];
+    stripeFails = true;
+    res = await run(handlePlaceOrder(
+      post('/api/shop/orders', { recipient: RECIPIENT, items: [{ product_id: 502, variant_id: 9101, quantity: 1 }], shipping_id: 'STANDARD', checkout: 'embedded' }, { 'CF-Connecting-IP': '198.51.100.72' }),
+      env(),
+      CORS,
+    ));
+    expect(res.status).toBe(502);
+    expect(calls.filter((c) => /checkout\/sessions/.test(c.url) && c.method === 'POST').length).toBe(1);
+  });
+
   it('adds a gift from the checkout box as its own Stripe line, inside the pinned total', async () => {
     const res = await handlePlaceOrder(
       post('/api/shop/orders', {
@@ -624,7 +660,7 @@ describe('placing an order', () => {
     expect(embedded.status).toBe(200);
     const out = await embedded.json();
     form = new URLSearchParams(call(/checkout\/sessions/, 'POST').body);
-    expect(form.get('ui_mode')).toBe('embedded');
+    expect(form.get('ui_mode')).toBe('embedded_page');
     expect(form.get('return_url')).toBe('https://wizardshit.store/?order=' + encodeURIComponent(out.reference));
     expect(form.get('success_url')).toBeNull();
     expect(form.get('cancel_url')).toBeNull();
