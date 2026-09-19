@@ -255,7 +255,7 @@ async function buildCatalog(env) {
 
 export async function handleProducts(env, ctx, request) {
   const headers = { 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'public, max-age=120' };
-  const status = { shop: shopEnabled(env), donate: donateEnabled(env), mode: confirmOnPayout(env) ? 'payout' : 'payment' };
+  const status = { shop: shopEnabled(env), donate: donateEnabled(env), mode: confirmOnPayout(env) ? 'payout' : 'payment', tax: taxEnabled(env) };
   if (!status.shop) return json({ ...status, products: [] }, 200, headers);
 
   const cache = caches.default;
@@ -487,6 +487,16 @@ export async function handlePlaceOrder(request, env, cors) {
   const subtotal = lines.reduce((n, l) => n + l.unit_price * l.quantity, 0);
   const shipping = chosen.rate;
   const total = subtotal + shipping;
+
+  // The storefront sends the total it showed beside PAY. If live pricing or
+  // the shipping rate has moved since that quote (or the picked rate is gone
+  // and another stood in), refuse rather than charge a figure the customer
+  // never saw; the storefront re-quotes and shows them the new one. Tax, when
+  // on, is added by Stripe on top of both sides, so it is compared pre-tax.
+  const expected = Number(body.expected_total);
+  if (Number.isFinite(expected) && expected !== total) {
+    throw new ShopError('Prices or shipping changed while you were checking out — please review your cart and try again.', 409);
+  }
   const units = lines.reduce((n, l) => n + l.quantity, 0);
   const reference = orderReference('WIZ');
 

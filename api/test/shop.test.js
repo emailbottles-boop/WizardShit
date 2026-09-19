@@ -309,6 +309,44 @@ describe('the catalog', () => {
 });
 
 describe('placing an order', () => {
+  it('refuses when the total the customer saw has moved, before drafting anything', async () => {
+    const res = await run(handlePlaceOrder(
+      post('/api/shop/orders', {
+        recipient: RECIPIENT,
+        items: [
+          { product_id: 501, variant_id: 9003, quantity: 2 },
+          { product_id: 502, variant_id: 9101, quantity: 1 },
+        ],
+        shipping_id: 'STANDARD',
+        expected_total: 9500 + 400 + 499 - 1, // a cent short of live pricing
+      }),
+      env(),
+      CORS,
+    ));
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toMatch(/changed/i);
+    // Refused before anything was drafted or recorded.
+    expect(call(/api\.printful\.com\/orders\?/, 'POST')).toBeUndefined();
+  });
+
+  it('accepts the order when the expected total matches live pricing', async () => {
+    const res = await handlePlaceOrder(
+      post('/api/shop/orders', {
+        recipient: RECIPIENT,
+        items: [
+          { product_id: 501, variant_id: 9003, quantity: 2 },
+          { product_id: 502, variant_id: 9101, quantity: 1 },
+        ],
+        shipping_id: 'STANDARD',
+        expected_total: 9500 + 400 + 499,
+      }),
+      env(),
+      CORS,
+    );
+    expect(res.status).toBe(200);
+    expect((await res.json()).total).toBe(9500 + 400 + 499);
+  });
+
   it('prices from Printful, drafts, records, and hands off to Stripe — in that order', async () => {
     const e = env();
     const res = await handlePlaceOrder(
