@@ -2072,9 +2072,21 @@ function showScreen(screenToShow, pushState = true) {
   }
 }
 
+// A product page only has content once a tile has been opened. A fresh load,
+// refresh or history jump onto /product therefore has nothing to show, so land
+// on the merch grid instead and rewrite the address to match. Going *back* to a
+// product that is already open still works, since its content is still there.
+function screenFor(id) {
+  if (id === 'product' && !document.getElementById('productDetail').childElementCount) {
+    history.replaceState(null, '', '/merch');
+    return merch;
+  }
+  return SCREENS[id] || home;
+}
+
 window.addEventListener('popstate', () => {
   const id = location.pathname.replace(/^\//, '');
-  const screen = SCREENS[id] || home;
+  const screen = screenFor(id);
   if (screen === home) cryptoField.innerHTML = "";
   showScreen(screen, false);
 });
@@ -2082,8 +2094,7 @@ window.addEventListener('popstate', () => {
 // Restore screen from URL on load
 (function() {
   const id = location.pathname.replace(/^\//, '');
-  const screen = SCREENS[id] || home;
-  showScreen(screen, false);
+  showScreen(screenFor(id), false);
 })();
 
 const logo = document.getElementById("logo");
