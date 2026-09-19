@@ -20,6 +20,7 @@
   var shopOpen = false;
   var donateOpen = false;
   var rates = null;    // shipping options for the current cart + address
+  var quotedSubtotal = null; // the Worker's re-priced subtotal from that same quote
   var ratesFor = '';   // fingerprint of what `rates` was quoted for
   var busy = false;
 
@@ -102,7 +103,9 @@
     var allowance = MAX_UNITS - units(variant.id);
     var want = (existing ? existing.qty : 0) + qty;
     var clamped = Math.max(0, Math.min(want, allowance));
-    if (clamped === 0) return false;
+    // Adding nothing (already at the cap) is a refusal, not a success — the
+    // button must say CART IS FULL, not ADDED.
+    if (clamped === 0 || clamped === (existing ? existing.qty : 0)) return false;
     if (existing) {
       existing.qty = clamped;
       // Bring the line up to date rather than freezing it at the price it was
@@ -150,20 +153,26 @@
   // bring every line up to date so the cart never understates what the Worker
   // will charge (it re-prices from Printful regardless).
   function reconcileCart() {
-    var changed = false;
+    var changed = false;   // anything to save back
+    var repriced = false;  // a price moved, so any shipping quote is stale
     cart.forEach(function (l) {
       products.forEach(function (p) {
         if (p.printful_id !== l.product_id) return;
         (p.variants || []).forEach(function (v) {
           if (v.id !== l.variant_id) return;
-          if (l.price !== v.price) { l.price = v.price; changed = true; }
-          l.currency = p.currency;
-          l.title = p.title;
-          if (v.image) l.image = v.image;
+          if (l.price !== v.price) { l.price = v.price; changed = true; repriced = true; }
+          if (l.currency !== p.currency) { l.currency = p.currency; changed = true; }
+          if (l.title !== p.title) { l.title = p.title; changed = true; }
+          if (v.image && l.image !== v.image) { l.image = v.image; changed = true; }
         });
       });
     });
-    if (changed) { rates = null; saveCart(); }
+    // A line whose product is missing from the catalog right now (a transient
+    // Printful hiccup, or hidden by the owner) keeps its stored price as a
+    // preview; the Worker still re-prices it live, and the quoted subtotal
+    // shown before PAY comes from the Worker, so the total is never wrong.
+    if (repriced) rates = null;
+    if (changed) saveCart();
   }
   function updateCount() {
     var n = units();
@@ -449,12 +458,17 @@
     });
 
     var currency = cart[0].currency;
-    document.getElementById('cartSubtotal').textContent = money(subtotal(), currency);
+    // Once the Worker has quoted, its re-priced subtotal is the truth — it is
+    // what the order will be charged, whatever the stored lines say. Before a
+    // quote (and whenever the cart changes, which clears the quote) the stored
+    // prices are the best preview available.
+    var sub = (rates && quotedSubtotal !== null) ? quotedSubtotal : subtotal();
+    document.getElementById('cartSubtotal').textContent = money(sub, currency);
     var shipEl = document.getElementById('cartShipping');
     var totalEl = document.getElementById('cartTotal');
     var picked = rates && rates.filter(function (r) { return r.picked; })[0];
     shipEl.textContent = picked ? money(picked.rate, currency) : 'quoted at checkout';
-    totalEl.textContent = picked ? money(subtotal() + picked.rate, currency) : money(subtotal(), currency) + ' + shipping';
+    totalEl.textContent = picked ? money(sub + picked.rate, currency) : money(sub, currency) + ' + shipping';
     document.getElementById('cartCap').textContent = units() >= MAX_UNITS ? 'That is the most one order can hold (' + MAX_UNITS + '). For more, email us.' : '';
     renderRates();
     if (!shopOpen) setMsg('Checkout is not open yet — the items above are still available on our Printful store.', false);
@@ -509,6 +523,9 @@
       items: cart.map(function (l) { return { product_id: l.product_id, variant_id: l.variant_id, quantity: l.qty }; }),
     }).then(function (d) {
       rates = (d.rates || []).map(function (r, i) { r.picked = i === 0; return r; });
+      // The Worker re-priced every line from Printful to build this quote; keep
+      // its subtotal so the total next to PAY is what the order will charge.
+      quotedSubtotal = typeof d.subtotal === 'number' ? d.subtotal : null;
       // cheapest first, and picked
       rates.sort(function (a, b) { return a.rate - b.rate; });
       rates.forEach(function (r, i) { r.picked = i === 0; });
@@ -684,6 +701,10 @@
 
   updateCount();
   wireCartScreen();
+  // Show the saved cart straight away, before the catalog arrives: a direct
+  // link to /cart activates the screen before this script runs, and a customer
+  // must never see "empty" beside a non-empty count.
+  renderCart();
   document.querySelectorAll('.cart-nav').forEach(function (b) {
     b.addEventListener('click', function () { renderCart(); go('cart'); });
   });
@@ -707,6 +728,7 @@
     .catch(function (e) {
       console.warn('[wiz shop] shop unavailable, keeping links:', e);
       wireDonate();
+      renderCart(); // the saved cart is still theirs, even with the shop unreachable
       handleArrival();
     });
 })();
