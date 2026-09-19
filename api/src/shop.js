@@ -64,16 +64,19 @@ export const MIN_DONATION = 100;
 export const MAX_DONATION = 1000000;
 
 export function shopEnabled(env) {
-  return !!(env.PRINTFUL_TOKEN && env.STRIPE_SECRET_KEY);
+  return !!(cleanSecret(env.PRINTFUL_TOKEN) && cleanSecret(env.STRIPE_SECRET_KEY));
 }
 export function donateEnabled(env) {
-  return !!env.STRIPE_SECRET_KEY;
+  return !!cleanSecret(env.STRIPE_SECRET_KEY);
 }
 /** True on test keys, where no real money moves. Printful has no test mode —
  *  its API always prints and always bills — so test payments never confirm. */
 export function stripeTestMode(env) {
   // Secret keys are sk_…, restricted keys rk_…; either can be a test key.
-  return /^(sk|rk)_test_/.test(String(env.STRIPE_SECRET_KEY || ''));
+  // Read the CLEANED value: cleanSecret() is what authenticates the request,
+  // so a key pasted as "sk_test_…" (quotes and all) talks to the test account
+  // while a raw test here would read false and confirm a real print job.
+  return /^(sk|rk)_test_/.test(cleanSecret(env.STRIPE_SECRET_KEY));
 }
 /** Confirm on payout unless explicitly switched off. */
 export function confirmOnPayout(env) {
@@ -391,6 +394,24 @@ function cleanItems(input) {
  */
 async function priceLines(env, items) {
   const ids = [...new Set(items.map((i) => i.product_id))];
+  // The catalog hides invisible products, but nothing stopped a stale page (or
+  // a crafted POST) from ordering one by variant id. The order path checks too.
+  const shown = await env.DB.prepare('SELECT printful_id FROM merch_items WHERE visible = 1 AND printful_id IS NOT NULL').all();
+  const sellable = new Set((shown.results || []).map((r) => Number(r.printful_id)));
+  // Enforced only when the table actually answered. An empty result means the
+  // catalog could not be read, and refusing every order on a failed read would
+  // turn a hiccup into a closed shop — today there is no check here at all, so
+  // failing open is no worse than the status quo and strictly better when the
+  // rows are there.
+  if (sellable.size) {
+    for (const id of ids) {
+      if (!sellable.has(Number(id))) {
+        throw new ShopError('An item in your cart is no longer for sale. Please review your cart.', 409);
+      }
+    }
+  } else {
+    console.warn('merch_items returned no sellable rows; skipping the visibility check for this order.');
+  }
   const products = new Map();
   await Promise.all(ids.map(async (id) => products.set(id, await productDetail(env, id))));
   const lines = items.map((it) => {
@@ -921,6 +942,21 @@ export async function signForTests(rawBody, secret, tSeconds) {
  * already past draft is reported as such, never re-confirmed, so Stripe's
  * retries can never double-print.
  */
+/**
+ * Every consequential UPDATE in this file carries a status guard. A guard that
+ * matches no row means the recorded state has diverged from reality — the most
+ * expensive case being a garment already at the printer against a row that
+ * still says pending_payment. Returns the row count and shouts if it is zero.
+ */
+async function runGuarded(stmt, what, reference) {
+  const res = await stmt.run();
+  const changes = res && res.meta && typeof res.meta.changes === 'number' ? res.meta.changes : null;
+  if (changes === 0) {
+    console.error('STATE DIVERGED: ' + what + ' matched no row for ' + reference + '. Reality and the order book disagree.');
+  }
+  return changes;
+}
+
 export async function confirmOrder(env, reference) {
   let existing;
   try {
@@ -936,21 +972,28 @@ export async function confirmOrder(env, reference) {
     const confirmed = await printful(env, '/orders/' + existing.id + '/confirm', { method: 'POST' });
     outcome = { status: 'confirmed', orderId: confirmed.id, printfulStatus: confirmed.status || 'pending' };
   }
-  await env.DB.prepare(
-    "UPDATE orders SET status = 'confirmed', printful_order_id = ?, printful_status = ?, confirmed_at = COALESCE(confirmed_at, datetime('now')) WHERE reference = ? AND status IN ('paid', 'confirmed')",
-  )
-    .bind(outcome.orderId, outcome.printfulStatus, reference)
-    .run();
-  return outcome;
+  const changes = await runGuarded(
+    env.DB.prepare(
+      "UPDATE orders SET status = 'confirmed', printful_order_id = ?, printful_status = ?, confirmed_at = COALESCE(confirmed_at, datetime('now')) WHERE reference = ? AND status IN ('paid', 'confirmed')",
+    ).bind(outcome.orderId, outcome.printfulStatus, reference),
+    'confirm',
+    reference,
+  );
+  // Printful is already printing. If the row did not move, say so out loud
+  // rather than answering {confirmed: true} over a book that records nothing.
+  return { ...outcome, recorded: changes !== 0 };
 }
 
 async function markOrderPaid(env, reference, session) {
   const details = session.customer_details || {};
-  await env.DB.prepare(
+  return runGuarded(
+    env.DB.prepare(
     "UPDATE orders SET status = 'paid', paid_at = datetime('now'), stripe_session = ?, stripe_payment_intent = ?, email = CASE WHEN ? <> '' THEN ? ELSE email END WHERE reference = ? AND status IN ('pending_payment', 'payment_failed')",
   )
-    .bind(session.id || '', typeof session.payment_intent === 'string' ? session.payment_intent : '', details.email || '', details.email || '', reference)
-    .run();
+      .bind(session.id || '', typeof session.payment_intent === 'string' ? session.payment_intent : '', details.email || '', details.email || '', reference),
+    'mark-paid',
+    reference,
+  );
 }
 
 async function markDonationPaid(env, reference, session) {
@@ -996,6 +1039,14 @@ export async function chargesInPayout(env, payoutId) {
       const meta = c.metadata || {};
       if (c.refunded) {
         skipped.push({ charge: c.id, reason: 'refunded', order: meta.order_reference || '', donation: meta.donation_reference || '' });
+        continue;
+      }
+      // Stripe sets `refunded` only at 100%. A charge refunded down to pennies
+      // is not money in the bank either: skip it, but do not mark the order
+      // refunded — a human decides what a partial refund meant.
+      if (Number(c.amount_refunded || 0) > 0) {
+        console.warn('charge ' + c.id + ' is partially refunded (' + c.amount_refunded + ' of ' + c.amount + '); not confirming.');
+        skipped.push({ charge: c.id, reason: 'partially-refunded', order: meta.order_reference || '', donation: meta.donation_reference || '' });
         continue;
       }
       if (c.disputed) {
@@ -1054,7 +1105,13 @@ async function handlePayoutPaid(env, payout) {
       const outcome = await confirmOrder(env, o.reference);
       if (outcome.status === 'not-found') {
         console.error('PAID BUT NO ORDER: no Printful draft for ' + o.reference + ' (payout ' + payoutId + ').');
-        await env.DB.prepare("UPDATE orders SET status = 'missing' WHERE reference = ? AND status = 'paid'").bind(o.reference).run();
+        // Guarded on 'paid', so the very race that causes the miss would also
+        // swallow the alarm. runGuarded logs when it matches nothing.
+        await runGuarded(
+          env.DB.prepare("UPDATE orders SET status = 'missing' WHERE reference = ? AND status = 'paid'").bind(o.reference),
+          'flag-missing',
+          o.reference,
+        );
         missing.push(o.reference);
       } else {
         confirmed.push(o.reference);
@@ -1180,13 +1237,30 @@ export async function handleStripeWebhook(request, env) {
  * owner's console, never the value itself. "stray" is true when the stored
  * value carried characters that had to be cleaned off (quotes, a line break).
  */
+/**
+ * Upstream error text, safe to show the owner. Stripe redacts the middle of a
+ * key it rejects but prints the last four in clear, and Printful names the
+ * store and token id; neither belongs on a screen or in a response body.
+ */
+export function redactUpstream(message) {
+  return String(message ?? '')
+    // A whole key-shaped token, however Stripe chose to mask its middle.
+    .replace(/(sk|rk|pk|whsec)_[A-Za-z0-9_*?-]+/g, '$1_…')
+    // A bare tail left after somebody else's asterisks.
+    .replace(/\*{2,}[A-Za-z0-9]+/g, '****')
+    // Long digit runs: store ids, token ids, account ids.
+    .replace(/\d{6,}/g, '…');
+}
+
 export async function adminShopHealth(env) {
   const shape = (raw) => {
     const value = String(raw ?? '');
     const clean = cleanSecret(value);
     return {
       set: clean.length > 0,
-      prefix: clean.slice(0, clean.indexOf('_') > 0 ? clean.indexOf('_') + 1 : 4),
+      // Capped: without a ceiling a key whose first underscore falls late
+      // would hand back most of itself.
+      prefix: clean.slice(0, Math.min(clean.indexOf('_') > 0 ? clean.indexOf('_') + 1 : 4, 8)),
       length: clean.length,
       stray: clean !== value,
       // Keys are plain letters, digits, _ and -; anything else (a lookalike
@@ -1199,7 +1273,7 @@ export async function adminShopHealth(env) {
       await fn();
       return 'ok';
     } catch (e) {
-      return String((e && e.message) || e);
+      return redactUpstream(String((e && e.message) || e));
     }
   };
   const stripeKey = shape(env.STRIPE_SECRET_KEY);
@@ -1304,8 +1378,22 @@ export async function adminDonations(env) {
 /** Turns the module's errors into responses; anything else is rethrown so
  *  the Worker's own catch logs it and returns its generic 500. */
 export function shopErrorResponse(e, cors = {}) {
+  // ShopError messages are ours, written for customers.
   if (e instanceof ShopError) return json({ error: e.message }, e.status, cors);
-  if (e instanceof PrintfulError) return json({ error: e.message }, e.retryable ? 503 : 502, cors);
-  if (e instanceof StripeError) return json({ error: e.message }, e.status >= 500 ? 503 : 502, cors);
+  // Upstream messages are NOT. Stripe's rejection of a key prints its last four
+  // characters in clear, and Printful's errors name the store and token id.
+  // These routes are public, so that detail stays in the log.
+  if (e instanceof PrintfulError) {
+    console.error(e.message);
+    return json(
+      { error: e.retryable ? 'Our print partner is busy — try again in a moment.' : 'We could not price that order right now.' },
+      e.retryable ? 503 : 502,
+      cors,
+    );
+  }
+  if (e instanceof StripeError) {
+    console.error(e.message);
+    return json({ error: 'Payments are having a moment — try again shortly.' }, e.status >= 500 ? 503 : 502, cors);
+  }
   return null;
 }
