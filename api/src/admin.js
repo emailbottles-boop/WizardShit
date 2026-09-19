@@ -947,6 +947,36 @@ export const ADMIN_HTML = `<!DOCTYPE html>
       mode.appendChild(document.createTextNode('Orders go to print the moment the card is charged.'));
     }
     listEl.appendChild(mode);
+    // One click tells the owner whether the keys the worker holds actually
+    // work, without showing the keys.
+    var check = el('button', 'btn', 'CHECK KEYS');
+    check.style.marginBottom = '0.9rem';
+    check.type = 'button';
+    var report = el('div', 'mode-line');
+    report.style.display = 'none';
+    check.addEventListener('click', function () {
+      check.disabled = true;
+      report.style.display = '';
+      report.textContent = 'Asking Stripe and Printful…';
+      api('/api/admin/shop/health').then(function (h) {
+        report.innerHTML = '';
+        var line = function (ok, text) {
+          var d = el('div', '', (ok ? '✓ ' : '✗ ') + text);
+          d.style.color = ok ? '' : '#ff7a7a';
+          report.appendChild(d);
+        };
+        var shapeText = function (k) { return k.set ? k.prefix + '… (' + k.length + ' characters' + (k.stray ? ', stray characters were cleaned off' : '') + ')' : 'not set'; };
+        line(h.stripe.set && h.stripe.live === 'ok', 'Stripe secret key ' + shapeText(h.stripe) + (h.stripe.set ? ' — ' + (h.stripe.live === 'ok' ? 'Stripe accepts it' : h.stripe.live) : ''));
+        line(h.printful.set && h.printful.live === 'ok', 'Printful token ' + shapeText(h.printful) + (h.printful.set ? ' — ' + (h.printful.live === 'ok' ? 'Printful accepts it' : h.printful.live) : ''));
+        line(h.webhook.set && /^whsec_/.test(h.webhook.prefix), 'Stripe webhook secret ' + shapeText(h.webhook));
+        line(h.publishable, 'Publishable key ' + (h.publishable ? 'set (checkout opens on the site)' : 'not set (checkout uses the Stripe page)'));
+        if (h.stripe.test_mode) line(false, 'Stripe is on TEST keys — nothing goes to print.');
+      }).catch(function (e) {
+        report.textContent = e.message;
+      }).then(function () { check.disabled = false; });
+    });
+    listEl.appendChild(check);
+    listEl.appendChild(report);
 
     var rows = orders.orders || [];
     if (!rows.length) {
@@ -964,7 +994,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
       var items = (o.items || []).map(function (it) {
         return it.quantity + '× ' + it.name + (it.option ? ' (' + it.option + ')' : '');
       }).join(', ');
-      card.appendChild(el('div', 'order-line', items + ' · ' + cents(o.total, o.currency) + ' incl. ' + cents(o.shipping, o.currency) + ' shipping' + (o.email ? ' · ' + o.email : '')));
+      card.appendChild(el('div', 'order-line', items + ' · ' + cents(o.total, o.currency) + ' incl. ' + cents(o.shipping, o.currency) + ' shipping' + (o.donation > 0 ? ' + ' + cents(o.donation, o.currency) + ' donation' : '') + (o.email ? ' · ' + o.email : '')));
       var acts = el('div', 'order-actions');
       if (o.printful_order_id) {
         var pf = el('a', '', 'Printful #' + o.printful_order_id);
@@ -1034,6 +1064,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
       var who = el('strong', 'grow', cents(d.amount, d.currency) + ' — ' + (d.name || 'anonymous') + (d.email ? ' · ' + d.email : ''));
       who.appendChild(donationBadge(d));
       if (d.public) who.appendChild(el('span', 'badge', 'OK TO THANK BY NAME'));
+      if (d.source === 'order') who.appendChild(el('span', 'badge', 'WITH ORDER ' + d.reference));
       head.appendChild(who);
       head.appendChild(el('span', 'msg-meta', (d.paid_at || d.created_at || '').slice(0, 16)));
       card.appendChild(head);

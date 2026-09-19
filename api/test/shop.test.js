@@ -2,14 +2,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   MAX_UNITS_PER_ORDER,
   adminConfirmOrder,
+  adminDonations,
+  adminShopHealth,
   chargesInPayout,
+  cleanSecret,
   encodeForm,
+  forgetSchemaForTests,
   formatMoney,
   handleDonate,
   handlePlaceOrder,
   handleProducts,
   handleShipping,
   handleStripeWebhook,
+  orderDonation,
   parseMoney,
   parseVariantName,
   signForTests,
@@ -40,7 +45,11 @@ const PRODUCT = {
 };
 const STICKER = {
   sync_product: { id: 502, name: 'Sticker of Rath', thumbnail_url: 'https://files.cdn.printful.com/rath.png' },
-  sync_variants: [{ id: 9101, variant_id: 5001, name: 'Sticker of Rath - 3″×3″', retail_price: '4.00', currency: 'USD', availability_status: 'active', files: [] }],
+  sync_variants: [
+    { id: 9101, variant_id: 5001, name: 'Sticker of Rath - 3″×3″', retail_price: '4.00', currency: 'USD', availability_status: 'active', files: [] },
+    // Newer payloads carry the axes as fields; the name alone would also parse.
+    { id: 9102, variant_id: 5002, name: 'Sticker of Rath - 5.5″×5.5″', size: '5.5″×5.5″', color: null, retail_price: '6.00', currency: 'USD', availability_status: 'active', files: [] },
+  ],
 };
 
 let calls = [];
@@ -280,7 +289,13 @@ describe('variant names', () => {
     expect(parseVariantName('Unisex Hoodie', 'Unisex Hoodie - Black / L')).toEqual({ color: 'Black', size: 'L' });
     expect(parseVariantName('Wizard Beanie', 'Wizard Beanie - Navy')).toEqual({ color: 'Navy', size: '' });
     expect(parseVariantName('Tee', 'Tee - XL')).toEqual({ color: '', size: 'XL' });
-    expect(parseVariantName('Sticker of Rath', 'Sticker of Rath - 3″×3″')).toEqual({ color: '3″×3″', size: '' });
+    // Measurements are sizes, whatever the marks: 3″×3″, 5.5″×5.5″, 4"x4", 18×24, 12 in.
+    expect(parseVariantName('Sticker of Rath', 'Sticker of Rath - 3″×3″')).toEqual({ color: '', size: '3″×3″' });
+    expect(parseVariantName('Sticker', 'Sticker - 5.5″×5.5″')).toEqual({ color: '', size: '5.5″×5.5″' });
+    expect(parseVariantName('Bumper', 'Bumper - 15″×3.75″')).toEqual({ color: '', size: '15″×3.75″' });
+    expect(parseVariantName('Sticker', 'Sticker - 4"x4"')).toEqual({ color: '', size: '4"x4"' });
+    expect(parseVariantName('Poster', 'Poster - 18×24')).toEqual({ color: '', size: '18×24' });
+    expect(parseVariantName('Poster', 'Poster - White / 12 in')).toEqual({ color: 'White', size: '12 in' });
     expect(parseVariantName('Tote', 'Tote')).toEqual({ color: '', size: '' });
   });
 });
@@ -326,6 +341,9 @@ describe('the catalog', () => {
     expect(hoodie.variants[3].image).toBe('https://files.cdn.printful.com/catalog/gold.jpg');
     expect(data.products[1].sticker).toBe(true);
     expect(data.products[1].variants[0].price).toBe(400);
+    // Sticker sizes are sizes, not colours — one from the name, one from Printful's fields.
+    expect(data.products[1].colors).toEqual([]);
+    expect(data.products[1].sizes).toEqual(['3″×3″', '5.5″×5.5″']);
     // No Printful id: no variants, so the page keeps it as a link.
     expect(data.products[2].variants).toEqual([]);
     expect(data.products[2].url).toContain('printful.me');
@@ -341,6 +359,101 @@ describe('the catalog', () => {
 });
 
 describe('placing an order', () => {
+  it('adds a gift from the checkout box as its own Stripe line, inside the pinned total', async () => {
+    const res = await handlePlaceOrder(
+      post('/api/shop/orders', {
+        recipient: RECIPIENT,
+        items: [{ product_id: 502, variant_id: 9101, quantity: 1 }],
+        shipping_id: 'STANDARD',
+        donation: 500,
+        expected_total: 400 + 499 + 500,
+        expected_currency: 'USD',
+        checkout: 'embedded',
+      }, { 'CF-Connecting-IP': '198.51.100.51' }),
+      env(),
+      CORS,
+    );
+    expect(res.status).toBe(200);
+    const out = await res.json();
+    expect(out.total).toBe(1399);
+    expect(out.donation).toBe(500);
+    const form = new URLSearchParams(call(/checkout\/sessions/, 'POST').body);
+    expect(form.get('line_items[0][price_data][unit_amount]')).toBe('400');
+    expect(form.get('line_items[1][price_data][unit_amount]')).toBe('500');
+    expect(form.get('line_items[1][price_data][product_data][name]')).toMatch(/donation/i);
+    expect(form.get('line_items[1][quantity]')).toBe('1');
+    expect(form.get('line_items[2][quantity]')).toBeNull();
+    expect(form.get('shipping_options[0][shipping_rate_data][fixed_amount][amount]')).toBe('499');
+    expect(form.get('return_url')).toBe('https://wizardshit.store/?order=' + out.reference + '&tip=500');
+    // Printful sees only the items; the gift never becomes a product.
+    const draft = JSON.parse(call(/api\.printful\.com\/orders\?/, 'POST').body);
+    expect(draft.items).toEqual([{ sync_variant_id: 9101, quantity: 1 }]);
+    // Recorded on the order, with the total the card is charged.
+    const insert = statements.find((st) => st.sql.startsWith('INSERT INTO orders'));
+    expect(insert.args[9]).toBe(1399);
+    const gift = statements.find((st) => st.sql.startsWith('UPDATE orders SET donation'));
+    expect(gift.args).toEqual([500, out.reference]);
+  });
+
+  it('with the gift left blank the order is exactly as before', async () => {
+    const res = await handlePlaceOrder(
+      post('/api/shop/orders', {
+        recipient: RECIPIENT,
+        items: [{ product_id: 502, variant_id: 9101, quantity: 1 }],
+        shipping_id: 'STANDARD',
+        donation: null,
+        expected_total: 400 + 499,
+        expected_currency: 'USD',
+      }, { 'CF-Connecting-IP': '198.51.100.52' }),
+      env(),
+      CORS,
+    );
+    expect(res.status).toBe(200);
+    expect((await res.json()).donation).toBe(0);
+    const form = new URLSearchParams(call(/checkout\/sessions/, 'POST').body);
+    expect(form.get('line_items[1][quantity]')).toBeNull();
+    expect(form.get('success_url')).toBe('https://wizardshit.store/?order=' + (await Promise.resolve(statements.find((st) => st.sql.startsWith('INSERT INTO orders')).args[0])));
+    expect(statements.find((st) => st.sql.startsWith('UPDATE orders SET donation'))).toBeUndefined();
+  });
+
+  it('refuses a gift it cannot charge exactly, before drafting anything', async () => {
+    for (const bad of [12.5, -1, '5', 1000001]) {
+      calls = [];
+      const res = await run(handlePlaceOrder(
+        post('/api/shop/orders', {
+          recipient: RECIPIENT,
+          items: [{ product_id: 502, variant_id: 9101, quantity: 1 }],
+          shipping_id: 'STANDARD',
+          donation: bad,
+          expected_total: 899,
+        }, { 'CF-Connecting-IP': '198.51.100.6' + String(bad).length }),
+        env(),
+        CORS,
+      ));
+      expect(res.status, 'donation ' + String(bad)).toBe(400);
+      expect(call(/api\.printful\.com\/orders\?/, 'POST')).toBeUndefined();
+    }
+    expect(orderDonation(undefined)).toBe(0);
+    expect(orderDonation('')).toBe(0);
+    expect(orderDonation(250)).toBe(250);
+  });
+
+  it('a gift that is not in the total the customer saw is refused like any other change', async () => {
+    const res = await run(handlePlaceOrder(
+      post('/api/shop/orders', {
+        recipient: RECIPIENT,
+        items: [{ product_id: 502, variant_id: 9101, quantity: 1 }],
+        shipping_id: 'STANDARD',
+        donation: 500,
+        expected_total: 400 + 499, // the page showed a total without the gift
+      }, { 'CF-Connecting-IP': '198.51.100.53' }),
+      env(),
+      CORS,
+    ));
+    expect(res.status).toBe(409);
+    expect(call(/api\.printful\.com\/orders\?/, 'POST')).toBeUndefined();
+  });
+
   it('refuses when the total the customer saw has moved, before drafting anything', async () => {
     const res = await run(handlePlaceOrder(
       post('/api/shop/orders', {
@@ -851,6 +964,60 @@ describe('donations', () => {
 });
 
 describe('the console', () => {
+  it('cleans a pasted secret of quotes, line breaks and invisible characters', () => {
+    expect(cleanSecret('"rk_live_abc"\r\n')).toBe('rk_live_abc');
+    expect(cleanSecret(" 'whsec_x'\n")).toBe('whsec_x');
+    expect(cleanSecret('\u200brk_live_q\ufeff')).toBe('rk_live_q');
+    expect(cleanSecret('rk_live_q\u00a0')).toBe('rk_live_q');
+    expect(cleanSecret('plain-token')).toBe('plain-token');
+    expect(cleanSecret(undefined)).toBe('');
+  });
+
+  it('reports the shape of each secret and whether the upstream takes it, never the value', async () => {
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = async (url, init) => {
+      const u = String(url);
+      if (u.startsWith('https://api.stripe.com/v1/checkout/sessions')) {
+        const key = (init.headers.Authorization || '').replace('Bearer ', '');
+        return key === 'rk_live_good'
+          ? jsonRes({ object: 'list', data: [] })
+          : jsonRes({ error: { message: 'Invalid API Key provided: rk_live_****????' } }, 401);
+      }
+      if (u === 'https://api.printful.com/store') return pfEnvelope({ id: 1, name: 'Wizard' });
+      return realFetch(url, init);
+    };
+    try {
+      let out = await (await adminShopHealth(env({ STRIPE_SECRET_KEY: '"rk_live_good"\r\n', PRINTFUL_TOKEN: 'pf_fake', STRIPE_WEBHOOK_SECRET: 'whsec_x', STRIPE_PUBLISHABLE_KEY: 'pk_live_1' }))).json();
+      expect(out.stripe).toEqual({ set: true, prefix: 'rk_', length: 12, stray: true, test_mode: false, live: 'ok' });
+      expect(out.printful.live).toBe('ok');
+      expect(out.webhook).toEqual({ set: true, prefix: 'whsec_', length: 7, stray: false });
+      expect(out.publishable).toBe(true);
+      expect(JSON.stringify(out)).not.toContain('rk_live_good');
+      out = await (await adminShopHealth(env({ STRIPE_SECRET_KEY: 'rk_live_bad!', STRIPE_WEBHOOK_SECRET: '' }))).json();
+      expect(out.stripe.live).toMatch(/Invalid API Key/);
+      expect(out.webhook.set).toBe(false);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  it('lists gifts left with an order beside DONATE gifts, and counts both', async () => {
+    forgetSchemaForTests();
+    rows['PRAGMA table_info(orders)'] = [{ name: 'reference' }, { name: 'total' }];
+    rows['FROM donations UNION ALL'] = [
+      { reference: 'GIFT-1', status: 'paid_out', amount: 2500, currency: 'USD', source: 'gift' },
+      { reference: 'WIZ-1', status: 'paid', amount: 500, currency: 'USD', source: 'order' },
+    ];
+    rows["THEN 1 END) AS gifts FROM donations"] = { received: 2500, in_bank: 2500, gifts: 1 };
+    rows['FROM orders WHERE donation > 0'] = { received: 500, in_bank: 0, gifts: 1 };
+    const res = await adminDonations(env());
+    const out = await res.json();
+    expect(out.donations.map((d) => d.reference)).toEqual(['GIFT-1', 'WIZ-1']);
+    expect(out.totals).toEqual({ received: 3000, in_bank: 2500, gifts: 2 });
+    // The column is added in place when an older table lacks it.
+    expect(statements.some((st) => st.sql.startsWith('ALTER TABLE orders ADD COLUMN donation'))).toBe(true);
+  });
+
   it('lets the owner confirm a paid order by hand, and nothing else', async () => {
     rows['SELECT status FROM orders'] = { status: 'paid' };
     const res = await adminConfirmOrder(env(), 'WIZ-HAND');

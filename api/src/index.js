@@ -39,6 +39,7 @@
  *   GET /api/admin/orders             -> recent Printful orders (needs PRINTFUL_TOKEN)
  *   GET /api/admin/printful/products  -> Printful store products (needs PRINTFUL_TOKEN)
  *   GET /api/admin/shop/orders        -> the shop's own order book (paid? printed? paid out?)
+ *   GET /api/admin/shop/health        -> are the Stripe/Printful secrets shaped right, and do they work?
  *   POST /api/admin/shop/orders/<ref>/confirm -> send a paid order to print by hand
  *   GET /api/admin/donations          -> every donation and the running totals
  */
@@ -53,6 +54,8 @@ import {
   adminOrders,
   adminConfirmOrder,
   adminDonations,
+  adminShopHealth,
+  cleanSecret,
   purgeCatalogCache,
   shopErrorResponse,
 } from './shop.js';
@@ -1076,7 +1079,7 @@ async function printfulProxy(env, apiPath) {
       501,
     );
   }
-  const headers = { Authorization: 'Bearer ' + String(env.PRINTFUL_TOKEN).trim() };
+  const headers = { Authorization: 'Bearer ' + cleanSecret(env.PRINTFUL_TOKEN) };
   if (env.PRINTFUL_STORE_ID) headers['X-PF-Store-Id'] = String(env.PRINTFUL_STORE_ID);
   const res = await fetch('https://api.printful.com' + apiPath, { headers });
   let data;
@@ -1647,6 +1650,9 @@ async function route(request, env, ctx, url, path, method) {
         }
         if (method === 'GET' && path === '/api/admin/shop/orders') {
           return adminOrders(env);
+        }
+        if (method === 'GET' && path === '/api/admin/shop/health') {
+          return adminShopHealth(env);
         }
         {
           const m = path.match(/^\/api\/admin\/shop\/orders\/([A-Z0-9-]{4,40})\/confirm$/);
