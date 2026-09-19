@@ -20,6 +20,10 @@
   var shopOpen = false;
   var donateOpen = false;
   var rates = null;    // shipping options for the current cart + address
+  var quotedSubtotal = null; // the Worker's re-priced subtotal from that same quote
+  var quotedCurrency = null; // and the currency it quoted in
+  var catalogLoaded = false; // /api/shop/products has answered (open or closed)
+  var taxOn = false;         // the Worker adds tax at Stripe, on top of the total shown
   var ratesFor = '';   // fingerprint of what `rates` was quoted for
   var busy = false;
 
@@ -102,9 +106,18 @@
     var allowance = MAX_UNITS - units(variant.id);
     var want = (existing ? existing.qty : 0) + qty;
     var clamped = Math.max(0, Math.min(want, allowance));
-    if (clamped === 0) return false;
+    // Adding nothing (already at the cap) is a refusal, not a success — the
+    // button must say CART IS FULL, not ADDED.
+    if (clamped === 0 || clamped === (existing ? existing.qty : 0)) return false;
     if (existing) {
       existing.qty = clamped;
+      // Bring the line up to date rather than freezing it at the price it was
+      // first added at, so what's shown on the page is what lands in the cart.
+      existing.price = variant.price;
+      existing.currency = product.currency;
+      existing.title = product.title;
+      existing.option = [variant.color, variant.size].filter(Boolean).join(' / ');
+      existing.image = variant.image || imageUrl(product.image);
     } else {
       cart.push({
         product_id: product.printful_id,
@@ -138,6 +151,32 @@
   function subtotal() {
     return cart.reduce(function (n, l) { return n + l.price * l.qty; }, 0);
   }
+  // The cart is restored from the browser before the catalog arrives, so a
+  // line can carry a price that has since changed. Once the catalog is in,
+  // bring every line up to date so the cart never understates what the Worker
+  // will charge (it re-prices from Printful regardless).
+  function reconcileCart() {
+    var changed = false;   // anything to save back
+    var repriced = false;  // a price moved, so any shipping quote is stale
+    cart.forEach(function (l) {
+      products.forEach(function (p) {
+        if (p.printful_id !== l.product_id) return;
+        (p.variants || []).forEach(function (v) {
+          if (v.id !== l.variant_id) return;
+          if (l.price !== v.price) { l.price = v.price; changed = true; repriced = true; }
+          if (l.currency !== p.currency) { l.currency = p.currency; changed = true; }
+          if (l.title !== p.title) { l.title = p.title; changed = true; }
+          if (v.image && l.image !== v.image) { l.image = v.image; changed = true; }
+        });
+      });
+    });
+    // A line whose product is missing from the catalog right now (a transient
+    // Printful hiccup, or hidden by the owner) keeps its stored price as a
+    // preview; the Worker still re-prices it live, and the quoted subtotal
+    // shown before PAY comes from the Worker, so the total is never wrong.
+    if (repriced) rates = null;
+    if (changed) saveCart();
+  }
   function updateCount() {
     var n = units();
     var label = n ? String(n) : '';
@@ -148,11 +187,20 @@
 
   /* ---------------------------------------------------------- merch cards --- */
 
+  // A variant fits a selection when each picked axis either matches it or the
+  // variant carries no value for that axis at all — Printful leaves an axis
+  // blank when a product doesn't vary along it (a one-size beanie, a lone
+  // size with no colour), and such a variant must stay pickable and priced.
+  function fits(v, color, size) {
+    return (!color || !v.color || v.color === color) && (!size || !v.size || v.size === size);
+  }
   function pickVariant(product, color, size) {
-    var hits = product.variants.filter(function (v) {
+    var hits = product.variants.filter(function (v) { return fits(v, color, size); });
+    // Prefer an exact match over one that fits only because an axis is blank.
+    var exact = hits.filter(function (v) {
       return (!color || v.color === color) && (!size || v.size === size);
     });
-    return hits[0] || null;
+    return exact[0] || hits[0] || null;
   }
 
   function renderCards() {
@@ -200,10 +248,14 @@
     for (var i = 0; i < vs.length; i++) if (vs[i].image) return vs[i].image;
     return imageUrl(p.image);
   }
-  function priceRange(p) {
-    return p.price_min === p.price_max
-      ? money(p.price_min, p.currency)
-      : money(p.price_min, p.currency) + ' – ' + money(p.price_max, p.currency);
+  // The lowest price among the variants that fit what has been picked so far.
+  // With nothing picked that is the product's lowest price; each pick narrows
+  // it, so the price on the page tracks the selection instead of showing a
+  // range, and lands on the exact price once colour and size are both chosen.
+  function cheapestMatch(p, color, size) {
+    var hits = p.variants.filter(function (v) { return fits(v, color, size); });
+    if (!hits.length) return null;
+    return hits.reduce(function (best, v) { return v.price < best.price ? v : best; });
   }
 
   // Build a Printful-style detail page for one product: big picture, colour
@@ -232,7 +284,7 @@
     var swatches = [];
     var chosenName = null;
     if (p.colors.length > 1) {
-      var colourLabel = el('div', 'product-label', 'COLOUR');
+      var colourLabel = el('div', 'product-label', 'COLOR');
       chosenName = el('span', 'product-chosen', '');
       colourLabel.appendChild(chosenName);
       info.appendChild(colourLabel);
@@ -296,9 +348,10 @@
         addB.disabled = false;
         addB.textContent = 'ADD TO CART';
       } else if (needsColor || needsSize) {
-        priceEl.textContent = priceRange(p);
+        var guess = cheapestMatch(p, chosen.color, chosen.size);
+        priceEl.textContent = guess ? money(guess.price, p.currency) : '';
         addB.disabled = true;
-        addB.textContent = needsColor ? 'PICK A COLOUR' : 'PICK A SIZE';
+        addB.textContent = needsColor ? 'PICK A COLOR' : 'PICK A SIZE';
       } else {
         priceEl.textContent = '';
         addB.disabled = true;
@@ -306,16 +359,19 @@
       }
     }
 
+    var addTimer = null;
     addB.addEventListener('click', function () {
       if (addB.disabled) return;
       var v = pickVariant(p, chosen.color, chosen.size);
       if (!v) return;
+      // One timer at a time, so a second click's message isn't wiped by the first's.
+      clearTimeout(addTimer);
       if (addLine(p, v, qty)) {
         addB.textContent = 'ADDED ✓';
-        setTimeout(function () { addB.textContent = 'ADD TO CART'; }, 1400);
+        addTimer = setTimeout(function () { addB.textContent = 'ADD TO CART'; }, 1400);
       } else {
         addB.textContent = 'CART IS FULL';
-        setTimeout(refresh, 1600);
+        addTimer = setTimeout(refresh, 1600);
       }
     });
 
@@ -353,7 +409,9 @@
     return out;
   }
   function fingerprint(recipient) {
-    return JSON.stringify([recipient.address1, recipient.city, recipient.state_code, recipient.zip, recipient.country_code, cart.map(function (l) { return [l.variant_id, l.qty]; })]);
+    // Everything the quote is computed from: the whole address the Worker
+    // sends to Printful (apartment line included) and the cart.
+    return JSON.stringify([recipient.address1, recipient.address2, recipient.city, recipient.state_code, recipient.zip, recipient.country_code, cart.map(function (l) { return [l.variant_id, l.qty]; })]);
   }
   function setMsg(text, isError) {
     var m = document.getElementById('checkoutMsg');
@@ -407,16 +465,30 @@
       linesEl.appendChild(row);
     });
 
-    var currency = cart[0].currency;
-    document.getElementById('cartSubtotal').textContent = money(subtotal(), currency);
+    // Once the Worker has quoted, its re-priced subtotal (in its currency) is
+    // the truth — it is what the order will be charged, whatever the stored
+    // lines say. Before a quote (and whenever the cart changes, which clears
+    // the quote) the stored prices are the best preview available.
+    var quoted = rates && quotedSubtotal !== null;
+    var currency = (quoted && quotedCurrency) || cart[0].currency;
+    var sub = quoted ? quotedSubtotal : subtotal();
+    document.getElementById('cartSubtotal').textContent = money(sub, currency);
     var shipEl = document.getElementById('cartShipping');
     var totalEl = document.getElementById('cartTotal');
     var picked = rates && rates.filter(function (r) { return r.picked; })[0];
     shipEl.textContent = picked ? money(picked.rate, currency) : 'quoted at checkout';
-    totalEl.textContent = picked ? money(subtotal() + picked.rate, currency) : money(subtotal(), currency) + ' + shipping';
-    document.getElementById('cartCap').textContent = units() >= MAX_UNITS ? 'That is the most one order can hold (' + MAX_UNITS + '). For more, email us.' : '';
+    // Tax, where the owner has switched it on, is added by Stripe on top of
+    // this figure — say so rather than show a total that comes up short.
+    totalEl.textContent = picked
+      ? money(sub + picked.rate, currency) + (taxOn ? ' + tax' : '')
+      : money(sub, currency) + (taxOn ? ' + shipping & tax' : ' + shipping');
+    // The line under the totals is where a customer looks for "why can't I
+    // pay": a closed shop (only once the catalog has actually said so — before
+    // it answers we simply don't know yet) beats the order-cap note.
+    document.getElementById('cartCap').textContent = (catalogLoaded && !shopOpen)
+      ? 'Checkout is not open yet — the items above are still available on our Printful store.'
+      : (units() >= MAX_UNITS ? 'That is the most one order can hold (' + MAX_UNITS + '). For more, email us.' : '');
     renderRates();
-    if (!shopOpen) setMsg('Checkout is not open yet — the items above are still available on our Printful store.', false);
   }
 
   function renderRates() {
@@ -452,7 +524,8 @@
       lab.appendChild(el('span', '', text));
       box.appendChild(lab);
     });
-    pay.disabled = !rates.some(function (r) { return r.picked; });
+    // PAY is only ever offered beside the Worker's own figure.
+    pay.disabled = !rates.some(function (r) { return r.picked; }) || quotedSubtotal === null;
     pay.textContent = 'PAY WITH CARD';
   }
 
@@ -460,6 +533,7 @@
     var recipient = readForm();
     var fp = fingerprint(recipient);
     if (rates && ratesFor === fp) return Promise.resolve();
+    if (busy) return Promise.resolve();
     setMsg('');
     busy = true;
     document.getElementById('payBtn').disabled = true;
@@ -467,6 +541,18 @@
       recipient: recipient,
       items: cart.map(function (l) { return { product_id: l.product_id, variant_id: l.variant_id, quantity: l.qty }; }),
     }).then(function (d) {
+      // The cart or address may have changed while this quote was in flight;
+      // a quote for a cart that no longer exists must never enable PAY.
+      if (fingerprint(readForm()) !== fp) return;
+      // The Worker re-priced every line from Printful to build this quote and
+      // its subtotal is what the order will charge — so a quote without one
+      // is no quote at all.
+      if (typeof d.subtotal !== 'number') throw new Error('The shipping quote came back incomplete — please try again.');
+      quotedSubtotal = d.subtotal;
+      quotedCurrency = d.currency || null;
+      // The quote is live where the products status is cached, so it is the
+      // fresher word on whether Stripe will add tax on top.
+      if (typeof d.tax === 'boolean') taxOn = d.tax;
       rates = (d.rates || []).map(function (r, i) { r.picked = i === 0; return r; });
       // cheapest first, and picked
       rates.sort(function (a, b) { return a.rate - b.rate; });
@@ -495,6 +581,11 @@
       recipient: recipient,
       items: cart.map(function (l) { return { product_id: l.product_id, variant_id: l.variant_id, quantity: l.qty }; }),
       shipping_id: picked.id,
+      // The total beside PAY at this moment. The Worker refuses to charge
+      // anything else, so a price or rate that moved since the quote sends
+      // the customer back to a fresh quote instead of a surprise on the card.
+      expected_total: quotedSubtotal + picked.rate,
+      expected_currency: quotedCurrency,
     }).then(function (d) {
       if (!d.url) throw new Error('No payment page came back.');
       location.href = d.url;
@@ -503,7 +594,11 @@
       setMsg(e.message, true);
       btn.disabled = false;
       btn.textContent = 'PAY WITH CARD';
-      if (/no longer|sold out|cart/i.test(e.message)) { rates = null; }
+      // Whatever went wrong — an item gone, prices or shipping moved, the
+      // address now unshippable, a throttle — PAY must not be offered again
+      // beside the old figures. Drop the quote so the next step is a fresh one.
+      rates = null;
+      renderCart();
     });
   }
 
@@ -643,6 +738,10 @@
 
   updateCount();
   wireCartScreen();
+  // Show the saved cart straight away, before the catalog arrives: a direct
+  // link to /cart activates the screen before this script runs, and a customer
+  // must never see "empty" beside a non-empty count.
+  renderCart();
   document.querySelectorAll('.cart-nav').forEach(function (b) {
     b.addEventListener('click', function () { renderCart(); go('cart'); });
   });
@@ -656,7 +755,10 @@
     .then(function (d) {
       shopOpen = !!d.shop;
       donateOpen = !!d.donate;
+      taxOn = !!d.tax;
+      catalogLoaded = true;
       products = Array.isArray(d.products) ? d.products : [];
+      reconcileCart();
       if (shopOpen) renderCards();
       wireDonate();
       renderCart();
@@ -664,7 +766,9 @@
     })
     .catch(function (e) {
       console.warn('[wiz shop] shop unavailable, keeping links:', e);
+      catalogLoaded = true;
       wireDonate();
+      renderCart(); // the saved cart is still theirs, even with the shop unreachable
       handleArrival();
     });
 })();

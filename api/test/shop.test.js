@@ -309,6 +309,111 @@ describe('the catalog', () => {
 });
 
 describe('placing an order', () => {
+  it('refuses when the total the customer saw has moved, before drafting anything', async () => {
+    const res = await run(handlePlaceOrder(
+      post('/api/shop/orders', {
+        recipient: RECIPIENT,
+        items: [
+          { product_id: 501, variant_id: 9003, quantity: 2 },
+          { product_id: 502, variant_id: 9101, quantity: 1 },
+        ],
+        shipping_id: 'STANDARD',
+        expected_total: 9500 + 400 + 499 - 1, // a cent short of live pricing
+      }),
+      env(),
+      CORS,
+    ));
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toMatch(/changed/i);
+    // Refused before anything was drafted or recorded.
+    expect(call(/api\.printful\.com\/orders\?/, 'POST')).toBeUndefined();
+  });
+
+  it('accepts the order when the expected total matches live pricing', async () => {
+    const res = await handlePlaceOrder(
+      post('/api/shop/orders', {
+        recipient: RECIPIENT,
+        items: [
+          { product_id: 501, variant_id: 9003, quantity: 2 },
+          { product_id: 502, variant_id: 9101, quantity: 1 },
+        ],
+        shipping_id: 'STANDARD',
+        expected_total: 9500 + 400 + 499,
+      }),
+      env(),
+      CORS,
+    );
+    expect(res.status).toBe(200);
+    expect((await res.json()).total).toBe(9500 + 400 + 499);
+  });
+
+  it('leaves an order without a real integer expected_total on live pricing, as before', async () => {
+    // null (what a NaN serialises to), a digit string, a float: none switch
+    // the guard on — they get live pricing, never a lockout.
+    for (const expected_total of [null, '10399', 10399.5]) {
+      const res = await handlePlaceOrder(
+        post('/api/shop/orders', {
+          recipient: RECIPIENT,
+          items: [
+            { product_id: 501, variant_id: 9003, quantity: 2 },
+            { product_id: 502, variant_id: 9101, quantity: 1 },
+          ],
+          shipping_id: 'STANDARD',
+          expected_total,
+        }),
+        env(),
+        CORS,
+      );
+      expect(res.status).toBe(200);
+      expect((await res.json()).total).toBe(9500 + 400 + 499);
+    }
+  });
+
+  it('still stands in a rate for an older storefront that sent no expected total', async () => {
+    const res = await handlePlaceOrder(
+      post('/api/shop/orders', {
+        recipient: RECIPIENT,
+        items: [{ product_id: 502, variant_id: 9101, quantity: 1 }],
+        shipping_id: 'GONE',
+      }),
+      env(),
+      CORS,
+    );
+    expect(res.status).toBe(200);
+  });
+
+  it('refuses when the picked shipping option is gone, rather than standing one in', async () => {
+    const res = await run(handlePlaceOrder(
+      post('/api/shop/orders', {
+        recipient: RECIPIENT,
+        items: [{ product_id: 502, variant_id: 9101, quantity: 1 }],
+        shipping_id: 'GONE',
+        expected_total: 400 + 499,
+      }),
+      env(),
+      CORS,
+    ));
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toMatch(/no longer available/i);
+    expect(call(/api\.printful\.com\/orders\?/, 'POST')).toBeUndefined();
+  });
+
+  it('refuses a currency that is not the one it prices in', async () => {
+    const res = await run(handlePlaceOrder(
+      post('/api/shop/orders', {
+        recipient: RECIPIENT,
+        items: [{ product_id: 502, variant_id: 9101, quantity: 1 }],
+        shipping_id: 'STANDARD',
+        expected_total: 400 + 499,
+        expected_currency: 'EUR',
+      }),
+      env(),
+      CORS,
+    ));
+    expect(res.status).toBe(409);
+    expect(call(/api\.printful\.com\/orders\?/, 'POST')).toBeUndefined();
+  });
+
   it('prices from Printful, drafts, records, and hands off to Stripe — in that order', async () => {
     const e = env();
     const res = await handlePlaceOrder(
