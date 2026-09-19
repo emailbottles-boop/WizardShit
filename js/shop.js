@@ -105,6 +105,13 @@
     if (clamped === 0) return false;
     if (existing) {
       existing.qty = clamped;
+      // Bring the line up to date rather than freezing it at the price it was
+      // first added at, so what's shown on the page is what lands in the cart.
+      existing.price = variant.price;
+      existing.currency = product.currency;
+      existing.title = product.title;
+      existing.option = [variant.color, variant.size].filter(Boolean).join(' / ');
+      existing.image = variant.image || imageUrl(product.image);
     } else {
       cart.push({
         product_id: product.printful_id,
@@ -138,6 +145,26 @@
   function subtotal() {
     return cart.reduce(function (n, l) { return n + l.price * l.qty; }, 0);
   }
+  // The cart is restored from the browser before the catalog arrives, so a
+  // line can carry a price that has since changed. Once the catalog is in,
+  // bring every line up to date so the cart never understates what the Worker
+  // will charge (it re-prices from Printful regardless).
+  function reconcileCart() {
+    var changed = false;
+    cart.forEach(function (l) {
+      products.forEach(function (p) {
+        if (p.printful_id !== l.product_id) return;
+        (p.variants || []).forEach(function (v) {
+          if (v.id !== l.variant_id) return;
+          if (l.price !== v.price) { l.price = v.price; changed = true; }
+          l.currency = p.currency;
+          l.title = p.title;
+          if (v.image) l.image = v.image;
+        });
+      });
+    });
+    if (changed) { rates = null; saveCart(); }
+  }
   function updateCount() {
     var n = units();
     var label = n ? String(n) : '';
@@ -148,11 +175,20 @@
 
   /* ---------------------------------------------------------- merch cards --- */
 
+  // A variant fits a selection when each picked axis either matches it or the
+  // variant carries no value for that axis at all — Printful leaves an axis
+  // blank when a product doesn't vary along it (a one-size beanie, a lone
+  // size with no colour), and such a variant must stay pickable and priced.
+  function fits(v, color, size) {
+    return (!color || !v.color || v.color === color) && (!size || !v.size || v.size === size);
+  }
   function pickVariant(product, color, size) {
-    var hits = product.variants.filter(function (v) {
+    var hits = product.variants.filter(function (v) { return fits(v, color, size); });
+    // Prefer an exact match over one that fits only because an axis is blank.
+    var exact = hits.filter(function (v) {
       return (!color || v.color === color) && (!size || v.size === size);
     });
-    return hits[0] || null;
+    return exact[0] || hits[0] || null;
   }
 
   function renderCards() {
@@ -205,9 +241,7 @@
   // it, so the price on the page tracks the selection instead of showing a
   // range, and lands on the exact price once colour and size are both chosen.
   function cheapestMatch(p, color, size) {
-    var hits = p.variants.filter(function (v) {
-      return (!color || v.color === color) && (!size || v.size === size);
-    });
+    var hits = p.variants.filter(function (v) { return fits(v, color, size); });
     if (!hits.length) return null;
     return hits.reduce(function (best, v) { return v.price < best.price ? v : best; });
   }
@@ -664,6 +698,7 @@
       shopOpen = !!d.shop;
       donateOpen = !!d.donate;
       products = Array.isArray(d.products) ? d.products : [];
+      reconcileCart();
       if (shopOpen) renderCards();
       wireDonate();
       renderCart();
