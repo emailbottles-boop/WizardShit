@@ -84,23 +84,31 @@ function siteUrl(env) {
 /* ---------------------------------------------------------------- money --- */
 
 /** "29.50" -> 2950, without ever touching a float. */
-// Currencies Stripe (and Printful) count in whole units, with no hundredths.
-// Everything else is held in minor units (cents); these are held in their
-// whole unit — which is exactly what Stripe expects as unit_amount for them,
-// so a ¥2,950 tee is 2950, never 295000.
-const ZERO_DECIMAL = new Set(['BIF', 'CLP', 'DJF', 'GNF', 'JPY', 'KMF', 'KRW', 'MGA', 'PYG', 'RWF', 'UGX', 'VND', 'VUV', 'XAF', 'XOF', 'XPF']);
+// Currencies Stripe counts in whole units, with no hundredths. Everything else
+// is held in minor units (cents); these are held in their whole unit — which is
+// exactly what Stripe expects as unit_amount for them, so a ¥2,950 tee is 2950,
+// never 295000. Deliberately NOT here: UGX and ISK, which Stripe still wants
+// scaled by 100 for backwards compatibility, and HUF/TWD, which it charges in
+// hundredths. (Stripe's own list; Printful today only prices in AUD, CAD, EUR,
+// GBP and USD, all ordinary two-decimal currencies.)
+const ZERO_DECIMAL = new Set(['BIF', 'CLP', 'DJF', 'GNF', 'JPY', 'KMF', 'KRW', 'MGA', 'PYG', 'RWF', 'VND', 'VUV', 'XAF', 'XOF', 'XPF']);
+// Currencies Stripe counts in thousandths. Nothing here handles them, and a
+// mishandled one would charge a tenth of the price — so they are refused.
+const THREE_DECIMAL = new Set(['BHD', 'IQD', 'JOD', 'KWD', 'LYD', 'OMR', 'TND']);
 export function minorUnits(currency) {
   return ZERO_DECIMAL.has(String(currency || 'USD').toUpperCase()) ? 1 : 100;
 }
 
 export function parseMoney(text, currency = 'USD') {
+  const code = String(currency || 'USD').toUpperCase();
+  if (THREE_DECIMAL.has(code)) throw new ShopError('Unsupported currency from Printful: ' + code, 502);
   const s = String(text ?? '').trim();
   const m = s.match(/^(-)?(\d+)(?:\.(\d{1,2}))?$/);
   if (!m) throw new ShopError('Unreadable price from Printful: ' + JSON.stringify(text), 502);
   const whole = Number(m[2]);
   const hundredths = Number((m[3] || '').padEnd(2, '0'));
   // A zero-decimal currency has no cents: any stray fraction rounds to the unit.
-  const units = minorUnits(currency) === 1 ? whole + (hundredths >= 50 ? 1 : 0) : whole * 100 + hundredths;
+  const units = minorUnits(code) === 1 ? whole + (hundredths >= 50 ? 1 : 0) : whole * 100 + hundredths;
   return m[1] ? -units : units;
 }
 
@@ -380,7 +388,7 @@ async function quoteRates(env, recipient, lines) {
       items: lines.map((l) => ({ variant_id: l.catalog_id, quantity: l.quantity })),
     },
   });
-  return (rates || []).map((r) => ({
+  const quoted = (rates || []).map((r) => ({
     id: String(r.id),
     name: String(r.name || r.id),
     rate: parseMoney(r.rate, r.currency),
@@ -388,6 +396,15 @@ async function quoteRates(env, recipient, lines) {
     min_days: r.minDeliveryDays ?? null,
     max_days: r.maxDeliveryDays ?? null,
   }));
+  // A rate is added to the items' subtotal and charged under the items'
+  // currency, so it must be quoted in that currency — anything else could be
+  // off by a hundredfold with no error. Printful quotes in the store currency;
+  // refuse rather than assume if it ever does not.
+  const itemCurrency = lines[0].currency;
+  if (quoted.some((r) => r.currency !== itemCurrency)) {
+    throw new ShopError('Shipping was quoted in a different currency than the items.', 502);
+  }
+  return quoted;
 }
 
 async function readJson(request) {

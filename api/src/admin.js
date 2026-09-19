@@ -902,7 +902,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
   function cents(n, currency) {
     var code = String(currency || 'USD').toUpperCase();
     // Currencies counted in whole units (no hundredths) are held and shown as such.
-    var zero = /^(BIF|CLP|DJF|GNF|JPY|KMF|KRW|MGA|PYG|RWF|UGX|VND|VUV|XAF|XOF|XPF)$/.test(code);
+    var zero = /^(BIF|CLP|DJF|GNF|JPY|KMF|KRW|MGA|PYG|RWF|VND|VUV|XAF|XOF|XPF)$/.test(code);
     var v = Math.abs(Number(n) || 0);
     var sign = Number(n) < 0 ? '-' : '';
     var sym = code === 'USD' ? '$' : code + ' ';

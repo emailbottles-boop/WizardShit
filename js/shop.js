@@ -37,7 +37,7 @@
   }
   // Currencies counted in whole units (no hundredths) — held and shown as such,
   // matching the Worker, which holds them the way Stripe charges them.
-  var ZERO_DECIMAL = /^(BIF|CLP|DJF|GNF|JPY|KMF|KRW|MGA|PYG|RWF|UGX|VND|VUV|XAF|XOF|XPF)$/;
+  var ZERO_DECIMAL = /^(BIF|CLP|DJF|GNF|JPY|KMF|KRW|MGA|PYG|RWF|VND|VUV|XAF|XOF|XPF)$/;
   function money(amount, currency) {
     var code = String(currency || 'USD').toUpperCase();
     var sign = amount < 0 ? '-' : '';
