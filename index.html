@@ -939,7 +939,7 @@ form input.invalid {
   justify-content: center;
   overflow: hidden;
 }
-.product-hero img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.product-hero img { width: 100%; height: 100%; object-fit: contain; display: block; transition: transform 0.3s ease; }
 .product-hero { touch-action: pan-y; }
 .product-dots { display: flex; justify-content: center; gap: 0.5rem; margin-top: 0.8rem; }
 .product-dot { width: 8px; height: 8px; border-radius: 999px; background: rgba(255,255,255,0.3); cursor: pointer; transition: background 0.2s ease, transform 0.2s ease; }
@@ -981,6 +981,17 @@ form input.invalid {
   transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
 }
 .product-size:hover { transform: scale(1.04); }
+/* Sizes that are measurements (stickers, posters) show the design itself, scaled
+   with the size, so the options grow and shrink instead of reading as text. */
+.product-size-tile {
+  width: 96px; min-height: 112px; padding: 0.45rem 0.4rem 0.5rem; border-radius: 14px;
+  display: inline-flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 0.35rem;
+  background: #fff; color: #120818; border: 2px solid rgba(180,80,255,0.5);
+}
+.product-size-tile .tile-pic { flex: 1; width: 100%; display: flex; align-items: center; justify-content: center; }
+.product-size-tile img { display: block; height: auto; max-height: 76px; object-fit: contain; transition: width 0.2s ease; }
+.product-size-tile .tile-label { font-size: 0.6rem; letter-spacing: 0.08em; font-weight: 900; white-space: nowrap; }
+.product-size-tile.selected { border-color: #ffe066; background: #fff; color: #120818; box-shadow: 0 0 0 2px rgba(255,224,102,0.55); }
 .product-size.selected { border-color: #ffe066; background: rgba(255,224,102,0.15); color: #ffe066; }
 .product-qty { display: inline-flex; align-items: center; gap: 0.9rem; }
 .qty-btn {
@@ -1080,7 +1091,7 @@ form input.invalid {
   font-size: 0.62rem; font-weight: 900; letter-spacing: 0; line-height: 18px;
   text-align: center;
 }
-.cart-float .count::before { content: none; margin: 0; }
+.cart-float .count::before, .cart-float .count:not(:empty)::before { content: none; margin: 0; }
 @keyframes cartPop { from { transform: scale(0.4); opacity: 0; } to { transform: scale(1); opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .cart-float { animation: none; } }
 /* Show it while browsing; keep it off the landing, the cart page and the thank-you page. */
@@ -1163,6 +1174,24 @@ body[data-screen="donators"] .cart-float-wrap { display: block; }
 .ship-name { font-weight: 900; letter-spacing: 0.15em; text-transform: uppercase; }
 .ship-days { font-size: 0.62rem; opacity: 0.75; }
 .ship-price { flex: none; font-weight: 900; color: #ffe066; letter-spacing: 0.08em; white-space: nowrap; }
+.tip-box { width: 100%; max-width: 420px; display: flex; flex-direction: column; gap: 0.5rem; align-items: stretch; text-align: left; }
+.tip-label { font-size: 0.62rem; letter-spacing: 0.22em; font-weight: 800; opacity: 0.9; }
+.tip-opt { opacity: 0.6; font-weight: 600; letter-spacing: 0.15em; }
+.tip-row {
+  display: flex; align-items: center; gap: 0.6rem;
+  padding: 0.2rem 0.2rem 0.2rem 1rem; border-radius: 14px;
+  border: 1.5px solid rgba(180,80,255,0.5); background: rgba(255,255,255,0.06);
+  transition: border-color 0.2s ease;
+}
+.tip-row:focus-within { border-color: rgba(255,220,120,0.85); }
+.tip-cur { font-weight: 900; color: #ffe066; letter-spacing: 0.08em; }
+.tip-row input {
+  flex: 1; min-width: 0; padding: 0.7rem 0.8rem; border: none; background: transparent; color: #fff;
+  font-family: inherit; font-size: 0.85rem; letter-spacing: 0.1em; font-weight: 800; outline: none;
+}
+.tip-row input::placeholder { color: rgba(255,255,255,0.35); font-weight: 600; }
+.tip-note { font-size: 0.6rem; letter-spacing: 0.1em; opacity: 0.7; line-height: 1.5; }
+.cart-tip-row { color: #ffe066; }
 .shop-msg { display: none; font-size: 0.68rem; letter-spacing: 0.12em; text-align: center; opacity: 0.85; max-width: 600px; margin: 0 auto; line-height: 1.5; }
 /* An error message must show even when it's dropped straight into the page (e.g. the
    "cannot ship there" note), since .shop-msg is hidden by default. */
@@ -1702,6 +1731,7 @@ input:focus-visible {
     <div class="cart-totals" id="cartTotals" style="display: none;">
       <span>SUBTOTAL</span><span id="cartSubtotal"></span>
       <span>SHIPPING</span><span id="cartShipping"></span>
+      <span class="cart-tip-row" id="cartDonationLabel" style="display: none;">DONATION</span><span class="cart-tip-row" id="cartDonation" style="display: none;"></span>
       <span class="grand">TOTAL</span><span class="grand" id="cartTotal"></span>
       <span class="cart-cap" id="cartCap"></span>
     </div>
@@ -1720,6 +1750,15 @@ input:focus-visible {
         <input name="phone" type="tel" class="full" placeholder="PHONE (OPTIONAL, FOR THE COURIER)" autocomplete="tel" maxlength="40">
         <div class="pay">
           <div class="ship-options" id="shipOptions"></div>
+          <!-- LAST STEP: an optional gift. Blank means none; the Worker charges it as its own line. -->
+          <div class="tip-box" id="tipBox" style="display: none;">
+            <label class="tip-label" for="tipAmount">ADD A DONATION <span class="tip-opt">(OPTIONAL — LEAVE BLANK TO SKIP)</span></label>
+            <div class="tip-row">
+              <span class="tip-cur" id="tipCur">$</span>
+              <input id="tipAmount" name="donation" type="text" inputmode="decimal" placeholder="0.00" maxlength="12" autocomplete="off" aria-describedby="tipNote">
+            </div>
+            <div class="tip-note" id="tipNote">Goes to keeping the wizards animated. It rides on the same payment and shows on your receipt.</div>
+          </div>
           <div class="shop-msg" id="checkoutMsg"></div>
           <button class="btn" type="submit" id="payBtn">GET SHIPPING OPTIONS</button>
           <div class="shop-note">You'll pay securely on Stripe. Your order goes to print once your payment settles, usually within a few business days, and every piece is printed to order.</div>
@@ -2353,7 +2392,7 @@ if (window.innerWidth <= 900) {
 <script src="/js/show-link.js"></script>
 <script src="/js/config.js"></script>
 <script src="/js/content.js" defer></script>
-<script src="/js/shop.js?v=11" defer></script>
+<script src="/js/shop.js?v=12" defer></script>
 <script src="/js/message-widget.js" defer></script>
 
 <script>
