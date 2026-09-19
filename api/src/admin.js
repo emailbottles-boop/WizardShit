@@ -189,6 +189,17 @@ export const ADMIN_HTML = `<!DOCTYPE html>
   #loginErr { color: var(--danger); font-size: 0.78rem; margin-top: 0.7rem; display: none; }
 
   .empty { text-align: center; color: var(--muted); padding: 2.5rem 1rem; font-size: 0.85rem; }
+  .badge { display: inline-block; padding: 0.15rem 0.55rem; border-radius: 999px; font-size: 0.7rem; font-weight: 700; letter-spacing: 0.04em; border: 1px solid var(--border-strong); color: var(--muted); margin-left: 0.4rem; white-space: nowrap; }
+  .badge.good { color: #7ff0a8; border-color: rgba(127,240,168,0.5); }
+  .badge.wait { color: #ffe066; border-color: rgba(255,224,102,0.5); }
+  .badge.bad { color: #ff7f9c; border-color: rgba(255,127,156,0.5); }
+  .mode-line { font-size: 0.8rem; color: var(--muted); padding: 0.6rem 0.9rem; border: 1px dashed var(--border-strong); border-radius: var(--radius); margin-bottom: 0.9rem; line-height: 1.5; }
+  .mode-line strong { color: var(--text); }
+  .order-actions { display: flex; gap: 0.5rem; align-items: center; margin-top: 0.5rem; flex-wrap: wrap; }
+  .totals-row { display: flex; gap: 1.2rem; flex-wrap: wrap; margin-bottom: 0.9rem; }
+  .totals-row .stat { flex: 1; min-width: 140px; padding: 0.8rem 1rem; border-radius: var(--radius); background: var(--card); border: 1px solid var(--border); }
+  .totals-row .stat .n { font-size: 1.3rem; font-weight: 700; display: block; }
+  .totals-row .stat .l { font-size: 0.72rem; color: var(--muted); letter-spacing: 0.04em; }
 
   /* photo framing sliders */
   .framing { display: flex; gap: 1rem; align-items: center; }
@@ -281,6 +292,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
     <button class="tab" data-tab="messages">Messages</button>
     <button class="tab" data-tab="signups">Signups</button>
     <button class="tab" data-tab="orders">Orders</button>
+    <button class="tab" data-tab="donations">Donations</button>
     <button class="tab" data-tab="analytics">Analytics</button>
   </nav>
 
@@ -324,7 +336,9 @@ export const ADMIN_HTML = `<!DOCTYPE html>
   var state = { merch: [], credits: [], donators: [] };
   var inbox = null;        // fetched on first visit to MESSAGES
   var signups = null;      // fetched on first visit to SIGNUPS
-  var orders = null;       // fetched on first visit to ORDERS
+  var orders = null;       // fetched on first visit to ORDERS ({ orders, mode, test_mode })
+  var donations = null;    // fetched on first visit to DONATIONS
+  var pfLoading = false;   // Printful product list, shared by the picker + import panel
   var stats = null;        // fetched on first visit to ANALYTICS
   var statRange = '30d';   // '30d' | '12m'
   var googleReady = false;
@@ -698,11 +712,55 @@ export const ADMIN_HTML = `<!DOCTYPE html>
     return card;
   }
 
+  // Which Printful product a card sells. Set, the card on the site gets its
+  // colours, sizes, price and an ADD TO CART button; unset, it stays a link.
+  function pfPicker(item) {
+    var box = el('div', 'full');
+    box.appendChild(el('label', '', 'Sold on the site as (Printful product)'));
+    var sel = el('select');
+    var none = el('option', '', pfProducts === null ? 'Loading Printful products\u2026' : '\u2014 link only, not sold on the site \u2014');
+    none.value = '';
+    sel.appendChild(none);
+    if (Array.isArray(pfProducts)) {
+      pfProducts.forEach(function (p) {
+        var o = el('option', '', p.name);
+        o.value = String(p.id);
+        if (item.printful_id && Number(item.printful_id) === Number(p.id)) o.selected = true;
+        sel.appendChild(o);
+      });
+      if (item.printful_id && !pfProducts.some(function (p) { return Number(p.id) === Number(item.printful_id); })) {
+        var gone = el('option', '', 'Printful product #' + item.printful_id + ' (no longer in the store)');
+        gone.value = String(item.printful_id);
+        gone.selected = true;
+        sel.appendChild(gone);
+      }
+    } else if (typeof pfProducts === 'string') {
+      none.textContent = pfProducts;
+    }
+    sel.addEventListener('change', function () {
+      item.printful_id = sel.value ? Number(sel.value) : null;
+      setDirty(true);
+    });
+    box.appendChild(sel);
+    if (pfProducts === null) loadPfProducts();
+    return box;
+  }
+
+  function loadPfProducts() {
+    if (pfLoading) return;
+    pfLoading = true;
+    api('/api/admin/printful/products')
+      .then(function (d) { pfProducts = d.result || []; })
+      .catch(function (e) { if (e.message !== 'login required') pfProducts = e.message; })
+      .then(function () { pfLoading = false; render(); });
+  }
+
   function renderMerch() {
     state.merch.forEach(function (item, i) {
       var body = el('div', 'fields');
       body.appendChild(field('Title', item.title, function (v) { item.title = v; }));
-      body.appendChild(field('Printful link', item.url, function (v) { item.url = v; }));
+      body.appendChild(field('Printful link (fallback while the shop is closed)', item.url, function (v) { item.url = v; }));
+      body.appendChild(pfPicker(item));
       body.appendChild(imageField('Product image', item, 'image', !!item.sticker));
       var checks = el('div', 'checks full');
       checks.appendChild(checkbox('sticker style', item.sticker, function (v) { item.sticker = v ? 1 : 0; }));
@@ -828,56 +886,152 @@ export const ADMIN_HTML = `<!DOCTYPE html>
     });
   }
 
-  /* ---- printful orders ---- */
+  /* ---- the shop's orders ---- */
   function loadOrders() {
     ordersError = '';
-    api('/api/admin/orders')
-      .then(function (d) { orders = d.result || []; render(); })
+    api('/api/admin/shop/orders')
+      .then(function (d) { orders = d; render(); })
       .catch(function (e) {
         if (e.message === 'login required') return;
-        orders = [];
+        orders = { orders: [] };
         ordersError = e.message;
         render();
       });
   }
 
+  function cents(n, currency) {
+    var v = Math.abs(Number(n) || 0);
+    var whole = Math.floor(v / 100);
+    var frac = String(v % 100);
+    if (frac.length < 2) frac = '0' + frac;
+    return (Number(n) < 0 ? '-' : '') + ((currency || 'USD') === 'USD' ? '$' : currency + ' ') + whole.toLocaleString('en-US') + '.' + frac;
+  }
+
+  function orderBadge(o) {
+    if (o.status === 'confirmed') return el('span', 'badge good', 'PRINTING · ' + (o.printful_status || 'pending'));
+    if (o.status === 'paid') return el('span', 'badge wait', o.stripe_payout ? 'PAID · IN BANK' : 'PAID · WAITING FOR PAYOUT');
+    if (o.status === 'pending_payment') return el('span', 'badge', 'NOT PAID (abandoned checkout)');
+    if (o.status === 'payment_failed') return el('span', 'badge bad', 'PAYMENT FAILED');
+    if (o.status === 'refunded') return el('span', 'badge bad', 'REFUNDED');
+    if (o.status === 'missing') return el('span', 'badge bad', 'PAID BUT NO PRINTFUL ORDER — fulfil by hand');
+    return el('span', 'badge', o.status);
+  }
+
   function renderOrders() {
     if (orders === null) {
-      listEl.appendChild(el('div', 'empty', 'Asking Printful\\u2026'));
+      listEl.appendChild(el('div', 'empty', 'Fetching the order book…'));
       return;
     }
     if (ordersError) {
       listEl.appendChild(el('div', 'empty', ordersError));
       return;
     }
-    if (!orders.length) {
+    var mode = el('div', 'mode-line');
+    if (!orders.shop) {
+      mode.appendChild(el('strong', '', 'Shop closed. '));
+      mode.appendChild(document.createTextNode('Cards on the site link out to Printful until PRINTFUL_TOKEN and STRIPE_SECRET_KEY are set on the worker.'));
+    } else if (orders.test_mode) {
+      mode.appendChild(el('strong', '', 'Stripe is on TEST keys. '));
+      mode.appendChild(document.createTextNode('Nothing will be sent to print.'));
+    } else if (orders.mode === 'payout') {
+      mode.appendChild(el('strong', '', 'Confirm on payout. '));
+      mode.appendChild(document.createTextNode('A paid order waits as a Printful draft until Stripe has paid that money into the bank, then goes to print on its own. CONFIRM sends one to print now instead.'));
+    } else {
+      mode.appendChild(el('strong', '', 'Confirm on payment. '));
+      mode.appendChild(document.createTextNode('Orders go to print the moment the card is charged.'));
+    }
+    listEl.appendChild(mode);
+
+    var rows = orders.orders || [];
+    if (!rows.length) {
       listEl.appendChild(el('div', 'empty', 'No orders yet. Go make Rathew famous.'));
       return;
     }
-    orders.forEach(function (o) {
-      var card = el('div', 'item');
+    rows.forEach(function (o) {
+      var card = el('div', 'item' + (o.status === 'pending_payment' ? ' hidden-item' : ''));
       var head = el('div', 'item-head');
-      head.appendChild(el('strong', 'grow', '#' + o.id + ' \\u2014 ' + ((o.recipient && o.recipient.name) || 'unknown')));
-      head.appendChild(el('span', 'msg-meta', (o.status || '') + (o.created ? ' \\u00B7 ' + new Date(o.created * 1000).toLocaleDateString() : '')));
+      var who = el('strong', 'grow', o.reference + ' — ' + (o.name || 'unknown') + (o.place ? ' · ' + o.place : ''));
+      who.appendChild(orderBadge(o));
+      head.appendChild(who);
+      head.appendChild(el('span', 'msg-meta', (o.created_at || '').slice(0, 16)));
       card.appendChild(head);
-      var items = (o.items || []).map(function (it) { return it.quantity + '\\u00D7 ' + it.name; }).join(', ');
-      var line = el('div', 'order-line', items);
-      card.appendChild(line);
-      (o.shipments || []).forEach(function (s) {
-        if (!s.tracking_number) return;
-        var t = el('div', 'order-line');
-        t.appendChild(document.createTextNode((s.carrier || 'tracking') + ': '));
-        if (s.tracking_url) {
-          var a = el('a', '', s.tracking_number);
-          a.href = s.tracking_url;
-          a.target = '_blank';
-          a.rel = 'noopener';
-          t.appendChild(a);
-        } else {
-          t.appendChild(document.createTextNode(s.tracking_number));
-        }
-        card.appendChild(t);
-      });
+      var items = (o.items || []).map(function (it) {
+        return it.quantity + '× ' + it.name + (it.option ? ' (' + it.option + ')' : '');
+      }).join(', ');
+      card.appendChild(el('div', 'order-line', items + ' · ' + cents(o.total, o.currency) + ' incl. ' + cents(o.shipping, o.currency) + ' shipping' + (o.email ? ' · ' + o.email : '')));
+      var acts = el('div', 'order-actions');
+      if (o.printful_order_id) {
+        var pf = el('a', '', 'Printful #' + o.printful_order_id);
+        pf.href = 'https://www.printful.com/dashboard/default/orders/' + o.printful_order_id;
+        pf.target = '_blank';
+        pf.rel = 'noopener';
+        pf.style.fontSize = '0.8rem';
+        acts.appendChild(pf);
+      }
+      if (o.status === 'paid') {
+        var cB = el('button', 'btn primary', 'Confirm — send to print now');
+        cB.onclick = function () {
+          if (!window.confirm('Send ' + o.reference + ' to print now? Printful bills for it the moment it confirms.')) return;
+          cB.disabled = true;
+          api('/api/admin/shop/orders/' + encodeURIComponent(o.reference) + '/confirm', { method: 'POST' })
+            .then(function () { toast('Confirmed — Printful is printing it'); orders = null; render(); loadOrders(); })
+            .catch(function (e) { cB.disabled = false; if (e.message !== 'login required') toast(e.message, true); });
+        };
+        acts.appendChild(cB);
+      }
+      if (acts.childNodes.length) card.appendChild(acts);
+      listEl.appendChild(card);
+    });
+  }
+
+  /* ---- donations ---- */
+  function loadDonations() {
+    api('/api/admin/donations')
+      .then(function (d) { donations = d; render(); })
+      .catch(function (e) { if (e.message !== 'login required') toast(e.message, true); });
+  }
+
+  function donationBadge(d) {
+    if (d.status === 'paid_out') return el('span', 'badge good', 'IN BANK');
+    if (d.status === 'paid') return el('span', 'badge wait', 'PAID · ON ITS WAY TO THE BANK');
+    if (d.status === 'pending') return el('span', 'badge', 'NOT COMPLETED');
+    if (d.status === 'refunded') return el('span', 'badge bad', 'REFUNDED');
+    if (d.status === 'failed') return el('span', 'badge bad', 'FAILED');
+    return el('span', 'badge', d.status);
+  }
+
+  function renderDonations() {
+    if (donations === null) {
+      listEl.appendChild(el('div', 'empty', 'Counting the gifts…'));
+      return;
+    }
+    var t = donations.totals || {};
+    var totals = el('div', 'totals-row');
+    [['Received', cents(t.received)], ['In the bank', cents(t.in_bank)], ['Gifts', String(t.gifts || 0)]].forEach(function (pair) {
+      var st = el('div', 'stat');
+      st.appendChild(el('span', 'n', pair[1]));
+      st.appendChild(el('span', 'l', pair[0]));
+      totals.appendChild(st);
+    });
+    listEl.appendChild(totals);
+    if (!donations.donate) {
+      listEl.appendChild(el('div', 'mode-line', 'Donations through the site are off until STRIPE_SECRET_KEY is set on the worker; the DONATE buttons use the old link meanwhile.'));
+    }
+    var rows = donations.donations || [];
+    if (!rows.length) {
+      listEl.appendChild(el('div', 'empty', 'No donations yet.'));
+      return;
+    }
+    rows.forEach(function (d) {
+      var card = el('div', 'item' + (d.status === 'pending' || d.status === 'failed' ? ' hidden-item' : ''));
+      var head = el('div', 'item-head');
+      var who = el('strong', 'grow', cents(d.amount, d.currency) + ' — ' + (d.name || 'anonymous') + (d.email ? ' · ' + d.email : ''));
+      who.appendChild(donationBadge(d));
+      if (d.public) who.appendChild(el('span', 'badge', 'OK TO THANK BY NAME'));
+      head.appendChild(who);
+      head.appendChild(el('span', 'msg-meta', (d.paid_at || d.created_at || '').slice(0, 16)));
+      card.appendChild(head);
+      if (d.message) card.appendChild(el('div', 'order-line', '“' + d.message + '”'));
       listEl.appendChild(card);
     });
   }
@@ -1038,6 +1192,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
           sticker: /sticker/i.test(p.name) ? 1 : 0,
           row_break: 0,
           visible: 1,
+          printful_id: p.id,
         });
         setDirty(true);
         render();
@@ -1058,7 +1213,8 @@ export const ADMIN_HTML = `<!DOCTYPE html>
     donators: 'The list of names thanked in the DONATORS section of the website.',
     messages: 'Messages people sent you from the box on the website. Each one comes with the sender\\u2019s email so you can write back.',
     signups: 'Everyone who put their email in the signup box on the website \\u2014 your mailing list. Download it as a CSV.',
-    orders: 'Live orders pulled straight from your Printful account: what sold, to who, and where it is in shipping.',
+    orders: 'Every order placed on the website: who bought what, whether they paid, whether the money has reached the bank, and whether Printful is printing it yet.',
+    donations: 'Every donation made through the DONATE button: who gave, how much, and whether it has reached the bank. Add names you want to thank to the DONATORS tab.',
     analytics: 'How much traffic the website is getting \\u2014 visits per day for the last month, or per month for the last year.'
   };
 
@@ -1076,6 +1232,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
     else if (tab === 'donators') renderDonators();
     else if (tab === 'messages') { renderMessages(); return; }
     else if (tab === 'signups') { renderSignups(); return; }
+    else if (tab === 'donations') { renderDonations(); return; }
     else if (tab === 'analytics') { renderAnalytics(); return; }
     else { renderOrders(); return; }
     if (!state[tab].length) {
@@ -1093,6 +1250,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
       if (tab === 'messages' && inbox === null) loadInbox();
       if (tab === 'signups' && signups === null) loadSignups();
       if (tab === 'orders' && orders === null) loadOrders();
+      if (tab === 'donations' && donations === null) loadDonations();
       if (tab === 'analytics' && stats === null) loadStats();
     };
   });
@@ -1101,19 +1259,13 @@ export const ADMIN_HTML = `<!DOCTYPE html>
     pfOpen = !pfOpen;
     render();
     if (pfOpen && pfProducts === null) {
-      api('/api/admin/printful/products')
-        .then(function (d) { pfProducts = d.result || []; render(); })
-        .catch(function (e) {
-          if (e.message === 'login required') return;
-          pfProducts = e.message;
-          render();
-        });
+      loadPfProducts();
     }
   };
 
   document.getElementById('addBtn').onclick = function () {
     var fresh;
-    if (tab === 'merch') fresh = { title: '', url: 'https://wizard.printful.me/product/', image: '', sticker: 0, row_break: 0, visible: 1 };
+    if (tab === 'merch') fresh = { title: '', url: 'https://wizard.printful.me/product/', image: '', sticker: 0, row_break: 0, visible: 1, printful_id: null };
     else if (tab === 'credits') fresh = { name: '', roles: '', photo: '', photo_css: '', back_text: '', back_quote: 0, back_show_name: 0, visible: 1 };
     else fresh = { name: '', visible: 1 };
     state[tab].unshift(fresh);
@@ -1125,6 +1277,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
     if (tab === 'messages') { inbox = null; render(); loadInbox(); return; }
     if (tab === 'signups') { signups = null; render(); loadSignups(); return; }
     if (tab === 'orders') { orders = null; render(); loadOrders(); return; }
+    if (tab === 'donations') { donations = null; render(); loadDonations(); return; }
     if (tab === 'analytics') { stats = null; render(); loadStats(); return; }
     if (dirty && !confirm('Throw away unsaved changes and reload?')) return;
     load();

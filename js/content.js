@@ -50,6 +50,9 @@
   function renderMerch(items) {
     var grid = document.querySelector('#merch .merch-grid');
     if (!grid || !items.length) return;
+    // With the shop open, js/shop.js draws these cards with pickers and
+    // add-to-cart buttons; the plain links here would only overwrite them.
+    if (grid.dataset.shop === '1') return;
     var frag = document.createDocumentFragment();
     items.forEach(function (item) {
       var a = el('a', 'merch-feature' + (item.row_break ? ' merch-break' : ''));
