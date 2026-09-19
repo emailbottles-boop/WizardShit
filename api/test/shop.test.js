@@ -72,6 +72,7 @@ function installFetch() {
     if (url.startsWith('https://api.printful.com/shipping/rates')) {
       return pfEnvelope([
         { id: 'STANDARD', name: 'Flat Rate', rate: '4.99', currency: 'USD', minDeliveryDays: 3, maxDeliveryDays: 7 },
+        { id: 'STANDARD_CO2', name: 'Standard with CO2 offsetting', rate: '4.99', currency: 'USD', minDeliveryDays: 3, maxDeliveryDays: 7 },
         { id: 'EXPRESS', name: 'Express', rate: '14.99', currency: 'USD', minDeliveryDays: 1, maxDeliveryDays: 3 },
       ]);
     }
@@ -628,10 +629,44 @@ describe('placing an order', () => {
     const res = await handleShipping(post('/api/shop/shipping', { recipient: { ...RECIPIENT, email: undefined, name: undefined }, items: [{ product_id: 501, variant_id: 9001, quantity: 1 }] }), env(), CORS);
     const out = await res.json();
     expect(out.subtotal).toBe(4500);
+    // Printful's carbon-offset twin of the standard service is not offered.
     expect(out.rates.map((r) => [r.id, r.rate])).toEqual([
       ['STANDARD', 499],
       ['EXPRESS', 1499],
     ]);
+  });
+
+  it('never lets an order ride the carbon-offset rate, even when named directly', async () => {
+    const res = await run(handlePlaceOrder(
+      post('/api/shop/orders', {
+        recipient: RECIPIENT,
+        items: [{ product_id: 502, variant_id: 9101, quantity: 1 }],
+        shipping_id: 'STANDARD_CO2',
+        expected_total: 400 + 499,
+        expected_currency: 'USD',
+      }, { 'CF-Connecting-IP': '198.51.100.41' }),
+      env(),
+      CORS,
+    ));
+    // The pinned-total guard sees the pick is gone and refuses before drafting.
+    expect(res.status).toBe(409);
+    expect(call(/api\.printful\.com\/orders\?/, 'POST')).toBeUndefined();
+  });
+
+  it('still offers a carbon-offset rate when it is the only way to ship', async () => {
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = async (url, init) => {
+      if (String(url).startsWith('https://api.printful.com/shipping/rates')) {
+        return pfEnvelope([{ id: 'STANDARD_CO2', name: 'Standard with CO2 offsetting', rate: '4.99', currency: 'USD', minDeliveryDays: 3, maxDeliveryDays: 7 }]);
+      }
+      return realFetch(url, init);
+    };
+    try {
+      const res = await handleShipping(post('/api/shop/shipping', { recipient: { ...RECIPIENT, email: undefined, name: undefined }, items: [{ product_id: 502, variant_id: 9101, quantity: 1 }] }), env(), CORS);
+      expect((await res.json()).rates.map((r) => r.id)).toEqual(['STANDARD_CO2']);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
   });
 });
 
