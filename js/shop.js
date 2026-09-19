@@ -140,8 +140,9 @@
   }
   function updateCount() {
     var n = units();
-    var badge = document.getElementById('cartCount');
-    if (badge) badge.textContent = n ? String(n) : '';
+    var label = n ? String(n) : '';
+    // Every cart button (the merch header one and the floating one) carries a .count span.
+    document.querySelectorAll('.cart-nav .count').forEach(function (el) { el.textContent = label; });
     document.querySelectorAll('.cart-nav').forEach(function (b) { b.classList.toggle('has-items', n > 0); });
   }
 
