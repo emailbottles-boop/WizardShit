@@ -200,10 +200,16 @@
     for (var i = 0; i < vs.length; i++) if (vs[i].image) return vs[i].image;
     return imageUrl(p.image);
   }
-  function priceRange(p) {
-    return p.price_min === p.price_max
-      ? money(p.price_min, p.currency)
-      : money(p.price_min, p.currency) + ' – ' + money(p.price_max, p.currency);
+  // The lowest price among the variants that fit what has been picked so far.
+  // With nothing picked that is the product's lowest price; each pick narrows
+  // it, so the price on the page tracks the selection instead of showing a
+  // range, and lands on the exact price once colour and size are both chosen.
+  function cheapestMatch(p, color, size) {
+    var hits = p.variants.filter(function (v) {
+      return (!color || v.color === color) && (!size || v.size === size);
+    });
+    if (!hits.length) return null;
+    return hits.reduce(function (best, v) { return v.price < best.price ? v : best; });
   }
 
   // Build a Printful-style detail page for one product: big picture, colour
@@ -232,7 +238,7 @@
     var swatches = [];
     var chosenName = null;
     if (p.colors.length > 1) {
-      var colourLabel = el('div', 'product-label', 'COLOUR');
+      var colourLabel = el('div', 'product-label', 'COLOR');
       chosenName = el('span', 'product-chosen', '');
       colourLabel.appendChild(chosenName);
       info.appendChild(colourLabel);
@@ -296,9 +302,10 @@
         addB.disabled = false;
         addB.textContent = 'ADD TO CART';
       } else if (needsColor || needsSize) {
-        priceEl.textContent = priceRange(p);
+        var guess = cheapestMatch(p, chosen.color, chosen.size);
+        priceEl.textContent = guess ? money(guess.price, p.currency) : '';
         addB.disabled = true;
-        addB.textContent = needsColor ? 'PICK A COLOUR' : 'PICK A SIZE';
+        addB.textContent = needsColor ? 'PICK A COLOR' : 'PICK A SIZE';
       } else {
         priceEl.textContent = '';
         addB.disabled = true;
