@@ -46,6 +46,10 @@ bucket_name = "wizardshit-images"
 [vars]
 # Origins allowed to call the public API from a browser.
 ALLOWED_ORIGINS = "https://wizardshit.store,https://www.wizardshit.store,https://madamwizzy.com,https://www.madamwizzy.com,http://localhost:8080,http://127.0.0.1:8080"
+# Stripe's PUBLISHABLE key (pk_live_… — public by design, safe here). With it,
+# the storefront mounts Stripe's checkout on its own cart screen instead of
+# sending customers to a Stripe page. Leave empty for the hosted page.
+STRIPE_PUBLISHABLE_KEY = ""
 
 # --- The shop (src/shop.js): cart, checkout, donations on wizardshit.store ---
 # Where Stripe sends the customer back to after paying.

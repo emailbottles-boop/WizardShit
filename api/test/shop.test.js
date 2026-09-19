@@ -91,7 +91,7 @@ function installFetch() {
     }
     if (url.startsWith('https://api.stripe.com/v1/checkout/sessions')) {
       if (stripeFails) return jsonRes({ error: { message: 'Your card was declined, sort of' } }, 402);
-      return jsonRes({ id: 'cs_test_123', url: 'https://checkout.stripe.com/c/pay/cs_test_123' });
+      return jsonRes({ id: 'cs_test_123', url: 'https://checkout.stripe.com/c/pay/cs_test_123', client_secret: 'cs_test_123_secret_abc' });
     }
     if (url.startsWith('https://api.stripe.com/v1/customers')) return jsonRes({ id: 'cus_1' });
     if (url.startsWith('https://api.stripe.com/v1/balance_transactions')) {
@@ -474,6 +474,38 @@ describe('placing an order', () => {
     ));
     expect(res.status).toBe(409);
     expect(call(/api\.printful\.com\/orders\?/, 'POST')).toBeUndefined();
+  });
+
+  it('embeds the payment on the storefront when asked, hosted otherwise', async () => {
+    const items = [{ product_id: 502, variant_id: 9101, quantity: 1 }];
+    const hosted = await handlePlaceOrder(post('/api/shop/orders', { recipient: RECIPIENT, items, shipping_id: 'STANDARD' }, { 'CF-Connecting-IP': '198.51.100.21' }), env(), CORS);
+    expect(hosted.status).toBe(200);
+    let form = new URLSearchParams(call(/checkout\/sessions/, 'POST').body);
+    expect(form.get('ui_mode')).toBeNull();
+    expect(form.get('success_url')).toBe('https://wizardshit.store/?order=' + encodeURIComponent((await hosted.json()).reference));
+
+    calls.length = 0;
+    const embedded = await handlePlaceOrder(post('/api/shop/orders', { recipient: RECIPIENT, items, shipping_id: 'STANDARD', checkout: 'embedded' }, { 'CF-Connecting-IP': '198.51.100.22' }), env(), CORS);
+    expect(embedded.status).toBe(200);
+    const out = await embedded.json();
+    form = new URLSearchParams(call(/checkout\/sessions/, 'POST').body);
+    expect(form.get('ui_mode')).toBe('embedded');
+    expect(form.get('return_url')).toBe('https://wizardshit.store/?order=' + encodeURIComponent(out.reference));
+    expect(form.get('success_url')).toBeNull();
+    expect(form.get('cancel_url')).toBeNull();
+    expect(out.client_secret).toBe('cs_test_123_secret_abc');
+  });
+
+  it('publishes the Stripe key only when it is a real publishable key', async () => {
+    // The status is edge-cached, so each look gets a fresh cache.
+    const look = async (overrides) => {
+      vi.stubGlobal('caches', fakeCaches());
+      const res = await handleProducts(env(overrides), ctx, new Request('https://wizardshit.store/api/shop/products'));
+      return (await res.json()).stripe_pk;
+    };
+    expect(await look({ STRIPE_PUBLISHABLE_KEY: 'pk_test_abc' })).toBe('pk_test_abc');
+    expect(await look({ STRIPE_PUBLISHABLE_KEY: 'sk_live_oops' })).toBeNull();
+    expect(await look({})).toBeNull();
   });
 
   it('prices from Printful, drafts, records, and hands off to Stripe — in that order', async () => {

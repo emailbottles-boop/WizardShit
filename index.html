@@ -952,6 +952,12 @@ form input.invalid {
   transition: transform 0.2s ease, border-color 0.2s ease;
 }
 .product-viewcart:hover { transform: scale(1.03); border-color: #ffe066; }
+
+/* ===== PAY PANEL (Stripe's checkout, mounted on the cart screen) ===== */
+.pay-panel { width: 100%; max-width: 900px; display: flex; flex-direction: column; align-items: center; gap: 1rem; margin-top: 1.5rem; }
+.pay-panel[hidden] { display: none; }
+.pay-panel h3 { margin: 0; font-size: 0.8rem; font-weight: 900; letter-spacing: 0.3em; }
+.pay-mount { width: 100%; min-height: 520px; border-radius: 18px; overflow: hidden; background: #fff; box-shadow: 0 10px 40px rgba(180,80,255,0.25); }
 .product-hero.sticker img { padding: 2rem; box-sizing: border-box; }
 .product-info { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 0.85rem; text-align: left; }
 .product-name { font-size: 1.6rem; font-weight: 900; letter-spacing: 0.12em; margin: 0; line-height: 1.2; }
@@ -1696,6 +1702,14 @@ input:focus-visible {
       </form>
     </div>
 
+    <!-- PAY PANEL: Stripe's checkout mounted here (js/shop.js), so paying never leaves the site -->
+    <div class="pay-panel" id="payPanel" hidden>
+      <h3>PAY</h3>
+      <div class="pay-mount" id="checkoutMount"></div>
+      <div class="shop-note">Your card details go straight into Stripe's secure form above — they never touch this site.</div>
+      <button class="btn btn-secondary" type="button" id="payPanelBack">← CHANGE ORDER</button>
+    </div>
+
     <div class="email-section" style="margin-top: 1rem;">
       <button class="btn btn-secondary" id="backFromCartBtn">BACK TO MERCH</button>
     </div>
@@ -2314,7 +2328,7 @@ if (window.innerWidth <= 900) {
 <script src="/js/show-link.js"></script>
 <script src="/js/config.js"></script>
 <script src="/js/content.js" defer></script>
-<script src="/js/shop.js?v=9" defer></script>
+<script src="/js/shop.js?v=10" defer></script>
 <script src="/js/message-widget.js" defer></script>
 
 <script>
