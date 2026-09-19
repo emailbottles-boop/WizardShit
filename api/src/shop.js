@@ -84,20 +84,34 @@ function siteUrl(env) {
 /* ---------------------------------------------------------------- money --- */
 
 /** "29.50" -> 2950, without ever touching a float. */
-export function parseMoney(text) {
+// Currencies Stripe (and Printful) count in whole units, with no hundredths.
+// Everything else is held in minor units (cents); these are held in their
+// whole unit — which is exactly what Stripe expects as unit_amount for them,
+// so a ¥2,950 tee is 2950, never 295000.
+const ZERO_DECIMAL = new Set(['BIF', 'CLP', 'DJF', 'GNF', 'JPY', 'KMF', 'KRW', 'MGA', 'PYG', 'RWF', 'UGX', 'VND', 'VUV', 'XAF', 'XOF', 'XPF']);
+export function minorUnits(currency) {
+  return ZERO_DECIMAL.has(String(currency || 'USD').toUpperCase()) ? 1 : 100;
+}
+
+export function parseMoney(text, currency = 'USD') {
   const s = String(text ?? '').trim();
   const m = s.match(/^(-)?(\d+)(?:\.(\d{1,2}))?$/);
   if (!m) throw new ShopError('Unreadable price from Printful: ' + JSON.stringify(text), 502);
-  const cents = Number(m[2]) * 100 + Number((m[3] || '').padEnd(2, '0'));
-  return m[1] ? -cents : cents;
+  const whole = Number(m[2]);
+  const hundredths = Number((m[3] || '').padEnd(2, '0'));
+  // A zero-decimal currency has no cents: any stray fraction rounds to the unit.
+  const units = minorUnits(currency) === 1 ? whole + (hundredths >= 50 ? 1 : 0) : whole * 100 + hundredths;
+  return m[1] ? -units : units;
 }
 
-export function formatMoney(cents, currency = 'USD') {
-  const sign = cents < 0 ? '-' : '';
-  const abs = Math.abs(cents);
+export function formatMoney(amount, currency = 'USD') {
+  const code = String(currency || 'USD').toUpperCase();
+  const sign = amount < 0 ? '-' : '';
+  const abs = Math.abs(amount);
+  const symbol = code === 'USD' ? '$' : code + ' ';
+  if (minorUnits(code) === 1) return sign + symbol + abs.toLocaleString('en-US');
   const whole = Math.floor(abs / 100);
   const frac = String(abs % 100).padStart(2, '0');
-  const symbol = currency === 'USD' ? '$' : currency + ' ';
   return sign + symbol + whole.toLocaleString('en-US') + '.' + frac;
 }
 
@@ -183,7 +197,7 @@ async function productDetail(env, printfulId) {
         name: v.name,
         color,
         size,
-        price: parseMoney(v.retail_price),
+        price: parseMoney(v.retail_price, v.currency),
         currency: String(v.currency || 'USD').toUpperCase(),
         image: publicImage(preview && preview.preview_url) || publicImage(catalogPhoto) || publicImage(sp.thumbnail_url),
         available: !v.availability_status || v.availability_status === 'active',
@@ -369,7 +383,7 @@ async function quoteRates(env, recipient, lines) {
   return (rates || []).map((r) => ({
     id: String(r.id),
     name: String(r.name || r.id),
-    rate: parseMoney(r.rate),
+    rate: parseMoney(r.rate, r.currency),
     currency: String(r.currency || 'USD').toUpperCase(),
     min_days: r.minDeliveryDays ?? null,
     max_days: r.maxDeliveryDays ?? null,

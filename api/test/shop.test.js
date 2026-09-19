@@ -241,6 +241,17 @@ describe('money', () => {
     expect(formatMoney(100000)).toBe('$1,000.00');
     expect(formatMoney(5)).toBe('$0.05');
   });
+  it('holds zero-decimal currencies in whole units, so Stripe is asked for the right amount', () => {
+    expect(parseMoney('2950', 'JPY')).toBe(2950);
+    expect(parseMoney('2950.00', 'JPY')).toBe(2950);
+    expect(parseMoney('2950.60', 'JPY')).toBe(2951);
+    expect(parseMoney('29.50', 'USD')).toBe(2950);
+    expect(parseMoney('29.50')).toBe(2950);
+    expect(formatMoney(2950, 'JPY')).toBe('JPY 2,950');
+    expect(formatMoney(2950, 'jpy')).toBe('JPY 2,950');
+    expect(formatMoney(-2950, 'KRW')).toBe('-KRW 2,950');
+    expect(formatMoney(4750, 'USD')).toBe('$47.50');
+  });
 });
 
 describe('variant names', () => {

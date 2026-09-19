@@ -35,13 +35,18 @@
     if (text !== undefined) n.textContent = text;
     return n;
   }
-  function money(cents, currency) {
-    var sign = cents < 0 ? '-' : '';
-    var abs = Math.abs(cents);
+  // Currencies counted in whole units (no hundredths) — held and shown as such,
+  // matching the Worker, which holds them the way Stripe charges them.
+  var ZERO_DECIMAL = /^(BIF|CLP|DJF|GNF|JPY|KMF|KRW|MGA|PYG|RWF|UGX|VND|VUV|XAF|XOF|XPF)$/;
+  function money(amount, currency) {
+    var code = String(currency || 'USD').toUpperCase();
+    var sign = amount < 0 ? '-' : '';
+    var abs = Math.abs(amount);
+    var sym = code === 'USD' ? '$' : code + ' ';
+    if (ZERO_DECIMAL.test(code)) return sign + sym + abs.toLocaleString('en-US');
     var whole = Math.floor(abs / 100);
     var frac = String(abs % 100);
     if (frac.length < 2) frac = '0' + frac;
-    var sym = !currency || currency === 'USD' ? '$' : currency + ' ';
     return sign + sym + whole.toLocaleString('en-US') + '.' + frac;
   }
   function imageUrl(v) {

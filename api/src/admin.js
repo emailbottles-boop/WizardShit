@@ -900,11 +900,17 @@ export const ADMIN_HTML = `<!DOCTYPE html>
   }
 
   function cents(n, currency) {
+    var code = String(currency || 'USD').toUpperCase();
+    // Currencies counted in whole units (no hundredths) are held and shown as such.
+    var zero = /^(BIF|CLP|DJF|GNF|JPY|KMF|KRW|MGA|PYG|RWF|UGX|VND|VUV|XAF|XOF|XPF)$/.test(code);
     var v = Math.abs(Number(n) || 0);
+    var sign = Number(n) < 0 ? '-' : '';
+    var sym = code === 'USD' ? '$' : code + ' ';
+    if (zero) return sign + sym + v.toLocaleString('en-US');
     var whole = Math.floor(v / 100);
     var frac = String(v % 100);
     if (frac.length < 2) frac = '0' + frac;
-    return (Number(n) < 0 ? '-' : '') + ((currency || 'USD') === 'USD' ? '$' : currency + ' ') + whole.toLocaleString('en-US') + '.' + frac;
+    return sign + sym + whole.toLocaleString('en-US') + '.' + frac;
   }
 
   function orderBadge(o) {
