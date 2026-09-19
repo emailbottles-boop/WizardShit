@@ -270,28 +270,45 @@ const CATALOG_CACHE_KEY = 'https://wizardshit.store/api/shop/products';
  * product by id, and Printful supplies the colours, sizes, and prices. Items
  * with no Printful id keep their link and stay a link on the page.
  */
+/**
+ * Several Printful products, a few at a time. Printful rate-limits per token,
+ * and an un-batched fan-out on one request is enough to trip it — which then
+ * empties the catalog for everyone. `onError` makes a product optional (the
+ * grid); without it a failure throws (the order path, which must never quietly
+ * mis-price a cart).
+ */
+async function productDetails(env, ids, onError) {
+  const out = new Map();
+  for (let i = 0; i < ids.length; i += 4) {
+    await Promise.all(
+      ids.slice(i, i + 4).map(async (id) => {
+        try {
+          out.set(id, await productDetail(env, id));
+        } catch (e) {
+          if (!onError) throw e;
+          onError(id, e);
+        }
+      }),
+    );
+  }
+  return out;
+}
+
 async function buildCatalog(env) {
   const rows = await env.DB.prepare(
     'SELECT id, title, url, image, sticker, row_break, printful_id FROM merch_items WHERE visible = 1 ORDER BY sort',
   ).all();
   const items = rows.results || [];
-  const details = new Map();
-  // A handful of products; a few at a time keeps Printful's rate limit happy.
   const ids = [...new Set(items.map((i) => i.printful_id).filter(Boolean))];
-  for (let i = 0; i < ids.length; i += 4) {
-    await Promise.all(
-      ids.slice(i, i + 4).map(async (id) => {
-        try {
-          details.set(id, await productDetail(env, id));
-        } catch (e) {
-          // One product Printful cannot serve right now should not blank the
-          // whole grid; that card falls back to its link.
-          console.error('catalog: product ' + id + ':', e.message);
-        }
-      }),
-    );
-  }
-  return items.map((item) => {
+  let missing = 0;
+  const details = await productDetails(env, ids, (id, e) => {
+    // One product Printful cannot serve right now should not blank the whole
+    // grid; that card falls back to its link. But the result is incomplete,
+    // and handleProducts must not cache it for long.
+    missing++;
+    console.error('catalog: product ' + id + ':', e.message);
+  });
+  const products = items.map((item) => {
     const d = item.printful_id ? details.get(item.printful_id) : null;
     const variants = d ? d.variants.filter((v) => v.available) : [];
     const colors = [...new Set(variants.map((v) => v.color).filter(Boolean))];
@@ -319,20 +336,32 @@ async function buildCatalog(env) {
       })),
     };
   });
+  return { products, degraded: missing > 0 };
 }
 
+/** How long a good grid is held, and how long a broken one is. */
+const CATALOG_TTL = 120;
+const DEGRADED_TTL = 15;
+
 export async function handleProducts(env, ctx, request) {
-  const headers = { 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'public, max-age=120' };
+  const cors = { 'Access-Control-Allow-Origin': '*' };
   const status = { shop: shopEnabled(env), donate: donateEnabled(env), mode: confirmOnPayout(env) ? 'payout' : 'payment', tax: taxEnabled(env), stripe_pk: publishableKey(env) };
-  if (!status.shop) return json({ ...status, products: [] }, 200, headers);
+  if (!status.shop) return json({ ...status, products: [] }, 200, { ...cors, 'Cache-Control': 'public, max-age=' + CATALOG_TTL });
 
   const cache = caches.default;
   const key = new Request(CATALOG_CACHE_KEY);
   const hit = await cache.match(key);
   if (hit) return hit;
 
-  const products = await buildCatalog(env);
-  const res = json({ ...status, products }, 200, headers);
+  const { products, degraded } = await buildCatalog(env);
+  // A grid Printful could not fill has empty variants, and the page turns every
+  // such card back into a plain Printful link. Holding that for two minutes
+  // turns a rate-limit blip into a shop-wide outage — so a degraded grid is
+  // cached only briefly. Still cached, though: rebuilding it on every request
+  // would hammer the very limit that caused it.
+  const maxAge = degraded ? DEGRADED_TTL : CATALOG_TTL;
+  if (degraded) console.warn('catalog served degraded; holding it for ' + maxAge + 's only.');
+  const res = json({ ...status, products }, 200, { ...cors, 'Cache-Control': 'public, max-age=' + maxAge });
   ctx.waitUntil(cache.put(key, res.clone()));
   return res;
 }
@@ -412,8 +441,10 @@ async function priceLines(env, items) {
   } else {
     console.warn('merch_items returned no sellable rows; skipping the visibility check for this order.');
   }
-  const products = new Map();
-  await Promise.all(ids.map(async (id) => products.set(id, await productDetail(env, id))));
+  // Batched for the same reason the catalog is: MAX_LINES distinct products
+  // would otherwise be MAX_LINES simultaneous Printful calls, per request, on
+  // an endpoint anyone can reach.
+  const products = await productDetails(env, ids);
   const lines = items.map((it) => {
     const p = products.get(it.product_id);
     const v = p && p.variants.find((x) => x.id === it.variant_id);

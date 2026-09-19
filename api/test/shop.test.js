@@ -384,6 +384,66 @@ describe('the catalog', () => {
     expect(data.products).toEqual([]);
     expect(call(/printful/)).toBeUndefined();
   });
+
+  it('holds a complete grid for the full two minutes', async () => {
+    rows['FROM merch_items'] = [
+      { id: 1, title: 'EARL CROUCH HOODIE', url: 'https://wizard.printful.me/product/h', image: 'h.png', sticker: 0, row_break: 0, printful_id: 501 },
+    ];
+    const res = await handleProducts(env(), ctx, new Request('https://wizardshit.store/api/shop/products'));
+    expect(res.headers.get('Cache-Control')).toBe('public, max-age=120');
+  });
+
+  it('holds a grid Printful could not fill for seconds, not minutes', async () => {
+    // A card whose product Printful will not serve: the grid still renders, but
+    // that card has no variants, which the page turns back into a plain link.
+    // Caching THAT for two minutes is how one rate-limit blip closes the shop.
+    rows['FROM merch_items'] = [
+      { id: 1, title: 'EARL CROUCH HOODIE', url: 'https://wizard.printful.me/product/h', image: 'h.png', sticker: 0, row_break: 0, printful_id: 501 },
+      { id: 2, title: 'GONE FOR NOW', url: 'https://wizard.printful.me/product/g', image: 'g.png', sticker: 0, row_break: 0, printful_id: 999 },
+    ];
+    const res = await handleProducts(env(), ctx, new Request('https://wizardshit.store/api/shop/products'));
+    expect(res.headers.get('Cache-Control')).toBe('public, max-age=15');
+    const data = await res.json();
+    expect(data.products[0].variants.length).toBeGreaterThan(0);
+    expect(data.products[1].variants).toEqual([]);
+  });
+
+  it('asks Printful for the order products a few at a time, never all at once', async () => {
+    // The order path is public and takes up to MAX_LINES distinct products.
+    // Un-batched, one request is that many simultaneous Printful calls, which
+    // is enough to trip the rate limit and empty the catalog for everyone.
+    const realFetch = globalThis.fetch;
+    let live = 0;
+    let peak = 0;
+    globalThis.fetch = async (input, init) => {
+      const url = typeof input === 'string' ? input : input.url;
+      if (url.startsWith('https://api.printful.com/store/products/')) {
+        live++;
+        peak = Math.max(peak, live);
+        await new Promise((r) => setTimeout(r, 5));
+        live--;
+        const id = Number(url.split('/').pop());
+        return jsonRes({
+          code: 200,
+          result: {
+            sync_product: { id, name: 'P' + id, thumbnail_url: 'https://files.cdn.printful.com/t.png' },
+            sync_variants: [{ id: 7000 + id, variant_id: 100 + id, name: 'P' + id + ' - Black / M', size: 'M', color: 'Black', retail_price: '10.00', currency: 'USD', availability_status: 'active', files: [] }],
+          },
+        });
+      }
+      return realFetch(input, init);
+    };
+    try {
+      const items = Array.from({ length: 9 }, (_, i) => ({ product_id: 600 + i, variant_id: 7600 + i, quantity: 1 }));
+      const res = await run(handleShipping(post('/api/shop/shipping', { recipient: RECIPIENT, items }), env(), CORS));
+      expect(res.status).toBe(200);
+      expect(peak).toBeLessThanOrEqual(4);
+      expect(peak).toBeGreaterThan(1);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
 });
 
 describe('placing an order', () => {
