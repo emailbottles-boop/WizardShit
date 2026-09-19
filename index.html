@@ -940,6 +940,24 @@ form input.invalid {
   overflow: hidden;
 }
 .product-hero img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.product-hero { touch-action: pan-y; }
+.product-dots { display: flex; justify-content: center; gap: 0.5rem; margin-top: 0.8rem; }
+.product-dot { width: 8px; height: 8px; border-radius: 999px; background: rgba(255,255,255,0.3); cursor: pointer; transition: background 0.2s ease, transform 0.2s ease; }
+.product-dot.active { background: #ffe066; transform: scale(1.3); }
+.product-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.7rem; margin-top: 0.6rem; }
+.product-viewcart {
+  padding: 0.95rem 1.4rem; border-radius: 999px; cursor: pointer;
+  background: rgba(0,0,0,0.4); color: #fff; border: 1.5px solid rgba(180,80,255,0.7);
+  font-size: 0.72rem; font-weight: 900; letter-spacing: 0.25em;
+  transition: transform 0.2s ease, border-color 0.2s ease;
+}
+.product-viewcart:hover { transform: scale(1.03); border-color: #ffe066; }
+
+/* ===== PAY PANEL (Stripe's checkout, mounted on the cart screen) ===== */
+.pay-panel { width: 100%; max-width: 900px; display: flex; flex-direction: column; align-items: center; gap: 1rem; margin-top: 1.5rem; }
+.pay-panel[hidden] { display: none; }
+.pay-panel h3 { margin: 0; font-size: 0.8rem; font-weight: 900; letter-spacing: 0.3em; }
+.pay-mount { width: 100%; min-height: 520px; border-radius: 18px; overflow: hidden; background: #fff; box-shadow: 0 10px 40px rgba(180,80,255,0.25); }
 .product-hero.sticker img { padding: 2rem; box-sizing: border-box; }
 .product-info { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 0.85rem; text-align: left; }
 .product-name { font-size: 1.6rem; font-weight: 900; letter-spacing: 0.12em; margin: 0; line-height: 1.2; }
@@ -973,7 +991,7 @@ form input.invalid {
 .qty-btn:hover { border-color: #ffe066; }
 .qty-val { font-size: 1rem; font-weight: 800; min-width: 1.5rem; text-align: center; }
 .product-add {
-  margin-top: 0.6rem; align-self: flex-start; padding: 0.95rem 1.6rem; border-radius: 999px; border: none;
+  align-self: flex-start; padding: 0.95rem 1.6rem; border-radius: 999px; border: none;
   background: linear-gradient(135deg, #ffe066, #b000ff); color: black;
   font-size: 0.72rem; font-weight: 900; letter-spacing: 0.25em; cursor: pointer;
   transition: transform 0.2s ease, opacity 0.2s ease;
@@ -1628,14 +1646,13 @@ input:focus-visible {
       <div class="content-title">MERCH</div>
       <div class="right-buttons">
         <div class="nav-box-small cart-nav">CART<span class="count"></span></div>
-        <div class="nav-box-small" id="productToMerchBtn">ALL MERCH</div>
       </div>
     </div>
 
     <div class="product-detail" id="productDetail"></div>
 
     <div class="email-section" style="margin-top: 2.5rem;">
-      <button class="btn btn-secondary" id="backFromProductBtn">BACK TO MERCH</button>
+      <button class="btn btn-secondary" id="backFromProductBtn">← BACK TO MERCH</button>
     </div>
 
   </div>
@@ -1683,6 +1700,14 @@ input:focus-visible {
           <div class="shop-note">You'll pay securely on Stripe. Your order goes to print once your payment settles, usually within a few business days, and every piece is printed to order.</div>
         </div>
       </form>
+    </div>
+
+    <!-- PAY PANEL: Stripe's checkout mounted here (js/shop.js), so paying never leaves the site -->
+    <div class="pay-panel" id="payPanel" hidden>
+      <h3>PAY</h3>
+      <div class="pay-mount" id="checkoutMount"></div>
+      <div class="shop-note">Your card details go straight into Stripe's secure form above — they never touch this site.</div>
+      <button class="btn btn-secondary" type="button" id="payPanelBack">← CHANGE ORDER</button>
     </div>
 
     <div class="email-section" style="margin-top: 1rem;">
@@ -2158,7 +2183,6 @@ document.getElementById("merchToCreditsBtn").onclick = () => showScreen(credits)
 document.getElementById("cartToMerchBtn").onclick = () => showScreen(merch);
 document.getElementById("cartToContentBtn").onclick = () => showScreen(updates);
 document.getElementById("backFromCartBtn").onclick = () => showScreen(merch);
-document.getElementById("productToMerchBtn").onclick = () => showScreen(merch);
 document.getElementById("backFromProductBtn").onclick = () => showScreen(merch);
 document.getElementById("thanksToMerchBtn").onclick = () => showScreen(merch);
 document.getElementById("thanksToHomeBtn").onclick = () => { cryptoField.innerHTML = ""; showScreen(home); };
@@ -2304,7 +2328,7 @@ if (window.innerWidth <= 900) {
 <script src="/js/show-link.js"></script>
 <script src="/js/config.js"></script>
 <script src="/js/content.js" defer></script>
-<script src="/js/shop.js?v=8" defer></script>
+<script src="/js/shop.js?v=10" defer></script>
 <script src="/js/message-widget.js" defer></script>
 
 <script>

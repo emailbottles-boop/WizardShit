@@ -24,6 +24,7 @@
   var quotedCurrency = null; // and the currency it quoted in
   var catalogLoaded = false; // /api/shop/products has answered (open or closed)
   var taxOn = false;         // the Worker adds tax at Stripe, on top of the total shown
+  var stripePk = null;       // Stripe's public key: with it, checkout is embedded here
   var ratesFor = '';   // fingerprint of what `rates` was quoted for
   var busy = false;
 
@@ -280,6 +281,36 @@
     hero.appendChild(heroImg);
     media.appendChild(hero);
 
+    // On a phone, swipe across the picture to move through the colours; the
+    // dots underneath show where you are. Vertical swipes still scroll.
+    var dots = [];
+    if (p.colors.length > 1) {
+      var dotRow = el('div', 'product-dots');
+      p.colors.forEach(function (c) {
+        var d = el('span', 'product-dot');
+        d.title = c;
+        d.addEventListener('click', function () { chosen.color = c; refresh(); });
+        dots.push(d);
+        dotRow.appendChild(d);
+      });
+      media.appendChild(dotRow);
+      var sx = null, sy = null;
+      hero.addEventListener('touchstart', function (e) {
+        var t = e.changedTouches[0];
+        sx = t.clientX; sy = t.clientY;
+      }, { passive: true });
+      hero.addEventListener('touchend', function (e) {
+        if (sx === null) return;
+        var t = e.changedTouches[0];
+        var dx = t.clientX - sx, dy = t.clientY - sy;
+        sx = sy = null;
+        if (Math.abs(dx) < 40 || Math.abs(dx) < Math.abs(dy)) return;
+        var i = p.colors.indexOf(chosen.color);
+        chosen.color = p.colors[(i + (dx < 0 ? 1 : -1) + p.colors.length) % p.colors.length];
+        refresh();
+      }, { passive: true });
+    }
+
     // Right column: name, price, colour, size, quantity, add.
     var info = el('div', 'product-info');
     info.appendChild(el('h2', 'product-name', p.title));
@@ -335,13 +366,22 @@
     qtyWrap.appendChild(minus); qtyWrap.appendChild(qtyVal); qtyWrap.appendChild(plus);
     info.appendChild(qtyWrap);
 
+    var actions = el('div', 'product-actions');
     var addB = el('button', 'product-add', 'ADD TO CART');
     addB.type = 'button';
-    info.appendChild(addB);
+    actions.appendChild(addB);
+    // Once something is in the cart, offer the way there right beside ADD.
+    var viewB = el('button', 'product-viewcart', 'VIEW CART →');
+    viewB.type = 'button';
+    viewB.addEventListener('click', function () { renderCart(); go('cart'); });
+    actions.appendChild(viewB);
+    info.appendChild(actions);
     info.appendChild(el('div', 'shop-note', 'Printed to order. You pay securely on Stripe, and it ships once your payment settles.'));
 
     function refresh() {
       swatches.forEach(function (b) { b.classList.toggle('selected', b.dataset.color === chosen.color); });
+      dots.forEach(function (d, i) { d.classList.toggle('active', p.colors[i] === chosen.color); });
+      viewB.style.display = units() ? '' : 'none';
       sizes.forEach(function (b) { b.classList.toggle('selected', b.dataset.size === chosen.size); });
       if (chosenName) chosenName.textContent = chosen.color ? ': ' + chosen.color : '';
       var v = pickVariant(p, chosen.color, chosen.size);
@@ -372,6 +412,7 @@
       // One timer at a time, so a second click's message isn't wiped by the first's.
       clearTimeout(addTimer);
       if (addLine(p, v, qty)) {
+        viewB.style.display = '';
         addB.textContent = 'ADDED ✓';
         addTimer = setTimeout(function () { addB.textContent = 'ADD TO CART'; }, 1400);
       } else {
@@ -427,7 +468,67 @@
     m.style.display = text ? 'block' : 'none';
   }
 
+  /* ------------------------------------------------- embedded checkout --- */
+
+  // Stripe's checkout, mounted on our own cart screen: the card fields live in
+  // Stripe's secure frame, so card numbers never touch this site — but the
+  // customer never leaves it either. When they pay, Stripe brings them to
+  // /?order=… and the thank-you screen takes over as before.
+  var stripeJs = null;         // the loading of Stripe.js, once
+  var embeddedCheckout = null; // the mounted checkout, while one is open
+
+  function loadStripeJs() {
+    if (window.Stripe) return Promise.resolve(window.Stripe);
+    if (stripeJs) return stripeJs;
+    stripeJs = new Promise(function (resolve, reject) {
+      var s = document.createElement('script');
+      s.src = 'https://js.stripe.com/v3/';
+      s.async = true;
+      s.onload = function () { if (window.Stripe) resolve(window.Stripe); else reject(new Error('The payment form did not load. Please try again.')); };
+      s.onerror = function () { stripeJs = null; reject(new Error('Could not load the payment form. Check your connection and try again.')); };
+      document.head.appendChild(s);
+    });
+    return stripeJs;
+  }
+
+  function openEmbedded(clientSecret) {
+    return loadStripeJs().then(function (Stripe) {
+      return Stripe(stripePk).initEmbeddedCheckout({ clientSecret: clientSecret });
+    }).then(function (checkout) {
+      embeddedCheckout = checkout;
+      document.getElementById('checkoutBox').style.display = 'none';
+      var panel = document.getElementById('payPanel');
+      panel.hidden = false;
+      checkout.mount('#checkoutMount');
+      busy = false;
+      if (panel.scrollIntoView) panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  }
+
+  // Tear the mounted checkout down without re-rendering (renderCart calls this).
+  function dropEmbedded() {
+    if (!embeddedCheckout) return;
+    var c = embeddedCheckout;
+    embeddedCheckout = null;
+    try { c.destroy(); } catch (e) { /* already gone */ }
+    var panel = document.getElementById('payPanel');
+    if (panel) panel.hidden = true;
+    var mount = document.getElementById('checkoutMount');
+    if (mount) mount.innerHTML = '';
+  }
+
+  // The customer wants to change something: that session is spent, so the
+  // next PAY starts from a fresh quote.
+  function closeEmbedded() {
+    dropEmbedded();
+    rates = null;
+    renderCart();
+  }
+
   function renderCart() {
+    // Any re-render means the order may have changed under an open checkout —
+    // a changed quantity, a removed line, a return to the cart — so it goes.
+    dropEmbedded();
     var linesEl = document.getElementById('cartLines');
     var emptyEl = document.getElementById('cartEmpty');
     var totalsEl = document.getElementById('cartTotals');
@@ -591,7 +692,9 @@
       // the customer back to a fresh quote instead of a surprise on the card.
       expected_total: quotedSubtotal + picked.rate,
       expected_currency: quotedCurrency,
+      checkout: stripePk ? 'embedded' : 'hosted',
     }).then(function (d) {
+      if (stripePk && d.client_secret) return openEmbedded(d.client_secret);
       if (!d.url) throw new Error('No payment page came back.');
       location.href = d.url;
     }).catch(function (e) {
@@ -743,6 +846,8 @@
 
   updateCount();
   wireCartScreen();
+  var payPanelBack = document.getElementById('payPanelBack');
+  if (payPanelBack) payPanelBack.addEventListener('click', closeEmbedded);
   // Show the saved cart straight away, before the catalog arrives: a direct
   // link to /cart activates the screen before this script runs, and a customer
   // must never see "empty" beside a non-empty count.
@@ -761,6 +866,7 @@
       shopOpen = !!d.shop;
       donateOpen = !!d.donate;
       taxOn = !!d.tax;
+      stripePk = typeof d.stripe_pk === 'string' && d.stripe_pk ? d.stripe_pk : null;
       catalogLoaded = true;
       products = Array.isArray(d.products) ? d.products : [];
       reconcileCart();

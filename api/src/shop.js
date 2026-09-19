@@ -26,7 +26,9 @@
  * Secrets (npx wrangler secret put …): PRINTFUL_TOKEN, STRIPE_SECRET_KEY,
  * STRIPE_WEBHOOK_SECRET. Vars (wrangler.toml): CONFIRM_ON_PAYOUT, SITE_URL,
  * PRINTFUL_STORE_ID (only for an account-level token), STRIPE_TAX (set to
- * "true" once a tax registration exists in Stripe).
+ * "true" once a tax registration exists in Stripe), STRIPE_PUBLISHABLE_KEY
+ * (the public pk_… key; with it the storefront mounts Stripe's checkout on its
+ * own cart screen instead of sending customers to a Stripe page).
  */
 
 /* --------------------------------------------------------------- basics --- */
@@ -288,7 +290,7 @@ async function buildCatalog(env) {
 
 export async function handleProducts(env, ctx, request) {
   const headers = { 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'public, max-age=120' };
-  const status = { shop: shopEnabled(env), donate: donateEnabled(env), mode: confirmOnPayout(env) ? 'payout' : 'payment', tax: taxEnabled(env) };
+  const status = { shop: shopEnabled(env), donate: donateEnabled(env), mode: confirmOnPayout(env) ? 'payout' : 'payment', tax: taxEnabled(env), stripe_pk: publishableKey(env) };
   if (!status.shop) return json({ ...status, products: [] }, 200, headers);
 
   const cache = caches.default;
@@ -507,6 +509,12 @@ async function stripe(env, method, path, payload, idempotencyKey) {
 function taxEnabled(env) {
   return String(env.STRIPE_TAX || '').trim() === 'true';
 }
+/** The public Stripe key, which lets the storefront mount Stripe's checkout on
+ *  its own page. Unset (or not a pk_ key) means the hosted Stripe page. */
+export function publishableKey(env) {
+  const pk = String(env.STRIPE_PUBLISHABLE_KEY || '').trim();
+  return /^pk_(live|test)_/.test(pk) ? pk : null;
+}
 
 /**
  * Places an order: re-price, quote shipping, create the Printful draft, record
@@ -602,10 +610,15 @@ export async function handlePlaceOrder(request, env, cors) {
     .run();
 
   const site = siteUrl(env);
+  // The storefront asks for the payment to be embedded on its own cart screen
+  // (Stripe's frame, mounted there); an older cached storefront still gets
+  // the hosted page. Either way Stripe brings them back to /?order=… when paid.
+  const embedded = body.checkout === 'embedded';
   const payload = {
     mode: 'payment',
-    success_url: site + '/?order=' + encodeURIComponent(reference),
-    cancel_url: site + '/?screen=cart',
+    ...(embedded
+      ? { ui_mode: 'embedded', return_url: site + '/?order=' + encodeURIComponent(reference) }
+      : { success_url: site + '/?order=' + encodeURIComponent(reference), cancel_url: site + '/?screen=cart' }),
     customer_email: recipient.email,
     client_reference_id: reference,
     metadata: { order_reference: reference },
@@ -680,7 +693,7 @@ export async function handlePlaceOrder(request, env, cors) {
   }
   await env.DB.prepare('UPDATE orders SET stripe_session = ? WHERE reference = ?').bind(session.id || '', reference).run();
 
-  return json({ url: session.url, reference, total, currency }, 200, cors);
+  return json({ url: session.url || null, client_secret: session.client_secret || null, reference, total, currency }, 200, cors);
 }
 
 /* ------------------------------------------------------------ donations --- */
