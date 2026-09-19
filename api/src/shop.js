@@ -389,6 +389,12 @@ async function priceLines(env, items) {
   return lines;
 }
 
+function isCarbonOffset(r) {
+  const id = String(r?.id || '').toUpperCase();
+  const name = String(r?.name || '').toLowerCase();
+  return /_?CO2\b/.test(id) || /\bco2\b|carbon/.test(name);
+}
+
 async function quoteRates(env, recipient, lines) {
   const rates = await printful(env, '/shipping/rates', {
     method: 'POST',
@@ -404,7 +410,12 @@ async function quoteRates(env, recipient, lines) {
       items: lines.map((l) => ({ variant_id: l.catalog_id, quantity: l.quantity })),
     },
   });
-  const quoted = (rates || []).map((r) => ({
+  // Printful also quotes a carbon-offset twin of its standard service (same
+  // carrier, same window, usually the same price). The owner doesn't want it
+  // offered, so it is dropped here, where both the quote and the order see
+  // one list — unless it is somehow the only way to ship the parcel.
+  const offered = (rates || []).filter((r) => !isCarbonOffset(r));
+  const quoted = (offered.length ? offered : rates || []).map((r) => ({
     id: String(r.id),
     name: String(r.name || r.id),
     rate: parseMoney(r.rate, r.currency),
