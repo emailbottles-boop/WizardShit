@@ -241,6 +241,37 @@ describe('money', () => {
     expect(formatMoney(100000)).toBe('$1,000.00');
     expect(formatMoney(5)).toBe('$0.05');
   });
+  it('holds zero-decimal currencies in whole units, so Stripe is asked for the right amount', () => {
+    expect(parseMoney('2950', 'JPY')).toBe(2950);
+    expect(parseMoney('2950.00', 'JPY')).toBe(2950);
+    expect(parseMoney('29.50', 'USD')).toBe(2950);
+    expect(parseMoney('29.50')).toBe(2950);
+    expect(formatMoney(2950, 'JPY')).toBe('JPY 2,950');
+    expect(formatMoney(2950, 'jpy')).toBe('JPY 2,950');
+    expect(formatMoney(-2950, 'KRW')).toBe('-KRW 2,950');
+    expect(formatMoney(4750, 'USD')).toBe('$47.50');
+    // Stripe still wants UGX and ISK scaled by 100 for backwards compatibility.
+    expect(parseMoney('500', 'UGX')).toBe(50000);
+    expect(parseMoney('500', 'ISK')).toBe(50000);
+    expect(formatMoney(50000, 'UGX')).toBe('UGX 500.00');
+    // A three-decimal currency mishandled would be a tenth of a charge: refuse.
+    expect(() => parseMoney('5.12', 'KWD')).toThrow();
+    expect(() => parseMoney('5', 'BHD')).toThrow();
+  });
+  it('refuses a price it could only charge by changing it', () => {
+    // A fraction of a yen is not rounded to a price Printful never quoted.
+    expect(() => parseMoney('2950.60', 'JPY')).toThrow();
+    expect(() => parseMoney('0.50', 'JPY')).toThrow();
+    // ISK/UGX/HUF/TWD amounts must end in 00 at Stripe; a fraction would be
+    // rejected there, after a draft already existed — refuse up front instead.
+    expect(() => parseMoney('500.50', 'UGX')).toThrow();
+    expect(() => parseMoney('1000.5', 'TWD')).toThrow();
+    expect(parseMoney('1000.00', 'HUF')).toBe(100000);
+    // Beyond twelve integer digits a JS number is no longer exact; no real
+    // price is, and a corrupted one must not be charged at all.
+    expect(parseMoney('999999999999', 'USD')).toBe(99999999999900);
+    expect(() => parseMoney('9007199254740993', 'USD')).toThrow();
+  });
 });
 
 describe('variant names', () => {
@@ -349,8 +380,12 @@ describe('placing an order', () => {
 
   it('leaves an order without a real integer expected_total on live pricing, as before', async () => {
     // null (what a NaN serialises to), a digit string, a float: none switch
-    // the guard on — they get live pricing, never a lockout.
+    // the guard on — they get live pricing, never a lockout. Each order comes
+    // from its own address (outside the random pool) so the 5-second order
+    // throttle can't collide across the loop.
+    let n = 0;
     for (const expected_total of [null, '10399', 10399.5]) {
+      n += 1;
       const res = await handlePlaceOrder(
         post('/api/shop/orders', {
           recipient: RECIPIENT,
@@ -360,7 +395,7 @@ describe('placing an order', () => {
           ],
           shipping_id: 'STANDARD',
           expected_total,
-        }),
+        }, { 'CF-Connecting-IP': '198.51.100.' + n }),
         env(),
         CORS,
       );
@@ -396,6 +431,33 @@ describe('placing an order', () => {
     expect(res.status).toBe(409);
     expect((await res.json()).error).toMatch(/no longer available/i);
     expect(call(/api\.printful\.com\/orders\?/, 'POST')).toBeUndefined();
+  });
+
+  it('refuses shipping quoted in a different currency than the items, before drafting', async () => {
+    // Printful quotes in the store currency; if it ever did not, adding that
+    // rate to the subtotal could be off a hundredfold. Refuse instead.
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = async (url, init) => {
+      if (String(url).startsWith('https://api.printful.com/shipping/rates')) {
+        return pfEnvelope([{ id: 'STANDARD', name: 'Flat Rate', rate: '4.99', currency: 'EUR', minDeliveryDays: 3, maxDeliveryDays: 7 }]);
+      }
+      return realFetch(url, init);
+    };
+    try {
+      const res = await run(handlePlaceOrder(
+        post('/api/shop/orders', {
+          recipient: RECIPIENT,
+          items: [{ product_id: 502, variant_id: 9101, quantity: 1 }],
+          shipping_id: 'STANDARD',
+        }),
+        env(),
+        CORS,
+      ));
+      expect(res.status).toBe(502);
+      expect(call(/api\.printful\.com\/orders\?/, 'POST')).toBeUndefined();
+    } finally {
+      globalThis.fetch = realFetch;
+    }
   });
 
   it('refuses a currency that is not the one it prices in', async () => {
