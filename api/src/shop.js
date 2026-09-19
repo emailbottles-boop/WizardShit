@@ -407,7 +407,9 @@ export async function handleShipping(request, env, cors) {
   const lines = await priceLines(env, items);
   const rates = await quoteRates(env, recipient, lines);
   const subtotal = lines.reduce((n, l) => n + l.unit_price * l.quantity, 0);
-  return json({ rates, subtotal, currency: lines[0].currency }, 200, cors);
+  // `tax` rides along live (the products status is edge-cached) so the
+  // storefront can label the total "+ tax" at the moment that matters.
+  return json({ rates, subtotal, currency: lines[0].currency, tax: taxEnabled(env) }, 200, cors);
 }
 
 function orderReference(prefix) {
@@ -488,14 +490,27 @@ export async function handlePlaceOrder(request, env, cors) {
   const shipping = chosen.rate;
   const total = subtotal + shipping;
 
-  // The storefront sends the total it showed beside PAY. If live pricing or
-  // the shipping rate has moved since that quote (or the picked rate is gone
-  // and another stood in), refuse rather than charge a figure the customer
-  // never saw; the storefront re-quotes and shows them the new one. Tax, when
-  // on, is added by Stripe on top of both sides, so it is compared pre-tax.
-  const expected = Number(body.expected_total);
-  if (Number.isFinite(expected) && expected !== total) {
-    throw new ShopError('Prices or shipping changed while you were checking out — please review your cart and try again.', 409);
+  // The storefront sends the total it showed beside PAY (integer cents) and
+  // the currency it showed it in. Only a real integer switches the guard on;
+  // anything else — an older cached storefront, null, a string — simply gets
+  // live pricing as before, which never undercharges. With the guard on, the
+  // rate they picked must still exist (no silent stand-in, even at the same
+  // price), the currency must match, and live subtotal + shipping must equal
+  // what they saw; otherwise refuse before drafting anything and let the
+  // storefront re-quote. Tax, when on, is added by Stripe on top of both
+  // sides, so the comparison is pre-tax.
+  const expected = body.expected_total;
+  if (typeof expected === 'number' && Number.isInteger(expected)) {
+    if (chosen.id !== wanted) {
+      throw new ShopError('The shipping option you picked is no longer available — please review your cart and try again.', 409);
+    }
+    const expectedCurrency = typeof body.expected_currency === 'string' ? body.expected_currency.toUpperCase() : null;
+    if (expectedCurrency && expectedCurrency !== String(currency).toUpperCase()) {
+      throw new ShopError('Prices or shipping changed while you were checking out — please review your cart and try again.', 409);
+    }
+    if (expected !== total) {
+      throw new ShopError('Prices or shipping changed while you were checking out — please review your cart and try again.', 409);
+    }
   }
   const units = lines.reduce((n, l) => n + l.quantity, 0);
   const reference = orderReference('WIZ');

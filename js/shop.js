@@ -409,7 +409,9 @@
     return out;
   }
   function fingerprint(recipient) {
-    return JSON.stringify([recipient.address1, recipient.city, recipient.state_code, recipient.zip, recipient.country_code, cart.map(function (l) { return [l.variant_id, l.qty]; })]);
+    // Everything the quote is computed from: the whole address the Worker
+    // sends to Printful (apartment line included) and the cart.
+    return JSON.stringify([recipient.address1, recipient.address2, recipient.city, recipient.state_code, recipient.zip, recipient.country_code, cart.map(function (l) { return [l.variant_id, l.qty]; })]);
   }
   function setMsg(text, isError) {
     var m = document.getElementById('checkoutMsg');
@@ -548,6 +550,9 @@
       if (typeof d.subtotal !== 'number') throw new Error('The shipping quote came back incomplete — please try again.');
       quotedSubtotal = d.subtotal;
       quotedCurrency = d.currency || null;
+      // The quote is live where the products status is cached, so it is the
+      // fresher word on whether Stripe will add tax on top.
+      if (typeof d.tax === 'boolean') taxOn = d.tax;
       rates = (d.rates || []).map(function (r, i) { r.picked = i === 0; return r; });
       // cheapest first, and picked
       rates.sort(function (a, b) { return a.rate - b.rate; });
@@ -580,6 +585,7 @@
       // anything else, so a price or rate that moved since the quote sends
       // the customer back to a fresh quote instead of a surprise on the card.
       expected_total: quotedSubtotal + picked.rate,
+      expected_currency: quotedCurrency,
     }).then(function (d) {
       if (!d.url) throw new Error('No payment page came back.');
       location.href = d.url;
@@ -588,9 +594,11 @@
       setMsg(e.message, true);
       btn.disabled = false;
       btn.textContent = 'PAY WITH CARD';
-      // Anything that changed the order — an item gone, prices or shipping
-      // moved, the cart itself — needs a fresh quote before PAY means anything.
-      if (/no longer|sold out|cart|changed|review/i.test(e.message)) { rates = null; renderCart(); }
+      // Whatever went wrong — an item gone, prices or shipping moved, the
+      // address now unshippable, a throttle — PAY must not be offered again
+      // beside the old figures. Drop the quote so the next step is a fresh one.
+      rates = null;
+      renderCart();
     });
   }
 
