@@ -360,7 +360,8 @@
     if (!m) return;
     m.textContent = text || '';
     m.className = 'shop-msg' + (isError ? ' error' : '');
-    m.style.display = text ? '' : 'none';
+    // .shop-msg is display:none by default, so '' would keep it hidden — force it shown.
+    m.style.display = text ? 'block' : 'none';
   }
 
   function renderCart() {
