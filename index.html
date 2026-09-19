@@ -1136,13 +1136,19 @@ body[data-screen="donators"] .cart-float-wrap { display: block; }
 .checkout-form .pay { grid-column: 1 / -1; display: flex; flex-direction: column; align-items: center; gap: 0.8rem; margin-top: 0.4rem; }
 .ship-options { display: flex; flex-direction: column; gap: 0.5rem; width: 100%; }
 .ship-option {
-  display: flex; gap: 0.8rem; align-items: center;
-  padding: 0.7rem 1rem; border-radius: 14px;
+  display: flex; gap: 0.9rem; align-items: center; text-align: left;
+  padding: 0.8rem 1.1rem; border-radius: 14px;
   border: 1.5px solid rgba(180,80,255,0.5); background: rgba(255,255,255,0.06);
   font-size: 0.7rem; letter-spacing: 0.1em; cursor: pointer;
+  transition: border-color 0.2s ease, background 0.2s ease;
 }
-.ship-option.picked { border-color: rgba(255,220,120,0.85); }
-.ship-option input { accent-color: #ffe066; }
+.ship-option:hover { border-color: rgba(255,220,120,0.6); }
+.ship-option.picked { border-color: rgba(255,220,120,0.85); background: rgba(255,224,102,0.08); }
+.ship-option input { accent-color: #ffe066; flex: none; margin: 0; width: 16px; height: 16px; }
+.ship-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.25rem; }
+.ship-name { font-weight: 900; letter-spacing: 0.15em; text-transform: uppercase; }
+.ship-days { font-size: 0.62rem; opacity: 0.75; }
+.ship-price { flex: none; font-weight: 900; color: #ffe066; letter-spacing: 0.08em; white-space: nowrap; }
 .shop-msg { display: none; font-size: 0.68rem; letter-spacing: 0.12em; text-align: center; opacity: 0.85; max-width: 600px; margin: 0 auto; line-height: 1.5; }
 /* An error message must show even when it's dropped straight into the page (e.g. the
    "cannot ship there" note), since .shop-msg is hidden by default. */
@@ -2328,7 +2334,7 @@ if (window.innerWidth <= 900) {
 <script src="/js/show-link.js"></script>
 <script src="/js/config.js"></script>
 <script src="/js/content.js" defer></script>
-<script src="/js/shop.js?v=10" defer></script>
+<script src="/js/shop.js?v=11" defer></script>
 <script src="/js/message-widget.js" defer></script>
 
 <script>

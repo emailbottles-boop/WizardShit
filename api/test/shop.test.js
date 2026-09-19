@@ -799,11 +799,12 @@ describe('donations', () => {
   });
 
   it('refuses silly amounts', async () => {
-    let res = await run(handleDonate(post('/api/donate', { amount: 50 }), env(), CORS));
+    // Distinct IPs so the per-IP throttle can't collide across the three calls.
+    let res = await run(handleDonate(post('/api/donate', { amount: 50 }, { 'CF-Connecting-IP': '198.51.100.31' }), env(), CORS));
     expect(res.status).toBe(400);
-    res = await run(handleDonate(post('/api/donate', { amount: 12.5 }), env(), CORS));
+    res = await run(handleDonate(post('/api/donate', { amount: 12.5 }, { 'CF-Connecting-IP': '198.51.100.32' }), env(), CORS));
     expect(res.status).toBe(400);
-    res = await run(handleDonate(post('/api/donate', { amount: 99999999 }), env(), CORS));
+    res = await run(handleDonate(post('/api/donate', { amount: 99999999 }, { 'CF-Connecting-IP': '198.51.100.33' }), env(), CORS));
     expect(res.status).toBe(400);
     expect(call(/stripe/)).toBeUndefined();
   });
