@@ -667,7 +667,7 @@ export async function handlePlaceOrder(request, env, cors) {
   const payload = {
     mode: 'payment',
     ...(embedded
-      ? { ui_mode: 'embedded', return_url: site + '/?order=' + encodeURIComponent(reference) + (donation > 0 ? '&tip=' + donation : '') }
+      ? { ui_mode: EMBEDDED_MODES[0], return_url: site + '/?order=' + encodeURIComponent(reference) + (donation > 0 ? '&tip=' + donation : '') }
       : { success_url: site + '/?order=' + encodeURIComponent(reference) + (donation > 0 ? '&tip=' + donation : ''), cancel_url: site + '/?screen=cart' }),
     customer_email: recipient.email,
     client_reference_id: reference,
@@ -751,7 +751,7 @@ export async function handlePlaceOrder(request, env, cors) {
 
   let session;
   try {
-    session = await stripe(env, 'POST', '/checkout/sessions', payload, reference);
+    session = await createCheckoutSession(env, payload, reference);
   } catch (e) {
     await env.DB.prepare("UPDATE orders SET status = 'payment_failed' WHERE reference = ?").bind(reference).run();
     throw e;
@@ -759,6 +759,29 @@ export async function handlePlaceOrder(request, env, cors) {
   await env.DB.prepare('UPDATE orders SET stripe_session = ? WHERE reference = ?').bind(session.id || '', reference).run();
 
   return json({ url: session.url || null, client_secret: session.client_secret || null, reference, total, donation, currency }, 200, cors);
+}
+
+/** Stripe renamed the on-site checkout mode: newer API versions want
+ *  `embedded_page` and reject `embedded`; older ones the reverse. The first
+ *  name is tried, and a refusal that names ui_mode is retried with the next
+ *  (under its own idempotency key — Stripe replays a stored refusal otherwise). */
+const EMBEDDED_MODES = ['embedded_page', 'embedded'];
+
+async function createCheckoutSession(env, payload, reference) {
+  if (!payload.ui_mode) return stripe(env, 'POST', '/checkout/sessions', payload, reference);
+  let lastError;
+  for (let i = 0; i < EMBEDDED_MODES.length; i++) {
+    const mode = EMBEDDED_MODES[i];
+    try {
+      return await stripe(env, 'POST', '/checkout/sessions', { ...payload, ui_mode: mode }, i === 0 ? reference : reference + ':' + mode);
+    } catch (e) {
+      lastError = e;
+      const refusedMode = e instanceof StripeError && e.status === 400 && /ui_mode/i.test(String(e.message));
+      if (!refusedMode) throw e;
+      console.warn('Stripe refused ui_mode=' + mode + ' for ' + reference + '; trying the next name.');
+    }
+  }
+  throw lastError;
 }
 
 /** The optional gift on an order: 0 when blank, else a whole non-negative
