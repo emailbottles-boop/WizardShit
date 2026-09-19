@@ -43,12 +43,22 @@ const PRODUCT = {
     { id: 9005, variant_id: 4031, name: 'Unisex Hoodie - Gold / L', retail_price: '47.50', currency: 'USD', availability_status: 'active', files: [], product: { variant_id: 4031, product_id: 146, image: 'https://files.cdn.printful.com/catalog/gold.jpg', name: 'Hoodie Gold / L' } },
   ],
 };
+// A beanie as Printful reports it: size field "One size", colour only in the name.
+const BEANIE = {
+  sync_product: { id: 503, name: 'Wizard Beanie', thumbnail_url: 'https://files.cdn.printful.com/beanie.png' },
+  sync_variants: [
+    { id: 9201, variant_id: 6001, name: 'Wizard Beanie - Black', size: 'One size', color: null, retail_price: '22.00', currency: 'USD', availability_status: 'active', files: [] },
+    { id: 9202, variant_id: 6002, name: 'Wizard Beanie - White', size: 'One size', color: null, retail_price: '22.00', currency: 'USD', availability_status: 'active', files: [] },
+  ],
+};
 const STICKER = {
   sync_product: { id: 502, name: 'Sticker of Rath', thumbnail_url: 'https://files.cdn.printful.com/rath.png' },
   sync_variants: [
     { id: 9101, variant_id: 5001, name: 'Sticker of Rath - 3″×3″', retail_price: '4.00', currency: 'USD', availability_status: 'active', files: [] },
     // Newer payloads carry the axes as fields; the name alone would also parse.
     { id: 9102, variant_id: 5002, name: 'Sticker of Rath - 5.5″×5.5″', size: '5.5″×5.5″', color: null, retail_price: '6.00', currency: 'USD', availability_status: 'active', files: [] },
+    // The size field can be junk-free but old-style: the name still carries a measurement.
+    { id: 9103, variant_id: 5003, name: 'Sticker of Rath - 4″×4″', size: '', color: '', retail_price: '5.00', currency: 'USD', availability_status: 'active', files: [] },
   ],
 };
 
@@ -77,6 +87,7 @@ function installFetch() {
 
     if (url.startsWith('https://api.printful.com/store/products/501')) return pfEnvelope(PRODUCT);
     if (url.startsWith('https://api.printful.com/store/products/502')) return pfEnvelope(STICKER);
+    if (url.startsWith('https://api.printful.com/store/products/503')) return pfEnvelope(BEANIE);
     if (url.startsWith('https://api.printful.com/store/products/')) return jsonRes({ code: 404, result: 'Not Found' }, 404);
     if (url.startsWith('https://api.printful.com/shipping/rates')) {
       return pfEnvelope([
@@ -343,10 +354,20 @@ describe('the catalog', () => {
     expect(data.products[1].variants[0].price).toBe(400);
     // Sticker sizes are sizes, not colours — one from the name, one from Printful's fields.
     expect(data.products[1].colors).toEqual([]);
-    expect(data.products[1].sizes).toEqual(['3″×3″', '5.5″×5.5″']);
+    expect(data.products[1].sizes).toEqual(['3″×3″', '5.5″×5.5″', '4″×4″']);
     // No Printful id: no variants, so the page keeps it as a link.
     expect(data.products[2].variants).toEqual([]);
     expect(data.products[2].url).toContain('printful.me');
+  });
+
+  it('keeps a colour that lives only in the name when Printful reports a size field', async () => {
+    rows['FROM merch_items'] = [
+      { id: 1, title: 'WIZARD BEANIE', url: 'https://wizard.printful.me/product/beanie', image: 'beanie.png', sticker: 0, row_break: 0, printful_id: 503 },
+    ];
+    const res = await handleProducts(env(), ctx, new Request('https://wizardshit.store/api/shop/products'));
+    const beanie = (await res.json()).products[0];
+    expect(beanie.colors).toEqual(['Black', 'White']);
+    expect(beanie.sizes).toEqual(['One size']);
   });
 
   it('reports the shop closed with no Stripe key, so the page falls back to links', async () => {

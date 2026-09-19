@@ -227,11 +227,15 @@ async function productDetail(env, printfulId) {
       // it does, they beat the name (a sticker's "3″×3″" is a size, whatever
       // the name looks like). Older payloads carry neither, and the name is
       // parsed as before.
+      // Each axis takes Printful's field when it has one and the name
+      // otherwise — a beanie can come back as size "One size" with its colour
+      // only in the name. A name part already used as the other axis is not
+      // reused (a sticker's "3″×3″" is its size, never also a colour).
       const parsed = parseVariantName(sp.name, v.name);
       const apiColor = typeof v.color === 'string' ? v.color.trim() : '';
       const apiSize = typeof v.size === 'string' ? v.size.trim() : '';
-      const color = apiColor || apiSize ? apiColor : parsed.color;
-      const size = apiColor || apiSize ? apiSize : parsed.size;
+      const color = apiColor || (parsed.color !== apiSize ? parsed.color : '');
+      const size = apiSize || (parsed.size !== apiColor ? parsed.size : '');
       // The picture for this colour: Printful's mockup of the design on it
       // when one exists, else Printful's catalog photo of the blank garment in
       // that colour, else the product's own thumbnail. The page swaps the
