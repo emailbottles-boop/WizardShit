@@ -749,6 +749,9 @@
     if (!picked || ratesFor !== fingerprint(recipient)) { quoteShipping(); return; }
     var tip = donationMinor();
     if (isNaN(tip)) { setMsg('The donation needs to be a plain amount like 5 or 5.50 (up to ' + money(MAX_TIP, quotedCurrency || 'USD') + '), or left blank.', true); return; }
+    // The cart this payment is for. Only #payBtn is disabled below, so the
+    // per-line +/-/REMOVE buttons stay live while the order POST is away.
+    var placedFor = fingerprint(recipient);
     var btn = document.getElementById('payBtn');
     busy = true;
     btn.disabled = true;
@@ -767,6 +770,17 @@
       checkout: stripePk ? 'embedded' : 'hosted',
     };
     api('/api/shop/orders', order).then(function (d) {
+      // The cart moved while this was in flight. Never mount a payment form
+      // over a cart the screen no longer shows: the draft left behind is
+      // inert, exactly like an abandoned checkout. quoteShipping() guards the
+      // same race for quotes; this is the same guard for payments.
+      if (fingerprint(readForm()) !== placedFor) {
+        busy = false;
+        rates = null;
+        setMsg('Your cart changed while the payment was being set up — here are fresh options.', false);
+        renderCart();
+        return;
+      }
       if (stripePk && d.client_secret) {
         return openEmbedded(d.client_secret).catch(function (e) {
           // Stripe's form couldn't open here (a blocked script, an old
