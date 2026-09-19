@@ -148,12 +148,24 @@ export class PrintfulError extends Error {
   }
 }
 
+/**
+ * A secret exactly as the upstream expects it, however it was pasted in. A
+ * Windows pipe adds a line break; cmd's echo keeps its quotes; a copy from a
+ * web page can carry zero-width characters. All of those make Stripe say
+ * "Invalid API Key provided: rk_live_…????" — the ???? being those bytes.
+ */
+export function cleanSecret(raw) {
+  let s = String(raw ?? '');
+  // Every kind of whitespace, control and zero-width character, anywhere.
+  s = s.replace(/[\s\u0000-\u001f\u007f\u0080-\u00a0\u200b-\u200f\u2028-\u202f\u2060-\u206f\ufeff]/g, '');
+  // Quotes a shell kept around the value.
+  s = s.replace(/^["'`]+|["'`]+$/g, '');
+  return s;
+}
+
 async function printful(env, path, opts = {}) {
   if (!env.PRINTFUL_TOKEN) throw new ShopError('The shop is not connected to Printful yet.', 503);
-  // Secrets are trimmed wherever they are used: pasting one through a
-  // Windows pipe adds an invisible line break, and "rk_live_…\r\n" is an
-  // invalid key as far as the upstream is concerned.
-  const headers = { Authorization: 'Bearer ' + String(env.PRINTFUL_TOKEN).trim() };
+  const headers = { Authorization: 'Bearer ' + cleanSecret(env.PRINTFUL_TOKEN) };
   if (env.PRINTFUL_STORE_ID) headers['X-PF-Store-Id'] = String(env.PRINTFUL_STORE_ID);
   if (opts.body !== undefined) headers['Content-Type'] = 'application/json';
   const res = await fetch('https://api.printful.com' + path, {
@@ -183,7 +195,10 @@ async function printful(env, path, opts = {}) {
  * the page shows. A lone part that looks like a size is a size; otherwise it
  * is treated as a colour.
  */
-const SIZE_RE = /^(xxs|xs|s|m|l|xl|\dxl|xxl|xxxl|one size|os|\d+(\.\d+)?(\s?(in|cm|"|oz))?|\d+\s?x\s?\d+)$/i;
+// A measurement: 3, 5.5, 3″, 4", 12 in, 30cm, 15oz — and a pair of them
+// joined by x or × is a size too (stickers: 3″×3″, 5.5″×5.5″; posters: 18×24).
+const DIM = '\\d+(?:\\.\\d+)?\\s?(?:in|cm|mm|oz|″|′|"|\')?';
+const SIZE_RE = new RegExp('^(?:xxs|xs|s|m|l|xl|\\dxl|xxl|xxxl|one size|os|' + DIM + '(?:\\s?[x×]\\s?' + DIM + ')?)$', 'i');
 
 export function parseVariantName(productName, variantName) {
   let rest = String(variantName || '');
@@ -208,7 +223,15 @@ async function productDetail(env, printfulId) {
   const variants = (r.sync_variants || [])
     .filter((v) => !v.is_ignored)
     .map((v) => {
-      const { color, size } = parseVariantName(sp.name, v.name);
+      // Printful also reports the two axes as fields on the sync variant; when
+      // it does, they beat the name (a sticker's "3″×3″" is a size, whatever
+      // the name looks like). Older payloads carry neither, and the name is
+      // parsed as before.
+      const parsed = parseVariantName(sp.name, v.name);
+      const apiColor = typeof v.color === 'string' ? v.color.trim() : '';
+      const apiSize = typeof v.size === 'string' ? v.size.trim() : '';
+      const color = apiColor || apiSize ? apiColor : parsed.color;
+      const size = apiColor || apiSize ? apiSize : parsed.size;
       // The picture for this colour: Printful's mockup of the design on it
       // when one exists, else Printful's catalog photo of the blank garment in
       // that colour, else the product's own thumbnail. The page swaps the
@@ -502,7 +525,7 @@ export class StripeError extends Error {
 
 async function stripe(env, method, path, payload, idempotencyKey) {
   if (!env.STRIPE_SECRET_KEY) throw new ShopError('Payments are not switched on yet.', 503);
-  const headers = { Authorization: 'Bearer ' + String(env.STRIPE_SECRET_KEY).trim() };
+  const headers = { Authorization: 'Bearer ' + cleanSecret(env.STRIPE_SECRET_KEY) };
   let url = 'https://api.stripe.com/v1' + path;
   let body;
   if (method === 'GET') {
@@ -552,7 +575,12 @@ export async function handlePlaceOrder(request, env, cors) {
 
   const subtotal = lines.reduce((n, l) => n + l.unit_price * l.quantity, 0);
   const shipping = chosen.rate;
-  const total = subtotal + shipping;
+  // An optional gift on top, in minor units of the order's currency. Blank,
+  // null or 0 is simply no gift; anything else must be a whole non-negative
+  // integer within the donation ceiling, or the order is refused rather than
+  // guessed at.
+  const donation = orderDonation(body.donation);
+  const total = subtotal + shipping + donation;
 
   // The storefront sends the total it showed beside PAY (integer cents) and
   // the currency it showed it in. Only a real integer switches the guard on;
@@ -622,6 +650,10 @@ export async function handlePlaceOrder(request, env, cors) {
       draft.status || 'draft',
     )
     .run();
+  if (donation > 0) {
+    await ensureDonationColumn(env);
+    await env.DB.prepare('UPDATE orders SET donation = ? WHERE reference = ?').bind(donation, reference).run();
+  }
 
   const site = siteUrl(env);
   // The storefront asks for the payment to be embedded on its own cart screen
@@ -631,8 +663,8 @@ export async function handlePlaceOrder(request, env, cors) {
   const payload = {
     mode: 'payment',
     ...(embedded
-      ? { ui_mode: 'embedded', return_url: site + '/?order=' + encodeURIComponent(reference) }
-      : { success_url: site + '/?order=' + encodeURIComponent(reference), cancel_url: site + '/?screen=cart' }),
+      ? { ui_mode: 'embedded', return_url: site + '/?order=' + encodeURIComponent(reference) + (donation > 0 ? '&tip=' + donation : '') }
+      : { success_url: site + '/?order=' + encodeURIComponent(reference) + (donation > 0 ? '&tip=' + donation : ''), cancel_url: site + '/?screen=cart' }),
     customer_email: recipient.email,
     client_reference_id: reference,
     metadata: { order_reference: reference },
@@ -643,19 +675,34 @@ export async function handlePlaceOrder(request, env, cors) {
       metadata: { order_reference: reference },
       description: 'Wizard Shit order ' + reference,
     },
-    line_items: lines.map((l) => ({
-      quantity: l.quantity,
-      price_data: {
-        currency: currency.toLowerCase(),
-        unit_amount: l.unit_price,
-        ...(taxEnabled(env) ? { tax_behavior: 'exclusive' } : {}),
-        product_data: {
-          name: l.name,
-          ...(l.option ? { description: l.option } : {}),
-          ...(l.image ? { images: [l.image] } : {}),
+    line_items: [
+      ...lines.map((l) => ({
+        quantity: l.quantity,
+        price_data: {
+          currency: currency.toLowerCase(),
+          unit_amount: l.unit_price,
+          ...(taxEnabled(env) ? { tax_behavior: 'exclusive' } : {}),
+          product_data: {
+            name: l.name,
+            ...(l.option ? { description: l.option } : {}),
+            ...(l.image ? { images: [l.image] } : {}),
+          },
         },
-      },
-    })),
+      })),
+      // The gift is its own line on the receipt, never folded into a product
+      // price; it is not a taxable sale, and Stripe Tax is told so.
+      ...(donation > 0
+        ? [{
+            quantity: 1,
+            price_data: {
+              currency: currency.toLowerCase(),
+              unit_amount: donation,
+              ...(taxEnabled(env) ? { tax_behavior: 'exclusive', tax_code: 'txcd_00000000' } : {}),
+              product_data: { name: 'Donation to Wizard Shit', description: 'Thank you — this keeps the wizards animated.' },
+            },
+          }]
+        : []),
+    ],
     shipping_options: [
       {
         shipping_rate_data: {
@@ -707,7 +754,35 @@ export async function handlePlaceOrder(request, env, cors) {
   }
   await env.DB.prepare('UPDATE orders SET stripe_session = ? WHERE reference = ?').bind(session.id || '', reference).run();
 
-  return json({ url: session.url || null, client_secret: session.client_secret || null, reference, total, currency }, 200, cors);
+  return json({ url: session.url || null, client_secret: session.client_secret || null, reference, total, donation, currency }, 200, cors);
+}
+
+/** The optional gift on an order: 0 when blank, else a whole non-negative
+ *  number of minor units up to the donation ceiling. Anything else refuses. */
+export function orderDonation(raw) {
+  if (raw === undefined || raw === null || raw === '' || raw === 0) return 0;
+  if (typeof raw !== 'number' || !Number.isInteger(raw) || raw < 0 || raw > MAX_DONATION) {
+    throw new ShopError('The donation must be a whole amount up to ' + formatMoney(MAX_DONATION) + ', or left blank.');
+  }
+  return raw;
+}
+
+/** orders.donation arrived after the table did. Add it in place the first
+ *  time it is needed (once per isolate), so a deploy is all an upgrade takes. */
+let ordersHaveDonation = false;
+export function forgetSchemaForTests() { ordersHaveDonation = false; }
+export async function ensureDonationColumn(env) {
+  if (ordersHaveDonation) return;
+  const info = await env.DB.prepare('PRAGMA table_info(orders)').all();
+  const cols = (info && info.results ? info.results : []).map((c) => c && c.name);
+  if (!cols.includes('donation')) {
+    try {
+      await env.DB.prepare('ALTER TABLE orders ADD COLUMN donation INTEGER NOT NULL DEFAULT 0').run();
+    } catch (e) {
+      if (!/duplicate column/i.test(String(e && e.message))) throw e;
+    }
+  }
+  ordersHaveDonation = true;
 }
 
 /* ------------------------------------------------------------ donations --- */
@@ -973,7 +1048,7 @@ async function handlePayoutPaid(env, payout) {
 }
 
 export async function handleStripeWebhook(request, env) {
-  const secret = String(env.STRIPE_WEBHOOK_SECRET || '').trim();
+  const secret = cleanSecret(env.STRIPE_WEBHOOK_SECRET);
   if (!secret) {
     console.error('STRIPE_WEBHOOK_SECRET is not set; refusing to process.');
     return json({ error: 'Webhook is not configured.' }, 500);
@@ -1073,6 +1148,50 @@ export async function handleStripeWebhook(request, env) {
 
 /* ---------------------------------------------------------------- admin --- */
 
+/**
+ * What each secret looks like and whether its upstream accepts it — for the
+ * owner's console, never the value itself. "stray" is true when the stored
+ * value carried characters that had to be cleaned off (quotes, a line break).
+ */
+export async function adminShopHealth(env) {
+  const shape = (raw) => {
+    const value = String(raw ?? '');
+    const clean = cleanSecret(value);
+    return {
+      set: clean.length > 0,
+      prefix: clean.slice(0, clean.indexOf('_') > 0 ? clean.indexOf('_') + 1 : 4),
+      length: clean.length,
+      stray: clean !== value,
+    };
+  };
+  const probe = async (fn) => {
+    try {
+      await fn();
+      return 'ok';
+    } catch (e) {
+      return String((e && e.message) || e);
+    }
+  };
+  const stripeKey = shape(env.STRIPE_SECRET_KEY);
+  const printfulToken = shape(env.PRINTFUL_TOKEN);
+  const webhook = shape(env.STRIPE_WEBHOOK_SECRET);
+  const [stripeLive, printfulLive] = await Promise.all([
+    stripeKey.set ? probe(() => stripe(env, 'GET', '/checkout/sessions', { limit: 1 })) : 'not set',
+    printfulToken.set ? probe(() => printful(env, '/store')) : 'not set',
+  ]);
+  return json(
+    {
+      stripe: { ...stripeKey, test_mode: stripeTestMode(env), live: stripeLive },
+      printful: { ...printfulToken, live: printfulLive },
+      webhook,
+      publishable: !!publishableKey(env),
+      mode: confirmOnPayout(env) ? 'payout' : 'payment',
+    },
+    200,
+    { 'Cache-Control': 'no-store' },
+  );
+}
+
 export async function adminOrders(env) {
   const rows = await env.DB.prepare('SELECT * FROM orders ORDER BY id DESC LIMIT 300').all();
   return json(
@@ -1111,15 +1230,40 @@ export async function adminConfirmOrder(env, reference) {
 }
 
 export async function adminDonations(env) {
-  const [rows, totals] = await Promise.all([
-    env.DB.prepare('SELECT * FROM donations ORDER BY id DESC LIMIT 500').all(),
+  await ensureDonationColumn(env);
+  // Gifts left in the checkout box ride the order's charge, so they live on
+  // the order row; here they are read back in the same shape as a DONATE
+  // gift, with the order's payment state translated to a gift's.
+  const ORDER_GIFT_STATUS =
+    "CASE WHEN status = 'refunded' THEN 'refunded' WHEN stripe_payout <> '' THEN 'paid_out' " +
+    "WHEN status IN ('paid', 'confirmed', 'missing') THEN 'paid' WHEN status = 'payment_failed' THEN 'failed' ELSE 'pending' END";
+  const [rows, giftTotals, orderTotals] = await Promise.all([
+    env.DB.prepare(
+      'SELECT reference, status, amount, currency, name, email, message, public, stripe_payout, created_at, paid_at, \'gift\' AS source FROM donations ' +
+        'UNION ALL ' +
+        'SELECT reference, ' + ORDER_GIFT_STATUS + " AS status, donation AS amount, currency, name, email, '' AS message, 0 AS public, stripe_payout, created_at, paid_at, 'order' AS source " +
+        'FROM orders WHERE donation > 0 ' +
+        'ORDER BY created_at DESC LIMIT 500',
+    ).all(),
     env.DB.prepare(
       "SELECT COALESCE(SUM(CASE WHEN status IN ('paid', 'paid_out') THEN amount END), 0) AS received, " +
         "COALESCE(SUM(CASE WHEN status = 'paid_out' THEN amount END), 0) AS in_bank, " +
         "COUNT(CASE WHEN status IN ('paid', 'paid_out') THEN 1 END) AS gifts FROM donations",
     ).first(),
+    env.DB.prepare(
+      "SELECT COALESCE(SUM(CASE WHEN status IN ('paid', 'confirmed', 'missing') THEN donation END), 0) AS received, " +
+        "COALESCE(SUM(CASE WHEN status IN ('paid', 'confirmed', 'missing') AND stripe_payout <> '' THEN donation END), 0) AS in_bank, " +
+        "COUNT(CASE WHEN status IN ('paid', 'confirmed', 'missing') THEN 1 END) AS gifts FROM orders WHERE donation > 0",
+    ).first(),
   ]);
-  return json({ donations: rows.results || [], totals: totals || { received: 0, in_bank: 0, gifts: 0 }, donate: donateEnabled(env) }, 200, {
+  const g = giftTotals || {};
+  const o = orderTotals || {};
+  const totals = {
+    received: (g.received || 0) + (o.received || 0),
+    in_bank: (g.in_bank || 0) + (o.in_bank || 0),
+    gifts: (g.gifts || 0) + (o.gifts || 0),
+  };
+  return json({ donations: rows.results || [], totals, donate: donateEnabled(env) }, 200, {
     'Cache-Control': 'no-store',
   });
 }

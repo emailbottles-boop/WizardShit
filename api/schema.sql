@@ -150,7 +150,8 @@ CREATE TABLE IF NOT EXISTS orders (
   units                 INTEGER NOT NULL DEFAULT 0,
   subtotal              INTEGER NOT NULL DEFAULT 0,      -- cents
   shipping              INTEGER NOT NULL DEFAULT 0,
-  total                 INTEGER NOT NULL DEFAULT 0,
+  donation              INTEGER NOT NULL DEFAULT 0,      -- optional gift left in the checkout box; part of total
+  total                 INTEGER NOT NULL DEFAULT 0,      -- subtotal + shipping + donation: what Stripe charges (pre-tax)
   currency              TEXT NOT NULL DEFAULT 'USD',
   printful_order_id     INTEGER,
   printful_status       TEXT NOT NULL DEFAULT 'draft',

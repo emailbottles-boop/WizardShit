@@ -249,6 +249,11 @@
 
   /* --------------------------------------------------------- product page --- */
 
+  // The leading number of a size like 3″×3″ or 5.5"x5.5"; NaN when it has none.
+  function sizeInches(sz) {
+    var m = /^\s*(\d+(?:\.\d+)?)/.exec(String(sz));
+    return m ? parseFloat(m[1]) : NaN;
+  }
   function variantImageForColor(p, color) {
     var vs = p.variants.filter(function (v) { return !color || v.color === color; });
     for (var i = 0; i < vs.length; i++) if (vs[i].image) return vs[i].image;
@@ -341,11 +346,34 @@
     }
 
     var sizes = [];
+    // Sizes that are measurements (a sticker's 3″×3″ and 5.5″×5.5″) show the
+    // design itself, scaled with the size, instead of a text pill.
+    var dims = p.sizes.map(sizeInches);
+    var dimensional = p.sizes.length > 1 && dims.every(function (n) { return n > 0; }) && p.sizes.some(function (x) { return /[x×]/.test(x); });
+    var maxDim = dimensional ? Math.max.apply(null, dims) : 0;
+    function sizeScale(sz) { return dimensional ? 0.4 + 0.6 * (sizeInches(sz) / maxDim) : 1; }
+    var tileImgs = [];
     if (p.sizes.length > 1) {
       info.appendChild(el('div', 'product-label', 'SIZE'));
       var szWrap = el('div', 'product-sizes');
       p.sizes.forEach(function (s) {
-        var b = el('button', 'product-size', s);
+        var b;
+        if (dimensional) {
+          b = el('button', 'product-size product-size-tile');
+          b.setAttribute('aria-label', s);
+          b.title = s;
+          var pic = el('span', 'tile-pic');
+          var im = el('img');
+          im.alt = '';
+          im.style.width = Math.round(sizeScale(s) * 100) + '%';
+          im.dataset.size = s;
+          pic.appendChild(im);
+          b.appendChild(pic);
+          b.appendChild(el('span', 'tile-label', s));
+          tileImgs.push(im);
+        } else {
+          b = el('button', 'product-size', s);
+        }
         b.type = 'button';
         b.dataset.size = s;
         b.addEventListener('click', function () { chosen.size = s; refresh(); });
@@ -388,6 +416,14 @@
       var needsColor = p.colors.length > 1 && !chosen.color;
       var needsSize = p.sizes.length > 1 && !chosen.size;
       heroImg.src = (v && v.image) ? v.image : variantImageForColor(p, chosen.color);
+      // Size tiles show the picked colour's design; the hero grows and shrinks
+      // a little with the picked size.
+      tileImgs.forEach(function (im) {
+        var tv = pickVariant(p, chosen.color, im.dataset.size);
+        var src = (tv && tv.image) ? tv.image : variantImageForColor(p, chosen.color);
+        if (im.getAttribute('src') !== src) im.src = src;
+      });
+      heroImg.style.transform = dimensional && chosen.size ? 'scale(' + (0.8 + 0.2 * sizeScale(chosen.size)).toFixed(3) + ')' : '';
       if (v && !needsColor && !needsSize) {
         priceEl.textContent = money(v.price, p.currency);
         addB.disabled = false;
@@ -453,6 +489,23 @@
     });
     try { localStorage.setItem(FORM_KEY, JSON.stringify(out)); } catch (e) { /* fine */ }
     return out;
+  }
+  // The gift typed in the checkout box, in minor units of the cart's currency:
+  // 0 when blank, NaN when it is not a plain amount (5, 5.50, 1,000).
+  var MAX_TIP = 1000000;
+  function donationMinor() {
+    // The box is the last step, shown with the shipping options; while it is
+    // out of sight (no quote yet, or a quote being redone) it counts for nothing.
+    if (!rates || !rates.length) return 0;
+    var i = document.getElementById('tipAmount');
+    var raw = i ? String(i.value || '').replace(/[,\s$]/g, '') : '';
+    if (!raw) return 0;
+    var code = String((rates && quotedCurrency) || (cart[0] && cart[0].currency) || 'USD').toUpperCase();
+    var zero = ZERO_DECIMAL.test(code);
+    if (!(zero ? /^\d+$/ : /^\d+(\.\d{1,2})?$/).test(raw)) return NaN;
+    var minor = zero ? parseInt(raw, 10) : Math.round(parseFloat(raw) * 100);
+    if (!isFinite(minor) || minor < 0 || minor > MAX_TIP) return NaN;
+    return minor;
   }
   function fingerprint(recipient) {
     // Everything the quote is computed from: the whole address the Worker
@@ -585,9 +638,18 @@
     shipEl.textContent = picked ? money(picked.rate, currency) : 'quoted at checkout';
     // Tax, where the owner has switched it on, is added by Stripe on top of
     // this figure — say so rather than show a total that comes up short.
+    var tip = donationMinor();
+    var tipOk = !isNaN(tip) && tip > 0;
+    document.getElementById('cartDonationLabel').style.display = tipOk ? '' : 'none';
+    var tipEl = document.getElementById('cartDonation');
+    tipEl.style.display = tipOk ? '' : 'none';
+    tipEl.textContent = tipOk ? money(tip, currency) : '';
+    var gift = tipOk ? tip : 0;
+    var cur = document.getElementById('tipCur');
+    if (cur) cur.textContent = money(0, currency).replace(/[\d.,\s]/g, '') || currency;
     totalEl.textContent = picked
-      ? money(sub + picked.rate, currency) + (taxOn ? ' + tax' : '')
-      : money(sub, currency) + (taxOn ? ' + shipping & tax' : ' + shipping');
+      ? money(sub + picked.rate + gift, currency) + (taxOn ? ' + tax' : '')
+      : money(sub + gift, currency) + (taxOn ? ' + shipping & tax' : ' + shipping');
     // The line under the totals is where a customer looks for "why can't I
     // pay": a closed shop (only once the catalog has actually said so — before
     // it answers we simply don't know yet) beats the order-cap note.
@@ -600,6 +662,8 @@
   function renderRates() {
     var box = document.getElementById('shipOptions');
     var pay = document.getElementById('payBtn');
+    var tipBox = document.getElementById('tipBox');
+    if (tipBox) tipBox.style.display = rates && rates.length ? '' : 'none';
     box.innerHTML = '';
     if (!rates) {
       // Nothing quoted yet: the button's job is to ask for the options.
@@ -634,8 +698,9 @@
       lab.appendChild(el('span', 'ship-price', money(r.rate, r.currency)));
       box.appendChild(lab);
     });
-    // PAY is only ever offered beside the Worker's own figure.
-    pay.disabled = !rates.some(function (r) { return r.picked; }) || quotedSubtotal === null;
+    // PAY is only ever offered beside the Worker's own figure, and never with
+    // a gift it cannot read.
+    pay.disabled = !rates.some(function (r) { return r.picked; }) || quotedSubtotal === null || isNaN(donationMinor());
     pay.textContent = 'PAY WITH CARD';
   }
 
@@ -682,6 +747,8 @@
     var recipient = readForm();
     var picked = rates && rates.filter(function (r) { return r.picked; })[0];
     if (!picked || ratesFor !== fingerprint(recipient)) { quoteShipping(); return; }
+    var tip = donationMinor();
+    if (isNaN(tip)) { setMsg('The donation needs to be a plain amount like 5 or 5.50 (up to ' + money(MAX_TIP, quotedCurrency || 'USD') + '), or left blank.', true); return; }
     var btn = document.getElementById('payBtn');
     busy = true;
     btn.disabled = true;
@@ -691,10 +758,11 @@
       recipient: recipient,
       items: cart.map(function (l) { return { product_id: l.product_id, variant_id: l.variant_id, quantity: l.qty }; }),
       shipping_id: picked.id,
-      // The total beside PAY at this moment. The Worker refuses to charge
-      // anything else, so a price or rate that moved since the quote sends
-      // the customer back to a fresh quote instead of a surprise on the card.
-      expected_total: quotedSubtotal + picked.rate,
+      donation: tip,
+      // The total beside PAY at this moment, gift included. The Worker refuses
+      // to charge anything else, so a price or rate that moved since the quote
+      // sends the customer back to a fresh quote instead of a surprise on the card.
+      expected_total: quotedSubtotal + picked.rate + tip,
       expected_currency: quotedCurrency,
       checkout: stripePk ? 'embedded' : 'hosted',
     };
@@ -744,6 +812,14 @@
     ['address1', 'city', 'state_code', 'zip', 'country_code'].forEach(function (k) {
       f.elements[k].addEventListener('change', function () { rates = null; renderRates(); });
     });
+    var tip = document.getElementById('tipAmount');
+    if (tip) {
+      tip.addEventListener('input', function () {
+        setMsg('');
+        renderCart();
+        // Keep the caret where it was: renderCart never touches this field.
+      });
+    }
     f.addEventListener('submit', function (e) {
       e.preventDefault();
       if (!f.reportValidity()) return;
@@ -844,6 +920,7 @@
     var params = new URLSearchParams(location.search);
     var order = params.get('order');
     var donated = params.get('donated');
+    var tip = parseInt(params.get('tip') || '0', 10);
     var screen = params.get('screen');
     if (!order && !donated && !screen) return;
     history.replaceState(null, '', '/');
@@ -851,7 +928,9 @@
       cart = [];
       rates = null;
       saveCart();
-      thanks('THANK YOU', 'Order ' + order + ' is paid. It goes to print once your payment settles, usually within a few business days, and a receipt is on its way to your email.');
+      var tipIn = document.getElementById('tipAmount');
+      if (tipIn) tipIn.value = '';
+      thanks('THANK YOU', 'Order ' + order + ' is paid. It goes to print once your payment settles, usually within a few business days, and a receipt is on its way to your email.' + (tip > 0 ? ' And thank you for the donation — you are keeping the wizards animated. ♥' : ''));
     } else if (donated) {
       thanks('THANK YOU', 'Your donation went through. You are keeping the wizards animated.');
     } else if (screen === 'cart') {
