@@ -244,7 +244,6 @@ describe('money', () => {
   it('holds zero-decimal currencies in whole units, so Stripe is asked for the right amount', () => {
     expect(parseMoney('2950', 'JPY')).toBe(2950);
     expect(parseMoney('2950.00', 'JPY')).toBe(2950);
-    expect(parseMoney('2950.60', 'JPY')).toBe(2951);
     expect(parseMoney('29.50', 'USD')).toBe(2950);
     expect(parseMoney('29.50')).toBe(2950);
     expect(formatMoney(2950, 'JPY')).toBe('JPY 2,950');
@@ -258,6 +257,20 @@ describe('money', () => {
     // A three-decimal currency mishandled would be a tenth of a charge: refuse.
     expect(() => parseMoney('5.12', 'KWD')).toThrow();
     expect(() => parseMoney('5', 'BHD')).toThrow();
+  });
+  it('refuses a price it could only charge by changing it', () => {
+    // A fraction of a yen is not rounded to a price Printful never quoted.
+    expect(() => parseMoney('2950.60', 'JPY')).toThrow();
+    expect(() => parseMoney('0.50', 'JPY')).toThrow();
+    // ISK/UGX/HUF/TWD amounts must end in 00 at Stripe; a fraction would be
+    // rejected there, after a draft already existed — refuse up front instead.
+    expect(() => parseMoney('500.50', 'UGX')).toThrow();
+    expect(() => parseMoney('1000.5', 'TWD')).toThrow();
+    expect(parseMoney('1000.00', 'HUF')).toBe(100000);
+    // Beyond twelve integer digits a JS number is no longer exact; no real
+    // price is, and a corrupted one must not be charged at all.
+    expect(parseMoney('999999999999', 'USD')).toBe(99999999999900);
+    expect(() => parseMoney('9007199254740993', 'USD')).toThrow();
   });
 });
 

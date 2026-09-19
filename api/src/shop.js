@@ -99,16 +99,27 @@ export function minorUnits(currency) {
   return ZERO_DECIMAL.has(String(currency || 'USD').toUpperCase()) ? 1 : 100;
 }
 
+// Currencies Stripe charges in hundredths but cannot split below the unit: the
+// amount must end in 00. A fractional price in one of these is unchargeable.
+const WHOLE_UNITS_ONLY = new Set(['ISK', 'UGX', 'HUF', 'TWD']);
+
 export function parseMoney(text, currency = 'USD') {
   const code = String(currency || 'USD').toUpperCase();
   if (THREE_DECIMAL.has(code)) throw new ShopError('Unsupported currency from Printful: ' + code, 502);
   const s = String(text ?? '').trim();
   const m = s.match(/^(-)?(\d+)(?:\.(\d{1,2}))?$/);
-  if (!m) throw new ShopError('Unreadable price from Printful: ' + JSON.stringify(text), 502);
+  // Twelve integer digits keeps every product exact in a JS number (well
+  // below 2^53), and no real price comes anywhere near it.
+  if (!m || m[2].length > 12) throw new ShopError('Unreadable price from Printful: ' + JSON.stringify(text), 502);
   const whole = Number(m[2]);
   const hundredths = Number((m[3] || '').padEnd(2, '0'));
-  // A zero-decimal currency has no cents: any stray fraction rounds to the unit.
-  const units = minorUnits(code) === 1 ? whole + (hundredths >= 50 ? 1 : 0) : whole * 100 + hundredths;
+  // A currency that cannot carry a fraction below the unit must not be given
+  // one: refuse, rather than silently round to a price Printful never quoted
+  // or hand Stripe an amount it will reject after the draft already exists.
+  if (hundredths !== 0 && (minorUnits(code) === 1 || WHOLE_UNITS_ONLY.has(code))) {
+    throw new ShopError('Unreadable price from Printful: ' + JSON.stringify(text) + ' ' + code, 502);
+  }
+  const units = minorUnits(code) === 1 ? whole : whole * 100 + hundredths;
   return m[1] ? -units : units;
 }
 
