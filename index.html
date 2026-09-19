@@ -1126,7 +1126,9 @@ body[data-screen="donators"] .cart-float-wrap { display: block; }
 .ship-option.picked { border-color: rgba(255,220,120,0.85); }
 .ship-option input { accent-color: #ffe066; }
 .shop-msg { display: none; font-size: 0.68rem; letter-spacing: 0.12em; text-align: center; opacity: 0.85; max-width: 600px; margin: 0 auto; line-height: 1.5; }
-.shop-msg.error { color: #ffe066; text-shadow: 0 0 12px rgba(255,224,102,0.7); opacity: 1; }
+/* An error message must show even when it's dropped straight into the page (e.g. the
+   "cannot ship there" note), since .shop-msg is hidden by default. */
+.shop-msg.error { display: block; color: #ffe066; text-shadow: 0 0 12px rgba(255,224,102,0.7); opacity: 1; }
 .shop-note { font-size: 0.62rem; letter-spacing: 0.1em; opacity: 0.7; text-align: center; max-width: 560px; line-height: 1.6; }
 .btn:disabled { opacity: 0.45; cursor: default; transform: none; }
 
