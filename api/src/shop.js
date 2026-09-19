@@ -1162,6 +1162,9 @@ export async function adminShopHealth(env) {
       prefix: clean.slice(0, clean.indexOf('_') > 0 ? clean.indexOf('_') + 1 : 4),
       length: clean.length,
       stray: clean !== value,
+      // Keys are plain letters, digits, _ and -; anything else (a lookalike
+      // letter from a copy, say) can only mean the key was mangled.
+      odd: (clean.match(/[^A-Za-z0-9_-]/g) || []).length,
     };
   };
   const probe = async (fn) => {
@@ -1177,7 +1180,8 @@ export async function adminShopHealth(env) {
   const webhook = shape(env.STRIPE_WEBHOOK_SECRET);
   const [stripeLive, printfulLive] = await Promise.all([
     stripeKey.set ? probe(() => stripe(env, 'GET', '/checkout/sessions', { limit: 1 })) : 'not set',
-    printfulToken.set ? probe(() => printful(env, '/store')) : 'not set',
+    // Asked with a scope the shop actually uses (the catalog), not store details.
+    printfulToken.set ? probe(() => printful(env, '/store/products?limit=1')) : 'not set',
   ]);
   return json(
     {

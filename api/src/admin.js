@@ -965,7 +965,13 @@ export const ADMIN_HTML = `<!DOCTYPE html>
           d.style.color = ok ? '' : '#ff7a7a';
           report.appendChild(d);
         };
-        var shapeText = function (k) { return k.set ? k.prefix + '… (' + k.length + ' characters' + (k.stray ? ', stray characters were cleaned off' : '') + ')' : 'not set'; };
+        var shapeText = function (k) {
+          if (!k.set) return 'not set';
+          var notes = [];
+          if (k.stray) notes.push('stray characters were cleaned off');
+          if (k.odd) notes.push(k.odd + ' character' + (k.odd === 1 ? '' : 's') + ' that cannot be part of a key — re-enter it');
+          return k.prefix + '… (' + k.length + ' characters' + (notes.length ? ', ' + notes.join('; ') : '') + ')';
+        };
         line(h.stripe.set && h.stripe.live === 'ok', 'Stripe secret key ' + shapeText(h.stripe) + (h.stripe.set ? ' — ' + (h.stripe.live === 'ok' ? 'Stripe accepts it' : h.stripe.live) : ''));
         line(h.printful.set && h.printful.live === 'ok', 'Printful token ' + shapeText(h.printful) + (h.printful.set ? ' — ' + (h.printful.live === 'ok' ? 'Printful accepts it' : h.printful.live) : ''));
         line(h.webhook.set && /^whsec_/.test(h.webhook.prefix), 'Stripe webhook secret ' + shapeText(h.webhook));
