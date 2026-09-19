@@ -34,6 +34,8 @@ const PRODUCT = {
     { id: 9002, variant_id: 4012, name: 'Unisex Hoodie - Black / L', retail_price: '45.00', currency: 'USD', availability_status: 'active', files: [{ type: 'preview', preview_url: 'https://files.cdn.printful.com/black.png' }] },
     { id: 9003, variant_id: 4021, name: 'Unisex Hoodie - Purple / L', retail_price: '47.50', currency: 'USD', availability_status: 'active', files: [{ type: 'preview', preview_url: 'https://files.cdn.printful.com/purple.png' }] },
     { id: 9004, variant_id: 4022, name: 'Unisex Hoodie - Purple / XL', retail_price: '47.50', currency: 'USD', availability_status: 'out_of_stock', files: [] },
+    // No mockup for this one: the catalog photo of the blank in that colour stands in.
+    { id: 9005, variant_id: 4031, name: 'Unisex Hoodie - Gold / L', retail_price: '47.50', currency: 'USD', availability_status: 'active', files: [], product: { variant_id: 4031, product_id: 146, image: 'https://files.cdn.printful.com/catalog/gold.jpg', name: 'Hoodie Gold / L' } },
   ],
 };
 const STICKER = {
@@ -282,12 +284,14 @@ describe('the catalog', () => {
     expect(data.shop).toBe(true);
     expect(data.mode).toBe('payout');
     const hoodie = data.products[0];
-    expect(hoodie.colors).toEqual(['Black', 'Purple']);
+    expect(hoodie.colors).toEqual(['Black', 'Purple', 'Gold']);
     expect(hoodie.sizes).toEqual(['S', 'L']); // Purple/XL is out of stock, so XL is gone
     expect(hoodie.price_min).toBe(4500);
     expect(hoodie.price_max).toBe(4750);
-    expect(hoodie.variants).toHaveLength(3);
+    expect(hoodie.variants).toHaveLength(4);
     expect(hoodie.variants[2]).toEqual({ id: 9003, color: 'Purple', size: 'L', price: 4750, image: 'https://files.cdn.printful.com/purple.png' });
+    // A colour with no mockup still gets its own picture: Printful's photo of the blank.
+    expect(hoodie.variants[3].image).toBe('https://files.cdn.printful.com/catalog/gold.jpg');
     expect(data.products[1].sticker).toBe(true);
     expect(data.products[1].variants[0].price).toBe(400);
     // No Printful id: no variants, so the page keeps it as a link.
@@ -468,10 +472,17 @@ describe('the webhook', () => {
     expect(confirmed.args).toEqual([771122, 'pending', 'WIZ-NOW']);
   });
 
-  it('never confirms on test keys', async () => {
-    const res = await deliver(env({ STRIPE_SECRET_KEY: 'sk_test_x', CONFIRM_ON_PAYOUT: 'false' }), paidSession('WIZ-TEST'));
-    expect(await res.json()).toEqual({ received: true, confirmed: false, testMode: true });
-    expect(call(/\/confirm$/)).toBeUndefined();
+  it('never confirms on test keys, secret or restricted', async () => {
+    for (const key of ['sk_test_x', 'rk_test_x']) {
+      calls = [];
+      const res = await deliver(env({ STRIPE_SECRET_KEY: key, CONFIRM_ON_PAYOUT: 'false' }), paidSession('WIZ-TEST'));
+      expect(await res.json()).toEqual({ received: true, confirmed: false, testMode: true });
+      expect(call(/\/confirm$/)).toBeUndefined();
+    }
+    // A live restricted key is live.
+    calls = [];
+    const live = await deliver(env({ STRIPE_SECRET_KEY: 'rk_live_x', CONFIRM_ON_PAYOUT: 'false' }), paidSession('WIZ-LIVE'));
+    expect((await live.json()).confirmed).toBe(true);
   });
 
   it('leaves an unpaid session alone', async () => {

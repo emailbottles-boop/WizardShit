@@ -70,7 +70,8 @@ export function donateEnabled(env) {
 /** True on test keys, where no real money moves. Printful has no test mode —
  *  its API always prints and always bills — so test payments never confirm. */
 export function stripeTestMode(env) {
-  return String(env.STRIPE_SECRET_KEY || '').startsWith('sk_test_');
+  // Secret keys are sk_…, restricted keys rk_…; either can be a test key.
+  return /^(sk|rk)_test_/.test(String(env.STRIPE_SECRET_KEY || ''));
 }
 /** Confirm on payout unless explicitly switched off. */
 export function confirmOnPayout(env) {
@@ -170,7 +171,12 @@ async function productDetail(env, printfulId) {
     .filter((v) => !v.is_ignored)
     .map((v) => {
       const { color, size } = parseVariantName(sp.name, v.name);
+      // The picture for this colour: Printful's mockup of the design on it
+      // when one exists, else Printful's catalog photo of the blank garment in
+      // that colour, else the product's own thumbnail. The page swaps the
+      // card's image to this whenever a colour is picked.
       const preview = (v.files || []).find((f) => f.type === 'preview' && f.preview_url);
+      const catalogPhoto = v.product && v.product.image;
       return {
         id: v.id,
         catalog_id: v.variant_id,
@@ -179,7 +185,7 @@ async function productDetail(env, printfulId) {
         size,
         price: parseMoney(v.retail_price),
         currency: String(v.currency || 'USD').toUpperCase(),
-        image: publicImage(preview && preview.preview_url) || publicImage(sp.thumbnail_url),
+        image: publicImage(preview && preview.preview_url) || publicImage(catalogPhoto) || publicImage(sp.thumbnail_url),
         available: !v.availability_status || v.availability_status === 'active',
       };
     });

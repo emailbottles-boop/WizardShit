@@ -140,8 +140,9 @@
   }
   function updateCount() {
     var n = units();
-    var badge = document.getElementById('cartCount');
-    if (badge) badge.textContent = n ? String(n) : '';
+    var label = n ? String(n) : '';
+    // Every cart button (the merch header one and the floating one) carries a .count span.
+    document.querySelectorAll('.cart-nav .count').forEach(function (el) { el.textContent = label; });
     document.querySelectorAll('.cart-nav').forEach(function (b) { b.classList.toggle('has-items', n > 0); });
   }
 
@@ -161,8 +162,18 @@
     var frag = document.createDocumentFragment();
     products.forEach(function (p) {
       var buyable = shopOpen && p.variants && p.variants.length > 0;
+      // Old-style tile: just the picture and the name. A buyable tile opens its own
+      // product page; when the shop is closed it stays a plain link to Printful.
       var card = el(buyable ? 'div' : 'a', 'merch-feature' + (p.row_break ? ' merch-break' : '') + (buyable ? ' buyable' : ''));
-      if (!buyable) {
+      if (buyable) {
+        card.setAttribute('role', 'button');
+        card.tabIndex = 0;
+        card.setAttribute('aria-label', 'Open ' + p.title);
+        card.addEventListener('click', function () { openProduct(p); });
+        card.addEventListener('keydown', function (e) {
+          if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') { e.preventDefault(); openProduct(p); }
+        });
+      } else {
         card.href = p.url;
         card.target = '_blank';
         card.rel = 'noopener';
@@ -176,74 +187,142 @@
       thumb.appendChild(img);
       card.appendChild(thumb);
       card.appendChild(el('div', 'merch-title', p.title));
-
-      if (buyable) {
-        var priceEl = el('div', 'merch-price');
-        var picks = el('div', 'merch-picks');
-        var chosen = { color: p.colors.length === 1 ? p.colors[0] : '', size: p.sizes.length === 1 ? p.sizes[0] : '' };
-        var addB = el('button', 'merch-add', 'ADD TO CART');
-        addB.type = 'button';
-
-        function refresh() {
-          var v = pickVariant(p, chosen.color, chosen.size);
-          var needs = (p.colors.length > 1 && !chosen.color) || (p.sizes.length > 1 && !chosen.size);
-          if (v && !needs) {
-            priceEl.textContent = money(v.price, p.currency);
-            if (v.image) img.src = v.image;
-            addB.disabled = false;
-            addB.textContent = 'ADD TO CART';
-          } else if (needs) {
-            priceEl.textContent = p.price_min === p.price_max ? money(p.price_min, p.currency) : money(p.price_min, p.currency) + ' – ' + money(p.price_max, p.currency);
-            addB.disabled = true;
-            addB.textContent = p.colors.length > 1 && !chosen.color ? 'PICK A COLOUR' : 'PICK A SIZE';
-          } else {
-            priceEl.textContent = '';
-            addB.disabled = true;
-            addB.textContent = 'SOLD OUT';
-          }
-        }
-
-        function picker(label, values, key) {
-          var sel = el('select', 'merch-pick');
-          sel.setAttribute('aria-label', label + ' for ' + p.title);
-          var first = el('option', '', label.toUpperCase());
-          first.value = '';
-          sel.appendChild(first);
-          values.forEach(function (val) {
-            var o = el('option', '', val);
-            o.value = val;
-            sel.appendChild(o);
-          });
-          sel.addEventListener('change', function () {
-            chosen[key] = sel.value;
-            refresh();
-          });
-          return sel;
-        }
-        if (p.colors.length > 1) picks.appendChild(picker('Colour', p.colors, 'color'));
-        if (p.sizes.length > 1) picks.appendChild(picker('Size', p.sizes, 'size'));
-
-        addB.addEventListener('click', function () {
-          var v = pickVariant(p, chosen.color, chosen.size);
-          if (!v) return;
-          if (addLine(p, v, 1)) {
-            addB.textContent = 'ADDED ✓';
-            setTimeout(refresh, 1200);
-          } else {
-            addB.textContent = 'CART IS FULL';
-            setTimeout(refresh, 1600);
-          }
-        });
-
-        card.appendChild(priceEl);
-        if (picks.childNodes.length) card.appendChild(picks);
-        card.appendChild(addB);
-        refresh();
-      }
       frag.appendChild(card);
     });
     grid.innerHTML = '';
     grid.appendChild(frag);
+  }
+
+  /* --------------------------------------------------------- product page --- */
+
+  function variantImageForColor(p, color) {
+    var vs = p.variants.filter(function (v) { return !color || v.color === color; });
+    for (var i = 0; i < vs.length; i++) if (vs[i].image) return vs[i].image;
+    return imageUrl(p.image);
+  }
+  function priceRange(p) {
+    return p.price_min === p.price_max
+      ? money(p.price_min, p.currency)
+      : money(p.price_min, p.currency) + ' – ' + money(p.price_max, p.currency);
+  }
+
+  // Build a Printful-style detail page for one product: big picture, colour
+  // swatches, size buttons, a quantity stepper and ADD TO CART.
+  function openProduct(p) {
+    var host = document.getElementById('productDetail');
+    if (!host) return;
+    host.innerHTML = '';
+    var chosen = { color: p.colors.length === 1 ? p.colors[0] : '', size: p.sizes.length === 1 ? p.sizes[0] : '' };
+    var qty = 1;
+
+    // Left column: the big picture, which follows the chosen colour.
+    var media = el('div', 'product-media');
+    var hero = el('div', 'product-hero' + (p.sticker ? ' sticker' : ''));
+    var heroImg = el('img');
+    heroImg.alt = p.title;
+    hero.appendChild(heroImg);
+    media.appendChild(hero);
+
+    // Right column: name, price, colour, size, quantity, add.
+    var info = el('div', 'product-info');
+    info.appendChild(el('h2', 'product-name', p.title));
+    var priceEl = el('div', 'product-price');
+    info.appendChild(priceEl);
+
+    var swatches = [];
+    var chosenName = null;
+    if (p.colors.length > 1) {
+      var colourLabel = el('div', 'product-label', 'COLOUR');
+      chosenName = el('span', 'product-chosen', '');
+      colourLabel.appendChild(chosenName);
+      info.appendChild(colourLabel);
+      var swWrap = el('div', 'product-swatches');
+      p.colors.forEach(function (c) {
+        var b = el('button', 'product-swatch');
+        b.type = 'button';
+        b.title = c;
+        b.setAttribute('aria-label', c);
+        b.dataset.color = c;
+        var im = el('img'); im.src = variantImageForColor(p, c); im.alt = c;
+        b.appendChild(im);
+        b.addEventListener('click', function () { chosen.color = c; refresh(); });
+        swatches.push(b);
+        swWrap.appendChild(b);
+      });
+      info.appendChild(swWrap);
+    }
+
+    var sizes = [];
+    if (p.sizes.length > 1) {
+      info.appendChild(el('div', 'product-label', 'SIZE'));
+      var szWrap = el('div', 'product-sizes');
+      p.sizes.forEach(function (s) {
+        var b = el('button', 'product-size', s);
+        b.type = 'button';
+        b.dataset.size = s;
+        b.addEventListener('click', function () { chosen.size = s; refresh(); });
+        sizes.push(b);
+        szWrap.appendChild(b);
+      });
+      info.appendChild(szWrap);
+    }
+
+    info.appendChild(el('div', 'product-label', 'QUANTITY'));
+    var qtyWrap = el('div', 'product-qty');
+    var minus = el('button', 'qty-btn', '−'); minus.type = 'button'; minus.setAttribute('aria-label', 'Fewer');
+    var qtyVal = el('span', 'qty-val', '1');
+    var plus = el('button', 'qty-btn', '+'); plus.type = 'button'; plus.setAttribute('aria-label', 'More');
+    function setQtyVal(n) { qty = Math.max(1, Math.min(n, MAX_UNITS)); qtyVal.textContent = String(qty); }
+    minus.addEventListener('click', function () { setQtyVal(qty - 1); });
+    plus.addEventListener('click', function () { setQtyVal(qty + 1); });
+    qtyWrap.appendChild(minus); qtyWrap.appendChild(qtyVal); qtyWrap.appendChild(plus);
+    info.appendChild(qtyWrap);
+
+    var addB = el('button', 'product-add', 'ADD TO CART');
+    addB.type = 'button';
+    info.appendChild(addB);
+    info.appendChild(el('div', 'shop-note', 'Printed to order. You pay securely on Stripe, and it ships once your payment settles.'));
+
+    function refresh() {
+      swatches.forEach(function (b) { b.classList.toggle('selected', b.dataset.color === chosen.color); });
+      sizes.forEach(function (b) { b.classList.toggle('selected', b.dataset.size === chosen.size); });
+      if (chosenName) chosenName.textContent = chosen.color ? ': ' + chosen.color : '';
+      var v = pickVariant(p, chosen.color, chosen.size);
+      var needsColor = p.colors.length > 1 && !chosen.color;
+      var needsSize = p.sizes.length > 1 && !chosen.size;
+      heroImg.src = (v && v.image) ? v.image : variantImageForColor(p, chosen.color);
+      if (v && !needsColor && !needsSize) {
+        priceEl.textContent = money(v.price, p.currency);
+        addB.disabled = false;
+        addB.textContent = 'ADD TO CART';
+      } else if (needsColor || needsSize) {
+        priceEl.textContent = priceRange(p);
+        addB.disabled = true;
+        addB.textContent = needsColor ? 'PICK A COLOUR' : 'PICK A SIZE';
+      } else {
+        priceEl.textContent = '';
+        addB.disabled = true;
+        addB.textContent = 'SOLD OUT';
+      }
+    }
+
+    addB.addEventListener('click', function () {
+      if (addB.disabled) return;
+      var v = pickVariant(p, chosen.color, chosen.size);
+      if (!v) return;
+      if (addLine(p, v, qty)) {
+        addB.textContent = 'ADDED ✓';
+        setTimeout(function () { addB.textContent = 'ADD TO CART'; }, 1400);
+      } else {
+        addB.textContent = 'CART IS FULL';
+        setTimeout(refresh, 1600);
+      }
+    });
+
+    host.appendChild(media);
+    host.appendChild(info);
+    refresh();
+    go('product');
   }
 
   /* ----------------------------------------------------------- cart screen --- */
@@ -309,17 +388,15 @@
       info.appendChild(el('div', 'cart-each', money(l.price, l.currency) + ' each'));
       row.appendChild(info);
       var right = el('div', 'cart-right');
-      var qty = el('select', 'cart-qty');
-      qty.setAttribute('aria-label', 'Quantity of ' + l.title);
       var allowance = MAX_UNITS - units(l.variant_id);
-      for (var i = 1; i <= Math.max(l.qty, allowance); i++) {
-        var o = el('option', '', String(i));
-        o.value = String(i);
-        if (i === l.qty) o.selected = true;
-        qty.appendChild(o);
-      }
-      qty.addEventListener('change', function () { setQty(l.variant_id, Number(qty.value)); renderCart(); });
-      right.appendChild(qty);
+      var qtyWrap = el('div', 'product-qty cart-qtystep');
+      var minus = el('button', 'qty-btn', '−'); minus.type = 'button'; minus.setAttribute('aria-label', 'Fewer ' + l.title); minus.disabled = l.qty <= 1;
+      var qtyVal = el('span', 'qty-val', String(l.qty));
+      var plus = el('button', 'qty-btn', '+'); plus.type = 'button'; plus.setAttribute('aria-label', 'More ' + l.title); plus.disabled = l.qty >= allowance;
+      minus.addEventListener('click', function () { setQty(l.variant_id, l.qty - 1); renderCart(); });
+      plus.addEventListener('click', function () { setQty(l.variant_id, l.qty + 1); renderCart(); });
+      qtyWrap.appendChild(minus); qtyWrap.appendChild(qtyVal); qtyWrap.appendChild(plus);
+      right.appendChild(qtyWrap);
       right.appendChild(el('div', 'cart-linetotal', money(l.price * l.qty, l.currency)));
       var rm = el('button', 'cart-remove', 'REMOVE');
       rm.type = 'button';
