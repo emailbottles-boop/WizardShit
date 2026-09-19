@@ -1076,7 +1076,7 @@ async function printfulProxy(env, apiPath) {
       501,
     );
   }
-  const headers = { Authorization: 'Bearer ' + env.PRINTFUL_TOKEN };
+  const headers = { Authorization: 'Bearer ' + String(env.PRINTFUL_TOKEN).trim() };
   if (env.PRINTFUL_STORE_ID) headers['X-PF-Store-Id'] = String(env.PRINTFUL_STORE_ID);
   const res = await fetch('https://api.printful.com' + apiPath, { headers });
   let data;

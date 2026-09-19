@@ -150,7 +150,10 @@ export class PrintfulError extends Error {
 
 async function printful(env, path, opts = {}) {
   if (!env.PRINTFUL_TOKEN) throw new ShopError('The shop is not connected to Printful yet.', 503);
-  const headers = { Authorization: 'Bearer ' + env.PRINTFUL_TOKEN };
+  // Secrets are trimmed wherever they are used: pasting one through a
+  // Windows pipe adds an invisible line break, and "rk_live_…\r\n" is an
+  // invalid key as far as the upstream is concerned.
+  const headers = { Authorization: 'Bearer ' + String(env.PRINTFUL_TOKEN).trim() };
   if (env.PRINTFUL_STORE_ID) headers['X-PF-Store-Id'] = String(env.PRINTFUL_STORE_ID);
   if (opts.body !== undefined) headers['Content-Type'] = 'application/json';
   const res = await fetch('https://api.printful.com' + path, {
@@ -488,7 +491,7 @@ export class StripeError extends Error {
 
 async function stripe(env, method, path, payload, idempotencyKey) {
   if (!env.STRIPE_SECRET_KEY) throw new ShopError('Payments are not switched on yet.', 503);
-  const headers = { Authorization: 'Bearer ' + env.STRIPE_SECRET_KEY };
+  const headers = { Authorization: 'Bearer ' + String(env.STRIPE_SECRET_KEY).trim() };
   let url = 'https://api.stripe.com/v1' + path;
   let body;
   if (method === 'GET') {
@@ -959,7 +962,7 @@ async function handlePayoutPaid(env, payout) {
 }
 
 export async function handleStripeWebhook(request, env) {
-  const secret = env.STRIPE_WEBHOOK_SECRET;
+  const secret = String(env.STRIPE_WEBHOOK_SECRET || '').trim();
   if (!secret) {
     console.error('STRIPE_WEBHOOK_SECRET is not set; refusing to process.');
     return json({ error: 'Webhook is not configured.' }, 500);

@@ -625,9 +625,13 @@
         renderCart();
       });
       lab.appendChild(input);
-      var text = r.name + ' — ' + money(r.rate, r.currency);
-      if (r.min_days && r.max_days) text += ' · ' + r.min_days + '–' + r.max_days + ' days';
-      lab.appendChild(el('span', '', text));
+      var body = el('span', 'ship-body');
+      // Printful folds the delivery window into the name; the days are shown
+      // on their own line, so the name keeps just the service.
+      body.appendChild(el('span', 'ship-name', String(r.name).replace(/\s*\(estimated delivery:[^)]*\)/i, '').trim()));
+      if (r.min_days && r.max_days) body.appendChild(el('span', 'ship-days', r.min_days + '–' + r.max_days + ' days'));
+      lab.appendChild(body);
+      lab.appendChild(el('span', 'ship-price', money(r.rate, r.currency)));
       box.appendChild(lab);
     });
     // PAY is only ever offered beside the Worker's own figure.
@@ -683,7 +687,7 @@
     btn.disabled = true;
     btn.textContent = 'ONE MOMENT…';
     setMsg('');
-    api('/api/shop/orders', {
+    var order = {
       recipient: recipient,
       items: cart.map(function (l) { return { product_id: l.product_id, variant_id: l.variant_id, quantity: l.qty }; }),
       shipping_id: picked.id,
@@ -693,8 +697,21 @@
       expected_total: quotedSubtotal + picked.rate,
       expected_currency: quotedCurrency,
       checkout: stripePk ? 'embedded' : 'hosted',
-    }).then(function (d) {
-      if (stripePk && d.client_secret) return openEmbedded(d.client_secret);
+    };
+    api('/api/shop/orders', order).then(function (d) {
+      if (stripePk && d.client_secret) {
+        return openEmbedded(d.client_secret).catch(function (e) {
+          // Stripe's form couldn't open here (a blocked script, an old
+          // browser). Don't strand the customer: use Stripe's own page for
+          // the rest of this visit instead.
+          console.warn('[wiz shop] on-site checkout unavailable, using the Stripe page:', e);
+          stripePk = null;
+          return api('/api/shop/orders', Object.assign({}, order, { checkout: 'hosted' })).then(function (h) {
+            if (!h.url) throw e;
+            location.href = h.url;
+          });
+        });
+      }
       if (!d.url) throw new Error('No payment page came back.');
       location.href = d.url;
     }).catch(function (e) {
