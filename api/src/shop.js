@@ -70,7 +70,8 @@ export function donateEnabled(env) {
 /** True on test keys, where no real money moves. Printful has no test mode —
  *  its API always prints and always bills — so test payments never confirm. */
 export function stripeTestMode(env) {
-  return String(env.STRIPE_SECRET_KEY || '').startsWith('sk_test_');
+  // Secret keys are sk_…, restricted keys rk_…; either can be a test key.
+  return /^(sk|rk)_test_/.test(String(env.STRIPE_SECRET_KEY || ''));
 }
 /** Confirm on payout unless explicitly switched off. */
 export function confirmOnPayout(env) {

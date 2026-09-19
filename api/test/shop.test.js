@@ -472,10 +472,17 @@ describe('the webhook', () => {
     expect(confirmed.args).toEqual([771122, 'pending', 'WIZ-NOW']);
   });
 
-  it('never confirms on test keys', async () => {
-    const res = await deliver(env({ STRIPE_SECRET_KEY: 'sk_test_x', CONFIRM_ON_PAYOUT: 'false' }), paidSession('WIZ-TEST'));
-    expect(await res.json()).toEqual({ received: true, confirmed: false, testMode: true });
-    expect(call(/\/confirm$/)).toBeUndefined();
+  it('never confirms on test keys, secret or restricted', async () => {
+    for (const key of ['sk_test_x', 'rk_test_x']) {
+      calls = [];
+      const res = await deliver(env({ STRIPE_SECRET_KEY: key, CONFIRM_ON_PAYOUT: 'false' }), paidSession('WIZ-TEST'));
+      expect(await res.json()).toEqual({ received: true, confirmed: false, testMode: true });
+      expect(call(/\/confirm$/)).toBeUndefined();
+    }
+    // A live restricted key is live.
+    calls = [];
+    const live = await deliver(env({ STRIPE_SECRET_KEY: 'rk_live_x', CONFIRM_ON_PAYOUT: 'false' }), paidSession('WIZ-LIVE'));
+    expect((await live.json()).confirmed).toBe(true);
   });
 
   it('leaves an unpaid session alone', async () => {
