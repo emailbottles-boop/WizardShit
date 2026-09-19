@@ -49,7 +49,7 @@ ALLOWED_ORIGINS = "https://wizardshit.store,https://www.wizardshit.store,https:/
 # Stripe's PUBLISHABLE key (pk_live_… — public by design, safe here). With it,
 # the storefront mounts Stripe's checkout on its own cart screen instead of
 # sending customers to a Stripe page. Leave empty for the hosted page.
-STRIPE_PUBLISHABLE_KEY = ""
+STRIPE_PUBLISHABLE_KEY = "pk_live_51UHGLxI214n3c59qQY6c1k23nEV5RPbaWC3PbKVAuCJ25L1TTeK3jD4YzXLQOqbxEZGWHTEU8zFedZvx05hd3kdt00YIJK2hzH"
 
 # --- The shop (src/shop.js): cart, checkout, donations on wizardshit.store ---
 # Where Stripe sends the customer back to after paying.
