@@ -47,6 +47,26 @@ bucket_name = "wizardshit-images"
 # Origins allowed to call the public API from a browser.
 ALLOWED_ORIGINS = "https://wizardshit.store,https://www.wizardshit.store,https://madamwizzy.com,https://www.madamwizzy.com,http://localhost:8080,http://127.0.0.1:8080"
 
+# --- The shop (src/shop.js): cart, checkout, donations on wizardshit.store ---
+# Where Stripe sends the customer back to after paying.
+SITE_URL = "https://wizardshit.store"
+# When a paid order goes to print. "true" (the default): only once Stripe has
+# paid that order's money out to the bank, so printing is never fronted from
+# the studio's own pocket. "false": the moment the card is charged.
+# Needs the Stripe webhook subscribed to payout.paid as well as the checkout events.
+CONFIRM_ON_PAYOUT = "true"
+# Sales tax at checkout via Stripe Tax. Leave off until a tax registration
+# (e.g. Washington) has been added under Stripe → Settings → Tax, then "true".
+STRIPE_TAX = "false"
+# Only needed if PRINTFUL_TOKEN is an account-level token rather than a
+# store-level one (the store dropdown in Printful → Settings → Developers).
+# PRINTFUL_STORE_ID = "12345678"
+#
+# Secrets the shop needs (never in this file):
+#   npx wrangler secret put PRINTFUL_TOKEN          # Printful → Settings → Developers → Add token (Products read, Orders read/write)
+#   npx wrangler secret put STRIPE_SECRET_KEY       # Stripe → Developers → API keys → Secret key (sk_live_…)
+#   npx wrangler secret put STRIPE_WEBHOOK_SECRET   # Stripe → Developers → Webhooks → the endpoint's signing secret (whsec_…)
+
 # --- Admin auth, option A (recommended): Cloudflare Access ---
 # Put an Access application in front of this worker's /admin and /api/admin
 # paths, then fill these in (see README step 5).

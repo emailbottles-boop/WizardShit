@@ -297,3 +297,71 @@ list the madamstudio origin under Authorized JavaScript origins in the
 Google Cloud console (add https://<your madamstudio domain>). Without a
 client id configured the button just stays hidden and username/email +
 password still works. Then: npx wrangler deploy.
+
+## Upgrade: the shop and donations on the site itself (2026-09)
+
+Buying used to bounce out to Printful's hosted store, and donating to
+Donorbox. Now both happen on wizardshit.store: the merch cards show
+Printful's colours, sizes and prices, there is a cart and one checkout, the
+DONATE button opens an amount picker, and Stripe takes the money. Every order
+and donation is recorded in D1 and shown in the console's ORDERS and
+DONATIONS tabs. The code lives in `src/shop.js`; `test/shop.test.js` proves
+the money path (`npm test` from this folder).
+
+**How money moves.** Printful is the fulfiller, not the cashier: when an
+order confirms, Printful bills *you* for the blank, the print and the
+postage. So checkout creates the Printful order as an **unconfirmed draft**
+(never printed, never billed), Stripe charges the customer, and the draft is
+confirmed only once Stripe has **paid that money out to the bank**
+(`CONFIRM_ON_PAYOUT = "true"` in `wrangler.toml`, the default). Nothing is
+ever printed on credit. Orders go to print a few days after payment, and the
+checkout page says so. Set it to `"false"` to confirm the moment the card is
+charged instead. Refunded or disputed charges are never confirmed; a confirm
+that fails is retried by Stripe for days and, failing that, stays a paid
+draft in the console with a CONFIRM button.
+
+**Turning it on**, all from this `api/` folder:
+
+1. Run the one-off migration (adds the `orders` and `donations` tables and the
+   `printful_id` column on merch):
+
+   ```
+   npx wrangler d1 execute wizardshit --remote --file=upgrade-shop.sql
+   ```
+
+2. Set the three secrets (each prompts for the value; nothing goes in git):
+
+   ```
+   npx wrangler secret put PRINTFUL_TOKEN          # Printful → Settings → Developers → Add token (Products read, Orders read/write), while the wizard store is selected
+   npx wrangler secret put STRIPE_SECRET_KEY       # Stripe → Developers → API keys → Secret key, in LIVE mode (sk_live_…)
+   npx wrangler secret put STRIPE_WEBHOOK_SECRET   # see step 4
+   ```
+
+   If the Printful token is account-level rather than store-level, also set
+   `PRINTFUL_STORE_ID` in `wrangler.toml`.
+
+3. Deploy: `npx wrangler deploy`.
+
+4. In Stripe (live mode): Developers → Webhooks → **Add destination**,
+   endpoint URL `https://wizardshit.store/api/webhooks/stripe`, listening to
+   `checkout.session.completed`, `checkout.session.async_payment_succeeded`,
+   `checkout.session.async_payment_failed`, `payout.paid`, `payout.failed`,
+   `payout.canceled` and `charge.refunded`. Copy its signing secret into
+   `STRIPE_WEBHOOK_SECRET` (step 2) and deploy again if you set it afterwards.
+
+5. In the console's MERCH tab, pick the Printful product each card sells
+   ("Sold on the site as") and SAVE & PUBLISH. Cards with a product get
+   colours, sizes, a price and ADD TO CART; cards without stay plain links.
+   The Import-from-Printful panel fills this in automatically for new cards.
+
+Until `STRIPE_SECRET_KEY` and `PRINTFUL_TOKEN` are both set, the site keeps
+its old behaviour: link cards and the Donorbox button. With only the Stripe
+key set, donations work and the shop stays closed.
+
+**Sales tax.** Once a tax registration exists in Stripe (Settings → Tax),
+set `STRIPE_TAX = "true"` in `wrangler.toml` and checkout adds tax against
+the shipping address through Stripe Tax.
+
+**Testing safely.** With a test key (`sk_test_…`) the whole flow runs but
+nothing is ever sent to Printful for production, because Printful has no
+test mode and would print for real.

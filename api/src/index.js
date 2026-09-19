@@ -12,6 +12,11 @@
  *   GET /api/portal/uploads -> crew-only: a creator's uploads (or crew feed)
  *   GET /api/portal/panels  -> crew-only: creator work panels
  *   POST /api/apply        -> apply to work on the show (admin-only to read)
+ *   GET  /api/shop/products  -> the merch grid with Printful colours, sizes, prices (src/shop.js)
+ *   POST /api/shop/shipping  -> shipping options for a cart + address
+ *   POST /api/shop/orders    -> place an order: Printful draft + Stripe Checkout
+ *   POST /api/donate         -> a donation: Stripe Checkout, recorded in D1
+ *   POST /api/webhooks/stripe -> Stripe calls back: paid, paid out, refunded
  *
  * Owner endpoints (require auth — Cloudflare Access, or ADMIN_PASSWORD):
  *   GET /admin                        -> the admin panel UI
@@ -33,24 +38,43 @@
  *   DELETE /api/admin/claims/<id>     -> delete a claim
  *   GET /api/admin/orders             -> recent Printful orders (needs PRINTFUL_TOKEN)
  *   GET /api/admin/printful/products  -> Printful store products (needs PRINTFUL_TOKEN)
+ *   GET /api/admin/shop/orders        -> the shop's own order book (paid? printed? paid out?)
+ *   POST /api/admin/shop/orders/<ref>/confirm -> send a paid order to print by hand
+ *   GET /api/admin/donations          -> every donation and the running totals
  */
 
 import { ADMIN_HTML } from './admin.js';
+import {
+  handleProducts,
+  handleShipping,
+  handlePlaceOrder,
+  handleDonate,
+  handleStripeWebhook,
+  adminOrders,
+  adminConfirmOrder,
+  adminDonations,
+  purgeCatalogCache,
+  shopErrorResponse,
+} from './shop.js';
 
 const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
 
 const COLLECTIONS = {
   merch: {
     table: 'merch_items',
-    columns: ['title', 'url', 'image', 'sticker', 'row_break', 'visible', 'sort'],
+    columns: ['title', 'url', 'image', 'sticker', 'row_break', 'visible', 'sort', 'printful_id'],
     clean(item, i) {
       const title = str(item.title, 300);
       const url = str(item.url, 1000);
       const image = str(item.image, 1000);
+      // The Printful product this card sells. With one set, the card gets
+      // colours, sizes and add-to-cart; without, it stays a plain link.
+      const pf = Number(item.printful_id);
+      const printfulId = Number.isInteger(pf) && pf > 0 ? pf : null;
       if (!title) throw new BadInput('merch item ' + (i + 1) + ': title is required');
       if (!/^https?:\/\//i.test(url)) throw new BadInput('merch item "' + title + '": link must start with http(s)://');
       if (!image) throw new BadInput('merch item "' + title + '": image is required');
-      return [title, url, image, bool(item.sticker), bool(item.row_break), bool(item.visible), i];
+      return [title, url, image, bool(item.sticker), bool(item.row_break), bool(item.visible), i, printfulId];
     },
   },
   credits: {
@@ -1052,9 +1076,9 @@ async function printfulProxy(env, apiPath) {
       501,
     );
   }
-  const res = await fetch('https://api.printful.com' + apiPath, {
-    headers: { Authorization: 'Bearer ' + env.PRINTFUL_TOKEN },
-  });
+  const headers = { Authorization: 'Bearer ' + env.PRINTFUL_TOKEN };
+  if (env.PRINTFUL_STORE_ID) headers['X-PF-Store-Id'] = String(env.PRINTFUL_STORE_ID);
+  const res = await fetch('https://api.printful.com' + apiPath, { headers });
   let data;
   try {
     data = await res.json();
@@ -1330,6 +1354,22 @@ async function route(request, env, ctx, url, path, method) {
       if (method === 'POST' && path === '/api/claim') {
         return receiveClaim(request, env);
       }
+      // ---- the shop + donations (src/shop.js) ----
+      if (path === '/api/shop/products' || path === '/api/shop/shipping' || path === '/api/shop/orders' || path === '/api/donate' || path === '/api/webhooks/stripe') {
+        const cors = writeCors(request, env);
+        try {
+          if (method === 'GET' && path === '/api/shop/products') return await handleProducts(env, ctx, request);
+          if (method === 'POST' && path === '/api/shop/shipping') return await handleShipping(request, env, cors);
+          if (method === 'POST' && path === '/api/shop/orders') return await handlePlaceOrder(request, env, cors);
+          if (method === 'POST' && path === '/api/donate') return await handleDonate(request, env, cors);
+          if (method === 'POST' && path === '/api/webhooks/stripe') return await handleStripeWebhook(request, env);
+          return json({ error: 'Not found' }, 404, PUBLIC_CORS);
+        } catch (e) {
+          const known = shopErrorResponse(e, cors);
+          if (known) return known;
+          throw e;
+        }
+      }
       // ---- member accounts ----
       if (method === 'POST' && path === '/api/account/signup') {
         return accountSignup(request, env);
@@ -1445,6 +1485,7 @@ async function route(request, env, ctx, url, path, method) {
           }
           await replaceCollection(env, name, items);
           await purgeContentCache();
+          if (name === 'merch') await purgeCatalogCache();
           return json({ ok: true, saved: items.length });
         }
         if (method === 'POST' && path === '/api/admin/upload') {
@@ -1603,6 +1644,24 @@ async function route(request, env, ctx, url, path, method) {
             200,
             { 'Cache-Control': 'no-store' },
           );
+        }
+        if (method === 'GET' && path === '/api/admin/shop/orders') {
+          return adminOrders(env);
+        }
+        {
+          const m = path.match(/^\/api\/admin\/shop\/orders\/([A-Z0-9-]{4,40})\/confirm$/);
+          if (m && method === 'POST') {
+            try {
+              return await adminConfirmOrder(env, m[1]);
+            } catch (e) {
+              const known = shopErrorResponse(e);
+              if (known) return known;
+              throw e;
+            }
+          }
+        }
+        if (method === 'GET' && path === '/api/admin/donations') {
+          return adminDonations(env);
         }
         if (method === 'GET' && path === '/api/admin/orders') {
           return printfulProxy(env, '/orders?limit=50');

@@ -914,6 +914,150 @@ form input.invalid {
   display: none;
 }
 
+
+/* ===== SHOP (cards you can buy, the cart, donate) ===== */
+.merch-feature.buyable { cursor: default; }
+.merch-price {
+  text-align: center;
+  font-size: 0.8rem;
+  letter-spacing: 0.12em;
+  color: #ffe066;
+  margin-top: 0.5rem;
+  min-height: 1.1em;
+}
+.merch-picks { display: flex; gap: 0.5rem; margin-top: 0.7rem; }
+.merch-pick, .cart-qty, .checkout-form select {
+  flex: 1;
+  min-width: 0;
+  padding: 0.55rem 0.6rem;
+  border-radius: 12px;
+  border: 1.5px solid rgba(180,80,255,0.7);
+  background: rgba(0,0,0,0.45);
+  color: white;
+  font-size: 0.68rem;
+  letter-spacing: 0.1em;
+  font-weight: 700;
+}
+.merch-pick option, .cart-qty option, .checkout-form select option { color: black; }
+.merch-add, .cart-remove {
+  margin-top: 0.7rem;
+  padding: 0.7rem 1rem;
+  border-radius: 999px;
+  border: none;
+  background: linear-gradient(135deg, #ffe066, #b000ff);
+  color: black;
+  font-size: 0.62rem;
+  font-weight: 900;
+  letter-spacing: 0.25em;
+  cursor: pointer;
+  transition: transform 0.2s ease, opacity 0.2s ease;
+}
+.merch-add:hover:not(:disabled) { transform: scale(1.04); }
+.merch-add:disabled { opacity: 0.45; cursor: default; }
+.cart-nav .count:not(:empty)::before { content: '·'; margin: 0 0.4em; }
+.cart-nav.has-items { border-color: rgba(255,220,120,0.85); }
+
+.cart-lines { width: 100%; max-width: 900px; display: flex; flex-direction: column; gap: 1rem; }
+.cart-line {
+  display: flex;
+  gap: 1.2rem;
+  align-items: center;
+  padding: 1rem 1.2rem;
+  border-radius: 18px;
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(180,80,255,0.3);
+}
+.cart-line img { width: 84px; height: 84px; border-radius: 12px; background: #fff; object-fit: contain; flex-shrink: 0; }
+.cart-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.25rem; }
+.cart-title { font-weight: 900; letter-spacing: 0.15em; font-size: 0.8rem; }
+.cart-option, .cart-each { font-size: 0.68rem; letter-spacing: 0.1em; opacity: 0.8; }
+.cart-right { display: flex; flex-direction: column; align-items: flex-end; gap: 0.4rem; flex-shrink: 0; }
+.cart-qty { flex: none; width: 74px; }
+.cart-linetotal { font-size: 0.85rem; font-weight: 900; color: #ffe066; letter-spacing: 0.1em; }
+.cart-remove { margin-top: 0; padding: 0.4rem 0.8rem; font-size: 0.55rem; background: rgba(255,255,255,0.12); color: white; }
+.cart-totals {
+  width: 100%;
+  max-width: 900px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.4rem 2rem;
+  font-size: 0.78rem;
+  letter-spacing: 0.15em;
+  padding: 1rem 1.2rem;
+  border-radius: 18px;
+  border: 1px solid rgba(255,210,60,0.4);
+  background: rgba(0,0,0,0.3);
+}
+.cart-totals .grand { font-weight: 900; color: #ffe066; font-size: 0.95rem; }
+.cart-cap { grid-column: 1 / -1; font-size: 0.65rem; opacity: 0.8; letter-spacing: 0.08em; }
+.cart-cap:empty { display: none; }
+.checkout-box { width: 100%; max-width: 900px; display: flex; flex-direction: column; gap: 1.2rem; align-items: stretch; }
+.checkout-box h3 { margin: 0; font-size: 0.9rem; letter-spacing: 0.3em; font-weight: 900; text-align: center; }
+.checkout-form { display: grid; grid-template-columns: 1fr 1fr; gap: 0.8rem; align-items: stretch; }
+.checkout-form input, .checkout-form select {
+  width: 100%;
+  max-width: none;
+  box-sizing: border-box;
+  text-align: left;
+  border-radius: 14px;
+  padding: 0.85rem 1rem;
+  font-size: 0.72rem;
+}
+.checkout-form .full { grid-column: 1 / -1; }
+.checkout-form .pay { grid-column: 1 / -1; display: flex; flex-direction: column; align-items: center; gap: 0.8rem; margin-top: 0.4rem; }
+.ship-options { display: flex; flex-direction: column; gap: 0.5rem; width: 100%; }
+.ship-option {
+  display: flex; gap: 0.8rem; align-items: center;
+  padding: 0.7rem 1rem; border-radius: 14px;
+  border: 1.5px solid rgba(180,80,255,0.5); background: rgba(255,255,255,0.06);
+  font-size: 0.7rem; letter-spacing: 0.1em; cursor: pointer;
+}
+.ship-option.picked { border-color: rgba(255,220,120,0.85); }
+.ship-option input { accent-color: #ffe066; }
+.shop-msg { display: none; font-size: 0.68rem; letter-spacing: 0.12em; text-align: center; opacity: 0.85; max-width: 600px; margin: 0 auto; line-height: 1.5; }
+.shop-msg.error { color: #ffe066; text-shadow: 0 0 12px rgba(255,224,102,0.7); opacity: 1; }
+.shop-note { font-size: 0.62rem; letter-spacing: 0.1em; opacity: 0.7; text-align: center; max-width: 560px; line-height: 1.6; }
+.btn:disabled { opacity: 0.45; cursor: default; transform: none; }
+
+.thanks-box { display: flex; flex-direction: column; align-items: center; gap: 1.6rem; text-align: center; max-width: 640px; padding: 2rem; }
+.thanks-box p { font-size: 0.8rem; letter-spacing: 0.12em; line-height: 1.8; opacity: 0.9; margin: 0; }
+
+.donate-modal {
+  position: fixed; inset: 0; z-index: 50;
+  background: rgba(8,2,20,0.78); backdrop-filter: blur(8px);
+  display: flex; align-items: center; justify-content: center; padding: 1rem;
+}
+.donate-modal[hidden] { display: none; }
+.donate-card {
+  width: min(460px, 100%); box-sizing: border-box;
+  padding: 2rem 1.8rem; border-radius: 22px;
+  background: #160a2c; border: 2px solid rgba(180,80,255,0.8);
+  box-shadow: 0 20px 80px rgba(180,80,255,0.35);
+  display: flex; flex-direction: column; gap: 1rem; position: relative;
+}
+.donate-card h2 { margin: 0; font-size: 1.1rem; letter-spacing: 0.3em; font-weight: 900; text-align: center; }
+.donate-card p { margin: 0; font-size: 0.68rem; letter-spacing: 0.1em; text-align: center; opacity: 0.8; line-height: 1.6; }
+.donate-amounts { display: grid; grid-template-columns: repeat(5, 1fr); gap: 0.5rem; }
+.donate-amt {
+  padding: 0.7rem 0.2rem; border-radius: 12px; cursor: pointer;
+  border: 1.5px solid rgba(180,80,255,0.6); background: rgba(255,255,255,0.06);
+  color: white; font-weight: 900; font-size: 0.75rem; letter-spacing: 0.05em;
+}
+.donate-amt.picked { background: linear-gradient(135deg, #ffe066, #b000ff); color: black; border-color: transparent; }
+.donate-card input[type="text"], .donate-card input[type="number"], .donate-card input[type="email"] {
+  width: 100%; max-width: none; box-sizing: border-box; text-align: left;
+  padding: 0.8rem 1rem; border-radius: 14px; font-size: 0.72rem;
+  border: 2px solid rgba(180,80,255,0.85); background: rgba(0,0,0,0.45); color: white;
+}
+.donate-card label.check { display: flex; gap: 0.6rem; align-items: center; font-size: 0.65rem; letter-spacing: 0.1em; opacity: 0.9; }
+.donate-card .btn { min-width: 0; width: 100%; padding: 1rem; }
+.donate-close {
+  position: absolute; top: 0.7rem; right: 0.9rem; background: none; border: none;
+  color: white; font-size: 1.2rem; cursor: pointer; opacity: 0.7;
+}
+.donate-heart { color: #ffe066; }
+body.donate-open { overflow: hidden; }
+
 /* ===== MOBILE ===== */
 @media (max-width: 900px) {
   body { overflow-y: auto; overflow-x: hidden; overscroll-behavior-y: none; }
@@ -1141,6 +1285,19 @@ input:focus-visible {
 ::-webkit-scrollbar-thumb:hover { background: rgba(180, 80, 255, 0.6); }
 
 :root { color-scheme: dark; }
+
+@media (max-width: 900px) {
+  .merch-picks { flex-direction: column; gap: 0.35rem; margin-top: 0.45rem; }
+  .merch-pick { font-size: 0.6rem; padding: 0.45rem 0.5rem; }
+  .merch-add { font-size: 0.55rem; padding: 0.55rem 0.6rem; letter-spacing: 0.15em; margin-top: 0.45rem; }
+  .merch-price { font-size: 0.7rem; }
+  .cart-line { flex-wrap: wrap; gap: 0.8rem; padding: 0.8rem; }
+  .cart-line img { width: 64px; height: 64px; }
+  .cart-right { flex-direction: row; align-items: center; width: 100%; justify-content: space-between; }
+  .checkout-form { grid-template-columns: 1fr; }
+  .donate-amounts { grid-template-columns: repeat(3, 1fr); }
+  #cart, #thanks { padding-bottom: 90px; box-sizing: border-box; }
+}
 </style>
 </head>
 
@@ -1157,6 +1314,22 @@ input:focus-visible {
   <a class="donate-btn" href="https://donorbox.org/wiz-rd-shit?" target="_blank">
     <img src="https://donorbox.org/images/white_logo.svg" height="14" alt="Donorbox"> DONATE
   </a>
+</div>
+
+<!-- DONATE POPUP: js/shop.js opens this once Stripe donations are switched on -->
+<div class="donate-modal" id="donateModal" hidden role="dialog" aria-modal="true" aria-labelledby="donateHeading">
+  <div class="donate-card">
+    <button class="donate-close" id="donateClose" type="button" aria-label="Close">✕</button>
+    <h2 id="donateHeading">DONATE</h2>
+    <p>Every dollar goes to Madam Studio and keeps the wizards animated. You'll pay securely on Stripe.</p>
+    <div class="donate-amounts" id="donateAmounts"></div>
+    <input type="number" id="donateCustom" min="1" max="10000" step="1" placeholder="OR ANY AMOUNT IN DOLLARS" inputmode="numeric">
+    <input type="text" id="donateName" maxlength="100" placeholder="YOUR NAME (OPTIONAL)">
+    <input type="text" id="donateNote" maxlength="300" placeholder="A NOTE FOR THE CREW (OPTIONAL)">
+    <label class="check"><input type="checkbox" id="donatePublic"> You can thank me by name on the DONATORS page</label>
+    <div class="shop-msg error" id="donateMsg" style="display: block;"></div>
+    <button class="btn" type="button" id="donateGive">GIVE</button>
+  </div>
 </div>
 
 <!-- HOME SCREEN -->
@@ -1240,6 +1413,7 @@ input:focus-visible {
     <div class="top-section" style="margin-top: 2rem;">
       <div class="content-title">MERCH</div>
       <div class="right-buttons">
+        <div class="nav-box-small cart-nav" id="merchToCartBtn">CART<span class="count" id="cartCount"></span></div>
         <div class="nav-box-small" id="merchToContentBtn">CONTENT</div>
         <div class="nav-box-small" id="merchToCreditsBtn">CREDITS</div>
       </div>
@@ -1322,6 +1496,67 @@ input:focus-visible {
       <button class="btn btn-secondary" id="backFromMerchBtn">BACK</button>
     </div>
 
+  </div>
+</div>
+
+<!-- CART SCREEN (js/shop.js fills it) -->
+<div class="screen" id="cart" style="align-items: flex-start; justify-content: flex-start; overflow-y: auto;">
+  <div class="updates-container" style="padding-top: 0;">
+
+    <div class="top-section" style="margin-top: 2rem;">
+      <div class="content-title">CART</div>
+      <div class="right-buttons">
+        <div class="nav-box-small" id="cartToMerchBtn">MERCH</div>
+        <div class="nav-box-small" id="cartToContentBtn">CONTENT</div>
+      </div>
+    </div>
+
+    <div class="shop-note" id="cartEmpty">Your cart is empty. Everything in MERCH can go in it.</div>
+
+    <div class="cart-lines" id="cartLines"></div>
+
+    <div class="cart-totals" id="cartTotals" style="display: none;">
+      <span>SUBTOTAL</span><span id="cartSubtotal"></span>
+      <span>SHIPPING</span><span id="cartShipping"></span>
+      <span class="grand">TOTAL</span><span class="grand" id="cartTotal"></span>
+      <span class="cart-cap" id="cartCap"></span>
+    </div>
+
+    <div class="checkout-box" id="checkoutBox" style="display: none;">
+      <h3>SHIP TO</h3>
+      <form class="checkout-form" id="checkoutForm" novalidate>
+        <input name="name" type="text" placeholder="NAME" autocomplete="name" required maxlength="100">
+        <input name="email" type="email" placeholder="EMAIL FOR YOUR RECEIPT" autocomplete="email" required maxlength="200">
+        <input name="address1" type="text" class="full" placeholder="STREET ADDRESS" autocomplete="address-line1" required maxlength="200">
+        <input name="address2" type="text" class="full" placeholder="APT, UNIT (OPTIONAL)" autocomplete="address-line2" maxlength="200">
+        <input name="city" type="text" placeholder="CITY" autocomplete="address-level2" required maxlength="100">
+        <input name="state_code" type="text" placeholder="STATE / PROVINCE (E.G. WA)" autocomplete="address-level1" maxlength="20">
+        <input name="zip" type="text" placeholder="POSTAL CODE" autocomplete="postal-code" required maxlength="20">
+        <select name="country_code" autocomplete="country" required aria-label="Country"></select>
+        <input name="phone" type="tel" class="full" placeholder="PHONE (OPTIONAL, FOR THE COURIER)" autocomplete="tel" maxlength="40">
+        <div class="pay">
+          <div class="ship-options" id="shipOptions"></div>
+          <div class="shop-msg" id="checkoutMsg"></div>
+          <button class="btn" type="submit" id="payBtn">GET SHIPPING OPTIONS</button>
+          <div class="shop-note">You'll pay securely on Stripe. Your order goes to print once your payment settles, usually within a few business days, and every piece is printed to order.</div>
+        </div>
+      </form>
+    </div>
+
+    <div class="email-section" style="margin-top: 1rem;">
+      <button class="btn btn-secondary" id="backFromCartBtn">BACK TO MERCH</button>
+    </div>
+
+  </div>
+</div>
+
+<!-- THANKS SCREEN (after a paid order or donation) -->
+<div class="screen" id="thanks">
+  <div class="thanks-box">
+    <div class="page-title" id="thanksTitle">THANK YOU</div>
+    <p id="thanksText"></p>
+    <button class="btn" id="thanksToMerchBtn">BACK TO MERCH</button>
+    <button class="btn btn-secondary" id="thanksToHomeBtn">HOME</button>
   </div>
 </div>
 
@@ -1615,6 +1850,8 @@ const merch = document.getElementById("merch");
 const content = document.getElementById("content");
 const credits = document.getElementById("credits");
 const donators = document.getElementById("donators");
+const cart = document.getElementById("cart");
+const thanks = document.getElementById("thanks");
 
 const enterBtn = document.getElementById("enterBtn");
 const backBtn = document.getElementById("backBtn");
@@ -1660,7 +1897,7 @@ document.addEventListener("visibilitychange", () => {
   }
 });
 
-const SCREENS = { home, updates, merch, content, credits, donators };
+const SCREENS = { home, updates, merch, content, credits, donators, cart, thanks };
 
 // Restore path after 404.html redirect (e.g. /?p=credits)
 (function() {
@@ -1670,7 +1907,7 @@ const SCREENS = { home, updates, merch, content, credits, donators };
 })();
 
 function showScreen(screenToShow, pushState = true) {
-  [home, updates, merch, content, credits, donators].forEach(s => s.classList.remove("active"));
+  [home, updates, merch, content, credits, donators, cart, thanks].forEach(s => s.classList.remove("active"));
   screenToShow.classList.add("active");
   // Each screen is its own scroll box, so it remembers where you left it.
   // Open every screen at the top instead of halfway down the last visit.
@@ -1761,6 +1998,12 @@ donatorsBtn.onclick = () => showScreen(donators);
 
 document.getElementById("merchToContentBtn").onclick = () => showScreen(updates);
 document.getElementById("merchToCreditsBtn").onclick = () => showScreen(credits);
+// The cart button itself is wired by js/shop.js (it renders before showing).
+document.getElementById("cartToMerchBtn").onclick = () => showScreen(merch);
+document.getElementById("cartToContentBtn").onclick = () => showScreen(updates);
+document.getElementById("backFromCartBtn").onclick = () => showScreen(merch);
+document.getElementById("thanksToMerchBtn").onclick = () => showScreen(merch);
+document.getElementById("thanksToHomeBtn").onclick = () => { cryptoField.innerHTML = ""; showScreen(home); };
 
 document.getElementById("donatorsToHomeBtn").onclick = () => { cryptoField.innerHTML = ""; showScreen(home); };
 document.getElementById("donatorsToContentBtn").onclick = () => showScreen(updates);
@@ -1903,6 +2146,7 @@ if (window.innerWidth <= 900) {
 <script src="/js/show-link.js"></script>
 <script src="/js/config.js"></script>
 <script src="/js/content.js" defer></script>
+<script src="/js/shop.js" defer></script>
 <script src="/js/message-widget.js" defer></script>
 
 <script>
