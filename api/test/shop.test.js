@@ -983,18 +983,19 @@ describe('the console', () => {
           ? jsonRes({ object: 'list', data: [] })
           : jsonRes({ error: { message: 'Invalid API Key provided: rk_live_****????' } }, 401);
       }
-      if (u === 'https://api.printful.com/store') return pfEnvelope({ id: 1, name: 'Wizard' });
+      if (u === 'https://api.printful.com/store/products?limit=1') return pfEnvelope([]);
       return realFetch(url, init);
     };
     try {
       let out = await (await adminShopHealth(env({ STRIPE_SECRET_KEY: '"rk_live_good"\r\n', PRINTFUL_TOKEN: 'pf_fake', STRIPE_WEBHOOK_SECRET: 'whsec_x', STRIPE_PUBLISHABLE_KEY: 'pk_live_1' }))).json();
-      expect(out.stripe).toEqual({ set: true, prefix: 'rk_', length: 12, stray: true, test_mode: false, live: 'ok' });
+      expect(out.stripe).toEqual({ set: true, prefix: 'rk_', length: 12, stray: true, odd: 0, test_mode: false, live: 'ok' });
       expect(out.printful.live).toBe('ok');
-      expect(out.webhook).toEqual({ set: true, prefix: 'whsec_', length: 7, stray: false });
+      expect(out.webhook).toEqual({ set: true, prefix: 'whsec_', length: 7, stray: false, odd: 0 });
       expect(out.publishable).toBe(true);
       expect(JSON.stringify(out)).not.toContain('rk_live_good');
-      out = await (await adminShopHealth(env({ STRIPE_SECRET_KEY: 'rk_live_bad!', STRIPE_WEBHOOK_SECRET: '' }))).json();
+      out = await (await adminShopHealth(env({ STRIPE_SECRET_KEY: 'rk_live_bаd!', STRIPE_WEBHOOK_SECRET: '' }))).json(); // a Cyrillic а and a !
       expect(out.stripe.live).toMatch(/Invalid API Key/);
+      expect(out.stripe.odd).toBe(2);
       expect(out.webhook.set).toBe(false);
     } finally {
       globalThis.fetch = realFetch;
