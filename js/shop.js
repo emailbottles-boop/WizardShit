@@ -280,6 +280,36 @@
     hero.appendChild(heroImg);
     media.appendChild(hero);
 
+    // On a phone, swipe across the picture to move through the colours; the
+    // dots underneath show where you are. Vertical swipes still scroll.
+    var dots = [];
+    if (p.colors.length > 1) {
+      var dotRow = el('div', 'product-dots');
+      p.colors.forEach(function (c) {
+        var d = el('span', 'product-dot');
+        d.title = c;
+        d.addEventListener('click', function () { chosen.color = c; refresh(); });
+        dots.push(d);
+        dotRow.appendChild(d);
+      });
+      media.appendChild(dotRow);
+      var sx = null, sy = null;
+      hero.addEventListener('touchstart', function (e) {
+        var t = e.changedTouches[0];
+        sx = t.clientX; sy = t.clientY;
+      }, { passive: true });
+      hero.addEventListener('touchend', function (e) {
+        if (sx === null) return;
+        var t = e.changedTouches[0];
+        var dx = t.clientX - sx, dy = t.clientY - sy;
+        sx = sy = null;
+        if (Math.abs(dx) < 40 || Math.abs(dx) < Math.abs(dy)) return;
+        var i = p.colors.indexOf(chosen.color);
+        chosen.color = p.colors[(i + (dx < 0 ? 1 : -1) + p.colors.length) % p.colors.length];
+        refresh();
+      }, { passive: true });
+    }
+
     // Right column: name, price, colour, size, quantity, add.
     var info = el('div', 'product-info');
     info.appendChild(el('h2', 'product-name', p.title));
@@ -335,13 +365,22 @@
     qtyWrap.appendChild(minus); qtyWrap.appendChild(qtyVal); qtyWrap.appendChild(plus);
     info.appendChild(qtyWrap);
 
+    var actions = el('div', 'product-actions');
     var addB = el('button', 'product-add', 'ADD TO CART');
     addB.type = 'button';
-    info.appendChild(addB);
+    actions.appendChild(addB);
+    // Once something is in the cart, offer the way there right beside ADD.
+    var viewB = el('button', 'product-viewcart', 'VIEW CART →');
+    viewB.type = 'button';
+    viewB.addEventListener('click', function () { renderCart(); go('cart'); });
+    actions.appendChild(viewB);
+    info.appendChild(actions);
     info.appendChild(el('div', 'shop-note', 'Printed to order. You pay securely on Stripe, and it ships once your payment settles.'));
 
     function refresh() {
       swatches.forEach(function (b) { b.classList.toggle('selected', b.dataset.color === chosen.color); });
+      dots.forEach(function (d, i) { d.classList.toggle('active', p.colors[i] === chosen.color); });
+      viewB.style.display = units() ? '' : 'none';
       sizes.forEach(function (b) { b.classList.toggle('selected', b.dataset.size === chosen.size); });
       if (chosenName) chosenName.textContent = chosen.color ? ': ' + chosen.color : '';
       var v = pickVariant(p, chosen.color, chosen.size);
@@ -372,6 +411,7 @@
       // One timer at a time, so a second click's message isn't wiped by the first's.
       clearTimeout(addTimer);
       if (addLine(p, v, qty)) {
+        viewB.style.display = '';
         addB.textContent = 'ADDED ✓';
         addTimer = setTimeout(function () { addB.textContent = 'ADD TO CART'; }, 1400);
       } else {
