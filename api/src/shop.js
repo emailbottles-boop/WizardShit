@@ -1344,17 +1344,32 @@ export async function adminProductColors(env, printfulId) {
   // product with no size axis yet).
   const sizes = [...new Set(p.variants.map(p.sizeOf).filter(Boolean))];
   const colors = new Map();
+  // Printful's word on stock, per region: the dashboard only offers colours
+  // in stock for the store's region, and the API refuses the rest (with a
+  // message that does not say so). Surface it, so a missing colour reads as
+  // "out of stock in USA" rather than a mystery.
+  const regionStatus = (cv) => (Array.isArray(cv.availability_status) ? cv.availability_status : []).map((a) => ({ region: a.region, status: a.status }));
+  const anyInStock = (cv) => {
+    const rs = regionStatus(cv);
+    if (rs.length) return rs.some((r) => r.status === 'in_stock');
+    return cv.in_stock !== false;
+  };
   for (const cv of p.catalogVariants) {
     const key = cv.color || '';
-    if (!colors.has(key)) colors.set(key, { color: key, color_code: cv.color_code || null, offered: 0, in_stock: 0, would_add: 0, sizes: [] });
+    if (!colors.has(key)) colors.set(key, { color: key, color_code: cv.color_code || null, offered: 0, in_stock: 0, would_add: 0, sizes: [], stock: [] });
     const c = colors.get(key);
-    const inStock = cv.in_stock !== false;
+    const inStock = anyInStock(cv);
     const isSynced = synced.has(cv.id);
     const wanted = !sizes.length || sizes.includes(cv.size);
-    c.sizes.push({ size: cv.size, in_stock: inStock, offered: isSynced });
+    c.sizes.push({ size: cv.size, in_stock: inStock, offered: isSynced, stock: regionStatus(cv) });
     if (isSynced) c.offered++;
     if (inStock) c.in_stock++;
-    if (!isSynced && wanted) c.would_add++;
+    if (!isSynced && wanted && inStock) c.would_add++;
+    for (const r of regionStatus(cv)) {
+      const existing = c.stock.find((x) => x.region === r.region);
+      if (!existing) c.stock.push({ region: r.region, status: r.status });
+      else if (r.status === 'in_stock') existing.status = 'in_stock';
+    }
   }
   // What a clone copies: the design files and options as Printful stores
   // them on the existing variants. Owner-only, and the quickest way to see

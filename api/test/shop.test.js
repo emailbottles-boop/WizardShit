@@ -84,7 +84,7 @@ const HOODIE_CATALOG = {
     { id: 4012, product_id: 146, color: 'Black', color_code: '#000', size: 'L', in_stock: true },
     { id: 4013, product_id: 146, color: 'Black', color_code: '#000', size: 'XL', in_stock: true },
     { id: 4021, product_id: 146, color: 'Purple', color_code: '#609', size: 'L', in_stock: true },
-    { id: 4022, product_id: 146, color: 'Purple', color_code: '#609', size: 'XL', in_stock: false },
+    { id: 4022, product_id: 146, color: 'Purple', color_code: '#609', size: 'XL', in_stock: false, availability_status: [{ region: 'USA', status: 'temporary_out_of_stock' }, { region: 'EU', status: 'out_of_stock' }] },
     { id: 4031, product_id: 146, color: 'Gold', color_code: '#fc0', size: 'L', in_stock: true },
     { id: 4041, product_id: 146, color: 'White', color_code: '#fff', size: 'S', in_stock: true },
     { id: 4042, product_id: 146, color: 'White', color_code: '#fff', size: 'L', in_stock: true },
@@ -1211,8 +1211,12 @@ describe('the console', () => {
     expect(out.sizes).toEqual(['S', 'L', 'XL']);
     const by = Object.fromEntries(out.colors.map((c) => [c.color, c]));
     expect(by.Black).toMatchObject({ offered: 2, would_add: 1, color_code: '#000' }); // XL not sold yet
-    expect(by.White).toMatchObject({ offered: 0, would_add: 3 }); // S, L, XL — never 5XL
+    expect(by.White).toMatchObject({ offered: 0, would_add: 2 }); // S and L in stock; XL out; never 5XL
     expect(by.Purple).toMatchObject({ offered: 2, would_add: 0, in_stock: 1 });
+    // Regional stock from Printful travels with the colour, so "out of stock" says where and how.
+    expect(by.Purple.stock).toEqual([{ region: 'USA', status: 'temporary_out_of_stock' }, { region: 'EU', status: 'out_of_stock' }]);
+    // A colour with no size in stock would add nothing, whatever the catalog lists.
+    expect(by.White.would_add).toBe(2); // S and L in stock; XL is not
     // The design data a copy is made from, per variant, previews left out.
     expect(out.design[0]).toEqual({
       id: 9001, color: 'Black', size: 'S', options: [{ id: 'stitch_color', value: 'white' }],
