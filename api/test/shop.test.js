@@ -403,9 +403,10 @@ describe('the catalog', () => {
     expect(hoodie.price_min).toBe(4500);
     expect(hoodie.price_max).toBe(4750);
     expect(hoodie.variants).toHaveLength(4);
-    expect(hoodie.variants[2]).toEqual({ id: 9003, color: 'Purple', size: 'L', price: 4750, image: 'https://files.cdn.printful.com/purple.png' });
-    // A colour with no mockup still gets its own picture: Printful's photo of the blank.
+    expect(hoodie.variants[2]).toEqual({ id: 9003, color: 'Purple', size: 'L', price: 4750, image: 'https://files.cdn.printful.com/purple.png', mockup: true });
+    // A colour with no mockup still gets its own picture: Printful's photo of the blank — flagged as such.
     expect(hoodie.variants[3].image).toBe('https://files.cdn.printful.com/catalog/gold.jpg');
+    expect(hoodie.variants[3].mockup).toBe(false);
     expect(data.products[1].sticker).toBe(true);
     expect(data.products[1].variants[0].price).toBe(400);
     // Sticker sizes are sizes, not colours — one from the name, one from Printful's fields.

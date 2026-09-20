@@ -572,7 +572,8 @@ await scenario('donation box: blank = none, an amount joins the pinned total, ga
 // Y: measurement sizes (stickers) are picked from scaled thumbnails, and the
 // picture itself grows and shrinks a little with the pick.
 const SIZED_STICKER = { id: 6, printful_id: 506, title: 'HOLO STICKER', url: 'https://wizard.printful.me/product/holo', image: 'rath.PNG', sticker: true, row_break: false, currency: 'USD', price_min: 400, price_max: 650, colors: [], sizes: ['3″×3″', '5.5″×5.5″'],
-  variants: [{ id: 9601, color: '', size: '3″×3″', price: 400, image: '' }, { id: 9602, color: '', size: '5.5″×5.5″', price: 650, image: '' }] };
+  // As Printful serves it: a mockup of the design for the first size only, its stock photo of blank sheets for the second.
+  variants: [{ id: 9601, color: '', size: '3″×3″', price: 400, image: 'holo-design.png', mockup: true }, { id: 9602, color: '', size: '5.5″×5.5″', price: 650, image: 'generic-sheet.jpg', mockup: false }] };
 await scenario('sticker sizes are scaled thumbnails; the price and picture follow the pick', async (page) => {
   await page.goto(base + '/merch');
   await page.waitForSelector('#merch .merch-feature.buyable');
@@ -581,12 +582,17 @@ await scenario('sticker sizes are scaled thumbnails; the price and picture follo
   if (await page.$('.product-swatch')) throw new Error('a sticker has no colour swatches');
   const tiles = await page.$$eval('.product-size-tile', (ts) => ts.map((t) => t.dataset.size + '|' + t.querySelector('img').style.width + '|' + t.querySelector('.tile-label').textContent));
   if (tiles.join(',') !== '3″×3″|73%|3″×3″,5.5″×5.5″|100%|5.5″×5.5″') throw new Error('size tiles should scale with the size, got ' + tiles.join(','));
+  // Every tile, and the hero, show the design — never Printful's generic sheet for the size it did not render.
+  const tileSrcs = await page.$$eval('.product-size-tile img', (is) => is.map((i) => i.getAttribute('src')));
+  if (!tileSrcs.every((x) => /holo-design\.png$/.test(x))) throw new Error('every size tile should show the design mockup, got ' + tileSrcs.join(','));
+
   if ((await page.$eval('.product-add', (b) => b.textContent)) !== 'PICK A SIZE') throw new Error('two sizes: one must be picked');
   await page.click('.product-size-tile[data-size="3″×3″"]');
   const small = await page.$eval('.product-hero img', (e) => e.style.transform);
   const p1 = await page.$eval('.product-price', (e) => e.textContent);
   await page.click('.product-size-tile[data-size="5.5″×5.5″"]');
   const big = await page.$eval('.product-hero img', (e) => e.style.transform);
+  if (!/holo-design\.png$/.test(await page.$eval('.product-hero img', (e) => e.getAttribute('src')))) throw new Error('the hero should show the design for a size Printful did not render');
   const p2 = await page.$eval('.product-price', (e) => e.textContent);
   if (p1 !== '$4.00' || p2 !== '$6.50') throw new Error('price should follow the size, got ' + p1 + ' / ' + p2);
   if (!/^scale\(0\.9[0-9]*\)$/.test(small) || big !== 'scale(1)') throw new Error('the picture should shrink for the small size and be full for the large, got ' + small + ' / ' + big);
