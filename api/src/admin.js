@@ -1038,9 +1038,10 @@ export const ADMIN_HTML = `<!DOCTYPE html>
           if (k.odd) notes.push(k.odd + ' character' + (k.odd === 1 ? '' : 's') + ' that cannot be part of a key — re-enter it');
           return k.prefix + '… (' + k.length + ' characters' + (notes.length ? ', ' + notes.join('; ') : '') + ')';
         };
-        line(h.stripe.set && h.stripe.live === 'ok', 'Stripe secret key ' + shapeText(h.stripe) + (h.stripe.set ? ' — ' + (h.stripe.live === 'ok' ? 'Stripe accepts it' : h.stripe.live) : ''));
-        line(h.printful.set && h.printful.live === 'ok', 'Printful token ' + shapeText(h.printful) + (h.printful.set ? ' — ' + (h.printful.live === 'ok' ? 'Printful accepts it' : h.printful.live) : ''));
-        line(h.webhook.set && /^whsec_/.test(h.webhook.prefix), 'Stripe webhook secret ' + shapeText(h.webhook));
+        // A key with characters that cannot belong in one is wrong, whatever else is true.
+        line(h.stripe.set && !h.stripe.odd && h.stripe.live === 'ok', 'Stripe secret key ' + shapeText(h.stripe) + (h.stripe.set ? ' — ' + (h.stripe.live === 'ok' ? 'Stripe accepts it' : h.stripe.live) : ''));
+        line(h.printful.set && !h.printful.odd && h.printful.live === 'ok', 'Printful token ' + shapeText(h.printful) + (h.printful.set ? ' — ' + (h.printful.live === 'ok' ? 'Printful accepts it' : h.printful.live) : ''));
+        line(h.webhook.set && !h.webhook.odd && /^whsec_/.test(h.webhook.prefix), 'Stripe webhook secret ' + shapeText(h.webhook) + (h.webhook.set && h.webhook.odd ? ' — orders will never be marked paid until this is fixed' : ''));
         line(h.publishable, 'Publishable key ' + (h.publishable ? 'set (checkout opens on the site)' : 'not set (checkout uses the Stripe page)'));
         if (h.stripe.test_mode) line(false, 'Stripe is on TEST keys — nothing goes to print.');
       }).catch(function (e) {
