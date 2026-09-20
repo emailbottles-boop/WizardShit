@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   MAX_UNITS_PER_ORDER,
   adminConfirmOrder,
+  adminCatalogHealth,
   adminDonations,
   adminShopHealth,
   chargesInPayout,
@@ -1081,6 +1082,22 @@ describe('donations', () => {
 });
 
 describe('the console', () => {
+  it("lists every card's Printful variants with stock status, so a missing colour explains itself", async () => {
+    rows['FROM merch_items'] = [
+      { id: 1, title: 'EARL CROUCH HOODIE', visible: 1, printful_id: 501 },
+      { id: 3, title: 'MYSTERY TOTE', visible: 0, printful_id: null },
+    ];
+    const out = await (await adminCatalogHealth(env())).json();
+    expect(out.products).toHaveLength(2);
+    const hoodie = out.products[0];
+    expect(hoodie.printful_name).toBe('Unisex Hoodie');
+    // Purple / XL is out of stock at Printful: listed, flagged, not on the site.
+    const xl = hoodie.variants.find((v) => v.size === 'XL');
+    expect(xl).toMatchObject({ color: 'Purple', status: 'out_of_stock', on_site: false, price: 4750 });
+    expect(hoodie.variants.filter((v) => v.on_site)).toHaveLength(4);
+    expect(out.products[1]).toMatchObject({ title: 'MYSTERY TOTE', visible: false, printful_id: null, variants: [] });
+  });
+
   it('cleans a pasted secret of quotes, line breaks and invisible characters', () => {
     expect(cleanSecret('"rk_live_abc"\r\n')).toBe('rk_live_abc');
     expect(cleanSecret(" 'whsec_x'\n")).toBe('whsec_x');

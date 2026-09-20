@@ -255,6 +255,7 @@ async function productDetail(env, printfulId) {
         currency: String(v.currency || 'USD').toUpperCase(),
         image: publicImage(preview && preview.preview_url) || publicImage(catalogPhoto) || publicImage(sp.thumbnail_url),
         available: !v.availability_status || v.availability_status === 'active',
+        status: v.availability_status || 'active',
       };
     });
   return { id: sp.id, name: sp.name, thumbnail: publicImage(sp.thumbnail_url), variants };
@@ -1281,6 +1282,35 @@ export function redactUpstream(message) {
     .replace(/\*{2,}[A-Za-z0-9]+/g, '****')
     // Long digit runs: store ids, token ids, account ids.
     .replace(/\d{6,}/g, '…');
+}
+
+/**
+ * Every merch card with the variants Printful actually reports for it and
+ * each one's stock status — so the owner can see why a colour or size is
+ * missing from the site (never set up in Printful, or out of stock there)
+ * instead of guessing.
+ */
+export async function adminCatalogHealth(env) {
+  const rows = await env.DB.prepare('SELECT id, title, visible, printful_id FROM merch_items ORDER BY sort').all();
+  const items = rows.results || [];
+  const ids = [...new Set(items.map((i) => i.printful_id).filter(Boolean))];
+  const errors = new Map();
+  const details = await productDetails(env, ids, (id, e) => errors.set(id, redactUpstream(e.message)));
+  const products = items.map((item) => {
+    const d = item.printful_id ? details.get(item.printful_id) : null;
+    return {
+      id: item.id,
+      title: item.title,
+      visible: !!item.visible,
+      printful_id: item.printful_id || null,
+      printful_name: d ? d.name : null,
+      error: item.printful_id ? errors.get(item.printful_id) || null : null,
+      variants: d
+        ? d.variants.map((v) => ({ name: v.name, color: v.color, size: v.size, price: v.price, currency: v.currency, status: v.status, on_site: v.available }))
+        : [],
+    };
+  });
+  return json({ products }, 200, { 'Cache-Control': 'no-store' });
 }
 
 export async function adminShopHealth(env) {
