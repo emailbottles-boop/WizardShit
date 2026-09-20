@@ -1436,19 +1436,25 @@ export async function adminAddColor(env, printfulId, color) {
     const template = withDesign.find((v) => p.sizeOf(v) === cv.size) || withDesign[0];
     // The print/embroidery files by library id; the mockup ("preview") is
     // Printful's to regenerate for the new colour.
-    const files = libraryFiles(template);
+    const options = cloneOptions(template.options);
+    const threads = options.find((o) => o.id === 'thread_colors');
+    // Embroidery thread colours are documented on the file as well as on the
+    // variant; a file that has none of its own gets the variant's.
+    const files = libraryFiles(template).map((f) => (threads && !(f.options || []).some((o) => o.id === 'thread_colors') ? { ...f, options: [...(f.options || []), threads] } : f));
     const body = {
       variant_id: cv.id,
       retail_price: template.retail_price,
       is_ignored: false,
       files,
-      options: cloneOptions(template.options),
+      options,
     };
     try {
       const made = await printful(env, '/store/products/' + encodeURIComponent(p.product.id) + '/variants', { method: 'POST', body });
       created.push({ id: made && made.id, size: cv.size });
     } catch (e) {
-      failed.push({ size: cv.size, error: redactUpstream(e.message) });
+      // What was sent travels with the refusal (no secrets in it), so a
+      // refusal can be read against the request without guessing.
+      failed.push({ size: cv.size, error: redactUpstream(e.message), sent: { variant_id: body.variant_id, retail_price: body.retail_price, files: body.files, options: body.options } });
     }
   }
   await purgeCatalogCache();

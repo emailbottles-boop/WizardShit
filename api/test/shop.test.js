@@ -1133,7 +1133,8 @@ describe('the console', () => {
     expect(res.status).toBe(200);
     const post = JSON.parse(calls.find((c) => c.url.endsWith('/store/products/503/variants') && c.method === 'POST').body);
     expect(post.variant_id).toBe(6003);
-    expect(post.files).toEqual([{ id: 937410063, type: 'default' }]);
+    // The file carries the thread colours too, since Printful documents them there as well.
+    expect(post.files).toEqual([{ id: 937410063, type: 'default', options: [{ id: 'thread_colors', value: ['#000000', '#FFFFFF'] }] }]);
     // Empty slots dropped, hex uppercased, and thread_colors filled from the list that had values.
     expect(post.options).toEqual([
       { id: 'embroidery_type', value: 'flat' },
@@ -1202,6 +1203,7 @@ describe('the console', () => {
       const out = await res.json();
       expect(out.created).toEqual([]);
       expect(out.failed).toHaveLength(3);
+      expect(out.failed[0].sent).toMatchObject({ variant_id: 4041, retail_price: '45.00' });
       expect(out.error).toMatch(/would not add White: S — .*sync_products\/write/);
       expect(out.error).not.toContain('12345678');
     } finally {
