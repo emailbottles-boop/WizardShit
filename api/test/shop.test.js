@@ -23,6 +23,7 @@ import {
   orderDonation,
   parseMoney,
   parseVariantName,
+  printfulMockup,
   redactUpstream,
   signForTests,
   shopErrorResponse,
@@ -1129,6 +1130,22 @@ describe('donations', () => {
 });
 
 describe('the console', () => {
+  it("offers Printful's own mockup as a card image: a variant preview first, else the product thumbnail", async () => {
+    expect(await printfulMockup(env(), 501)).toEqual({ url: 'https://files.cdn.printful.com/black.png', name: 'Unisex Hoodie' });
+    expect(await printfulMockup(env(), 503)).toEqual({ url: 'https://files.cdn.printful.com/beanie.png', name: 'Wizard Beanie' });
+    // Never an address outside Printful.
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = async (url, init) => (String(url).startsWith('https://api.printful.com/store/products/501')
+      ? pfEnvelope({ sync_product: { id: 501, name: 'X', thumbnail_url: 'https://evil.example/x.png' }, sync_variants: [] })
+      : realFetch(url, init));
+    try {
+      const res = await run(printfulMockup(env(), 501).then(() => new Response('no')));
+      expect(res.status).toBe(409);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
   it('clones an embroidered beanie exactly as Printful stores it, filling thread_colors from the list that had values', async () => {
     const res = await adminAddColor(env(), 503, 'Navy');
     expect(res.status).toBe(200);

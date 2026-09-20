@@ -547,6 +547,28 @@ export const ADMIN_HTML = `<!DOCTYPE html>
         });
     }
 
+    // A card sold through Printful can take Printful's own mockup as its
+    // picture, without the owner downloading and re-uploading it.
+    var pf = null;
+    if (key === 'image' && item.printful_id) {
+      pf = el('button', 'btn', 'Use Printful photo');
+      pf.type = 'button';
+      pf.style.marginLeft = '0.5rem';
+      pf.onclick = function () {
+        pf.disabled = true;
+        pf.textContent = '...';
+        api('/api/admin/shop/products/' + item.printful_id + '/mockup', { method: 'POST' })
+          .then(function (d) {
+            item[key] = d.url;
+            refresh();
+            setDirty(true);
+            toast('Printful photo set \u2014 hit SAVE to publish it');
+          })
+          .catch(function (e) { if (e.message !== 'login required') toast(e.message, true); })
+          .then(function () { pf.disabled = false; pf.textContent = 'Use Printful photo'; });
+      };
+    }
+
     up.onclick = function () { file.click(); };
     thumb.style.cursor = 'pointer';
     thumb.title = 'Click to pick an image';
@@ -566,6 +588,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
     zone.appendChild(thumb);
     zone.appendChild(hint);
     zone.appendChild(up);
+    if (pf) zone.appendChild(pf);
     zone.appendChild(file);
     box.appendChild(zone);
     return box;
