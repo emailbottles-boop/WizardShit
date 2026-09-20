@@ -254,6 +254,11 @@ async function productDetail(env, printfulId) {
         price: parseMoney(v.retail_price, v.currency),
         currency: String(v.currency || 'USD').toUpperCase(),
         image: publicImage(preview && preview.preview_url) || publicImage(catalogPhoto) || publicImage(sp.thumbnail_url),
+        // Whether that picture is Printful's mockup of the design (true) or
+        // its stock photo of the blank (false). Printful renders a mockup for
+        // the first size of a sticker only; the page shows the design for the
+        // others rather than a generic sheet.
+        mockup: !!publicImage(preview && preview.preview_url),
         available: !v.availability_status || v.availability_status === 'active',
         status: v.availability_status || 'active',
       };
@@ -334,6 +339,7 @@ async function buildCatalog(env) {
         size: v.size,
         price: v.price,
         image: v.image,
+        mockup: v.mockup,
       })),
     };
   });

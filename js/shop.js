@@ -123,7 +123,7 @@
       existing.currency = product.currency;
       existing.title = product.title;
       existing.option = [variant.color, variant.size].filter(Boolean).join(' / ');
-      existing.image = variant.image || imageUrl(product.image);
+      existing.image = pictureFor(product, variant, variant.color);
     } else {
       cart.push({
         product_id: product.printful_id,
@@ -132,7 +132,7 @@
         option: [variant.color, variant.size].filter(Boolean).join(' / '),
         price: variant.price,
         currency: product.currency,
-        image: variant.image || imageUrl(product.image),
+        image: pictureFor(product, variant, variant.color),
         qty: clamped,
       });
     }
@@ -172,7 +172,8 @@
           if (l.price !== v.price) { l.price = v.price; changed = true; repriced = true; }
           if (l.currency !== p.currency) { l.currency = p.currency; changed = true; }
           if (l.title !== p.title) { l.title = p.title; changed = true; }
-          if (v.image && l.image !== v.image) { l.image = v.image; changed = true; }
+          var pic = pictureFor(p, v, v.color);
+          if (pic && l.image !== pic) { l.image = pic; changed = true; }
         });
       });
     });
@@ -258,6 +259,15 @@
     var vs = p.variants.filter(function (v) { return !color || v.color === color; });
     for (var i = 0; i < vs.length; i++) if (vs[i].image) return vs[i].image;
     return imageUrl(p.image);
+  }
+  // The picture for a variant: its own Printful mockup when it has one, else
+  // the mockup of the same colour in another size (Printful renders one size
+  // of a sticker only), else Printful's photo of the blank, else the card.
+  function pictureFor(p, v, color) {
+    if (v && v.image && v.mockup) return v.image;
+    var vs = p.variants.filter(function (x) { return x.mockup && x.image && (!color || x.color === color); });
+    if (vs.length) return vs[0].image;
+    return (v && v.image) || variantImageForColor(p, color);
   }
   // The lowest price among the variants that fit what has been picked so far.
   // With nothing picked that is the product's lowest price; each pick narrows
@@ -414,12 +424,12 @@
       var v = pickVariant(p, chosen.color, chosen.size);
       var needsColor = p.colors.length > 1 && !chosen.color;
       var needsSize = p.sizes.length > 1 && !chosen.size;
-      heroImg.src = (v && v.image) ? v.image : variantImageForColor(p, chosen.color);
+      heroImg.src = pictureFor(p, v, chosen.color);
       // Size tiles show the picked colour's design; the hero grows and shrinks
       // a little with the picked size.
       tileImgs.forEach(function (im) {
         var tv = pickVariant(p, chosen.color, im.dataset.size);
-        var src = (tv && tv.image) ? tv.image : variantImageForColor(p, chosen.color);
+        var src = pictureFor(p, tv, chosen.color);
         if (im.getAttribute('src') !== src) im.src = src;
       });
       heroImg.style.transform = dimensional && chosen.size ? 'scale(' + (0.8 + 0.2 * sizeScale(chosen.size)).toFixed(3) + ')' : '';
