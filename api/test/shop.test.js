@@ -1240,6 +1240,7 @@ describe('the console', () => {
     expect(out.design[0]).toEqual({
       id: 9001, color: 'Black', size: 'S', options: [{ id: 'stitch_color', value: 'white' }],
       files: [{ id: 771, type: 'front', options: [{ id: 'thread_colors', value: ['#000000', '#FFFFFF'] }], position: { area_width: 1800, area_height: 2400, width: 1800, height: 1800, top: 300, left: 0 } }],
+      mockup: 'https://files.cdn.printful.com/black.png',
     });
   });
 

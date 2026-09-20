@@ -1397,6 +1397,9 @@ export async function adminProductColors(env, printfulId) {
     size: p.sizeOf(v),
     options: v.options || [],
     files: (v.files || []).filter((f) => f.type !== 'preview').map((f) => ({ id: f.id || null, type: f.type, options: f.options || [], position: f.position || null })),
+    // The mockup Printful serves for this variant — what the product page
+    // shows. A duplicated product keeps the original's until regenerated.
+    mockup: ((v.files || []).find((f) => f.type === 'preview' && f.preview_url) || {}).preview_url || null,
   }));
   // Printful's API does not accept a cloned embroidered variant the way its
   // editor does (every shape tried is refused with a thread-colour message
