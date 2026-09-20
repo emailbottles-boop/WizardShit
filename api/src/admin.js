@@ -1101,7 +1101,34 @@ export const ADMIN_HTML = `<!DOCTYPE html>
         // A key with characters that cannot belong in one is wrong, whatever else is true.
         line(h.stripe.set && !h.stripe.odd && h.stripe.live === 'ok', 'Stripe secret key ' + shapeText(h.stripe) + (h.stripe.set ? ' — ' + (h.stripe.live === 'ok' ? 'Stripe accepts it' : h.stripe.live) : ''));
         line(h.printful.set && !h.printful.odd && h.printful.live === 'ok', 'Printful token ' + shapeText(h.printful) + (h.printful.set ? ' — ' + (h.printful.live === 'ok' ? 'Printful accepts it' : h.printful.live) : ''));
-        line(h.webhook.set && !h.webhook.odd && /^whsec_/.test(h.webhook.prefix), 'Stripe webhook secret ' + shapeText(h.webhook) + (h.webhook.set && h.webhook.odd ? ' — orders will never be marked paid until this is fixed' : ''));
+        line((h.webhook.set && !h.webhook.odd && /^whsec_/.test(h.webhook.prefix)) || h.webhook.stored, 'Stripe webhook secret ' + shapeText(h.webhook) + (h.webhook.set && h.webhook.odd ? ' — orders will never be marked paid until this is fixed' : '') + (h.webhook.stored ? ' — plus the one the Worker keeps for the endpoint it made' : ''));
+        // The endpoint Stripe actually has: a typo in its address bounces
+        // every delivery, and the shop never hears that anyone paid.
+        var ep = h.webhook.endpoint;
+        if (ep) {
+          line(ep.ok, 'Stripe webhook endpoint ' + (ep.ok ? ep.url + ' — enabled, every event on' : (ep.problem || 'not right')));
+          if (!ep.ok) {
+            var fix = el('button', 'btn primary', 'FIX WEBHOOK');
+            fix.type = 'button';
+            fix.style.marginTop = '0.4rem';
+            fix.title = 'Point Stripe at ' + ep.url + ' with every event the shop needs (or create the endpoint)';
+            fix.addEventListener('click', function () {
+              fix.disabled = true;
+              api('/api/admin/shop/webhook/repair', { method: 'POST' }).then(function (r) {
+                var what = r.action === 'moved' ? 'moved the endpoint to ' + r.url
+                  : r.action === 'created' ? 'created the endpoint at ' + r.url + ' (the Worker keeps its signing secret)'
+                  : r.action === 'updated' ? 'switched on every event at ' + r.url
+                  : 'already right';
+                toast('Webhook: ' + what + (r.ok ? '' : ' — still: ' + r.problem), !r.ok);
+                check.click();
+              }).catch(function (e) {
+                if (e.message !== 'login required') toast(e.message, true);
+                fix.disabled = false;
+              });
+            });
+            report.appendChild(fix);
+          }
+        }
         line(h.publishable, 'Publishable key ' + (h.publishable ? 'set (checkout opens on the site)' : 'not set (checkout uses the Stripe page)'));
         if (h.stripe.test_mode) line(false, 'Stripe is on TEST keys — nothing goes to print.');
       }).catch(function (e) {

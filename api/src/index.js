@@ -60,6 +60,7 @@ import {
   adminDonations,
   adminShopHealth,
   adminReconcilePayments,
+  adminRepairWebhook,
   adminCatalogHealth,
   adminProductColors,
   adminAddColor,
@@ -1663,6 +1664,15 @@ async function route(request, env, ctx, url, path, method) {
         }
         if (method === 'GET' && path === '/api/admin/shop/health') {
           return adminShopHealth(env);
+        }
+        if (method === 'POST' && path === '/api/admin/shop/webhook/repair') {
+          try {
+            return await adminRepairWebhook(env);
+          } catch (e) {
+            const known = shopErrorResponse(e);
+            if (known) return known;
+            throw e;
+          }
         }
         if (method === 'POST' && path === '/api/admin/shop/reconcile') {
           try {
