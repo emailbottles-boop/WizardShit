@@ -769,6 +769,12 @@ export const ADMIN_HTML = `<!DOCTYPE html>
         head.style.marginBottom = '0.4rem';
         panel.appendChild(head);
         panel.appendChild(el('div', '', 'Tick a colour to sell it (your design is copied onto it in those sizes); untick to stop. This changes the product in Printful right away.'));
+        if (d.embroidered) {
+          var emb = el('div', '', 'Embroidered product: Printful\u2019s API will not accept a copied embroidery variant, so adding a colour here will be refused. Add colours in Printful\u2019s product editor instead (or duplicate the product there with the colours you want, then point this card at it above). Removing a colour here still works.');
+          emb.style.color = '#ffcc66';
+          emb.style.margin = '0.4rem 0';
+          panel.appendChild(emb);
+        }
         d.colors.forEach(function (c) {
           var row = el('label', '');
           row.style.display = 'flex'; row.style.alignItems = 'center'; row.style.gap = '0.5rem'; row.style.margin = '0.35rem 0'; row.style.cursor = 'pointer';
@@ -781,7 +787,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
           }
           var txt = el('span', '', c.color + ' \u2014 ' + note);
           if (!c.in_stock) txt.style.color = '#ff7a7a';
-          cb.disabled = !c.offered && !c.would_add;
+          cb.disabled = (!c.offered && !c.would_add) || (d.embroidered && !c.offered);
           cb.addEventListener('change', function () {
             var adding = cb.checked;
             var msg = adding

@@ -1381,12 +1381,18 @@ export async function adminProductColors(env, printfulId) {
     options: v.options || [],
     files: (v.files || []).filter((f) => f.type !== 'preview').map((f) => ({ id: f.id || null, type: f.type, options: f.options || [], position: f.position || null })),
   }));
+  // Printful's API does not accept a cloned embroidered variant the way its
+  // editor does (every shape tried is refused with a thread-colour message
+  // while the editor makes the same colour fine). Say so, rather than let
+  // the owner tick a box that cannot work.
+  const embroidered = p.variants.some((v) => (v.options || []).some((o) => o.id === 'embroidery_type'));
   return json(
     {
       product: { id: p.product.id, name: p.product.name, catalog_id: p.catalogId, catalog_name: p.catalogName },
       sizes,
       colors: [...colors.values()],
       design,
+      embroidered,
     },
     200,
     { 'Cache-Control': 'no-store' },
