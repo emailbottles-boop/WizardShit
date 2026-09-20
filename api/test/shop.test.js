@@ -2,7 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   MAX_UNITS_PER_ORDER,
   adminConfirmOrder,
+  adminAddColor,
   adminCatalogHealth,
+  adminProductColors,
+  adminRemoveColor,
   adminDonations,
   adminShopHealth,
   chargesInPayout,
@@ -36,10 +39,10 @@ const SECRET = 'whsec_test_secret';
 const PRODUCT = {
   sync_product: { id: 501, name: 'Unisex Hoodie', thumbnail_url: 'https://files.cdn.printful.com/hoodie.png' },
   sync_variants: [
-    { id: 9001, variant_id: 4011, name: 'Unisex Hoodie - Black / S', retail_price: '45.00', currency: 'USD', availability_status: 'active', files: [{ type: 'preview', preview_url: 'https://files.cdn.printful.com/black.png' }] },
-    { id: 9002, variant_id: 4012, name: 'Unisex Hoodie - Black / L', retail_price: '45.00', currency: 'USD', availability_status: 'active', files: [{ type: 'preview', preview_url: 'https://files.cdn.printful.com/black.png' }] },
-    { id: 9003, variant_id: 4021, name: 'Unisex Hoodie - Purple / L', retail_price: '47.50', currency: 'USD', availability_status: 'active', files: [{ type: 'preview', preview_url: 'https://files.cdn.printful.com/purple.png' }] },
-    { id: 9004, variant_id: 4022, name: 'Unisex Hoodie - Purple / XL', retail_price: '47.50', currency: 'USD', availability_status: 'out_of_stock', files: [] },
+    { id: 9001, variant_id: 4011, name: 'Unisex Hoodie - Black / S', retail_price: '45.00', currency: 'USD', availability_status: 'active', product: { variant_id: 4011, product_id: 146, name: 'Hoodie Black / S' }, options: [{ id: 'stitch_color', value: 'white' }], files: [{ id: 771, type: 'front', url: 'https://files.cdn.printful.com/front.png' }, { type: 'preview', preview_url: 'https://files.cdn.printful.com/black.png' }] },
+    { id: 9002, variant_id: 4012, name: 'Unisex Hoodie - Black / L', retail_price: '45.00', currency: 'USD', availability_status: 'active', product: { variant_id: 4012, product_id: 146, name: 'Hoodie Black / L' }, options: [{ id: 'stitch_color', value: 'white' }], files: [{ id: 771, type: 'front', url: 'https://files.cdn.printful.com/front.png' }, { type: 'preview', preview_url: 'https://files.cdn.printful.com/black.png' }] },
+    { id: 9003, variant_id: 4021, name: 'Unisex Hoodie - Purple / L', retail_price: '47.50', currency: 'USD', availability_status: 'active', product: { variant_id: 4021, product_id: 146, name: 'Hoodie Purple / L' }, files: [{ id: 772, type: 'front', url: 'https://files.cdn.printful.com/front-p.png' }, { type: 'preview', preview_url: 'https://files.cdn.printful.com/purple.png' }] },
+    { id: 9004, variant_id: 4022, name: 'Unisex Hoodie - Purple / XL', retail_price: '47.50', currency: 'USD', availability_status: 'out_of_stock', product: { variant_id: 4022, product_id: 146, name: 'Hoodie Purple / XL' }, files: [] },
     // No mockup for this one: the catalog photo of the blank in that colour stands in.
     { id: 9005, variant_id: 4031, name: 'Unisex Hoodie - Gold / L', retail_price: '47.50', currency: 'USD', availability_status: 'active', files: [], product: { variant_id: 4031, product_id: 146, image: 'https://files.cdn.printful.com/catalog/gold.jpg', name: 'Hoodie Gold / L' } },
   ],
@@ -50,6 +53,28 @@ const BEANIE = {
   sync_variants: [
     { id: 9201, variant_id: 6001, name: 'Wizard Beanie - Black', size: 'One size', color: null, retail_price: '22.00', currency: 'USD', availability_status: 'active', files: [] },
     { id: 9202, variant_id: 6002, name: 'Wizard Beanie - White', size: 'One size', color: null, retail_price: '22.00', currency: 'USD', availability_status: 'active', files: [] },
+  ],
+};
+// A product sold in one colour only (the last colour can never be removed).
+const ONECOLOR = {
+  sync_product: { id: 505, name: 'Wizard Tote', thumbnail_url: 'https://files.cdn.printful.com/tote.png' },
+  sync_variants: [{ id: 9501, variant_id: 7001, name: 'Wizard Tote - Black', retail_price: '20.00', currency: 'USD', availability_status: 'active', product: { variant_id: 7001, product_id: 301 }, files: [{ id: 790, type: 'front' }] }],
+};
+const ONECOLOR_CATALOG = { product: { id: 301, title: 'Tote' }, variants: [{ id: 7001, product_id: 301, color: 'Black', size: 'One size', in_stock: true }, { id: 7002, product_id: 301, color: 'Natural', size: 'One size', in_stock: true }] };
+// The catalog product behind the hoodie: what Printful makes it in.
+const HOODIE_CATALOG = {
+  product: { id: 146, title: 'Unisex Hoodie' },
+  variants: [
+    { id: 4011, product_id: 146, color: 'Black', color_code: '#000', size: 'S', in_stock: true },
+    { id: 4012, product_id: 146, color: 'Black', color_code: '#000', size: 'L', in_stock: true },
+    { id: 4013, product_id: 146, color: 'Black', color_code: '#000', size: 'XL', in_stock: true },
+    { id: 4021, product_id: 146, color: 'Purple', color_code: '#609', size: 'L', in_stock: true },
+    { id: 4022, product_id: 146, color: 'Purple', color_code: '#609', size: 'XL', in_stock: false },
+    { id: 4031, product_id: 146, color: 'Gold', color_code: '#fc0', size: 'L', in_stock: true },
+    { id: 4041, product_id: 146, color: 'White', color_code: '#fff', size: 'S', in_stock: true },
+    { id: 4042, product_id: 146, color: 'White', color_code: '#fff', size: 'L', in_stock: true },
+    { id: 4043, product_id: 146, color: 'White', color_code: '#fff', size: 'XL', in_stock: false },
+    { id: 4044, product_id: 146, color: 'White', color_code: '#fff', size: '5XL', in_stock: true }, // a size not sold today: not added
   ],
 };
 const STICKER = {
@@ -90,6 +115,11 @@ function installFetch() {
     if (url.startsWith('https://api.printful.com/store/products/501')) return pfEnvelope(PRODUCT);
     if (url.startsWith('https://api.printful.com/store/products/502')) return pfEnvelope(STICKER);
     if (url.startsWith('https://api.printful.com/store/products/503')) return pfEnvelope(BEANIE);
+    if (url === 'https://api.printful.com/store/products/501/variants' && method === 'POST') return pfEnvelope({ id: 9900 + calls.length, ...JSON.parse(body) });
+    if (/\/store\/variants\/\d+$/.test(url) && method === 'DELETE') return pfEnvelope(null);
+    if (url === 'https://api.printful.com/products/146') return pfEnvelope(HOODIE_CATALOG);
+    if (url.startsWith('https://api.printful.com/store/products/505')) return pfEnvelope(ONECOLOR);
+    if (url === 'https://api.printful.com/products/301') return pfEnvelope(ONECOLOR_CATALOG);
     if (url.startsWith('https://api.printful.com/store/products/')) return jsonRes({ code: 404, result: 'Not Found' }, 404);
     if (url.startsWith('https://api.printful.com/shipping/rates')) {
       return pfEnvelope([
@@ -1082,6 +1112,49 @@ describe('donations', () => {
 });
 
 describe('the console', () => {
+  it('lists the colours Printful makes a product in, and which are sold', async () => {
+    const out = await (await adminProductColors(env(), 501)).json();
+    expect(out.product).toEqual({ id: 501, name: 'Unisex Hoodie', catalog_id: 146, catalog_name: 'Unisex Hoodie' });
+    expect(out.sizes).toEqual(['S', 'L', 'XL']);
+    const by = Object.fromEntries(out.colors.map((c) => [c.color, c]));
+    expect(by.Black).toMatchObject({ offered: 2, would_add: 1, color_code: '#000' }); // XL not sold yet
+    expect(by.White).toMatchObject({ offered: 0, would_add: 3 }); // S, L, XL — never 5XL
+    expect(by.Purple).toMatchObject({ offered: 2, would_add: 0, in_stock: 1 });
+  });
+
+  it('adds a colour by cloning the design onto it in every size sold, then clears the catalog cache', async () => {
+    vi.stubGlobal('caches', fakeCaches());
+    await caches.default.put(new Request('https://wizardshit.store/api/shop/products'), new Response('stale'));
+    const res = await adminAddColor(env(), 501, 'White');
+    expect(res.status).toBe(200);
+    const out = await res.json();
+    expect(out.created.map((c) => c.size)).toEqual(['S', 'L', 'XL']);
+    expect(out.failed).toEqual([]);
+    const posts = calls.filter((c) => c.url.endsWith('/store/products/501/variants') && c.method === 'POST').map((c) => JSON.parse(c.body));
+    expect(posts.map((b) => b.variant_id)).toEqual([4041, 4042, 4043]);
+    // Same size's design where one exists (S -> Black/S file 771, options too); a size never sold copies the first variant.
+    expect(posts[0]).toMatchObject({ retail_price: '45.00', files: [{ id: 771, type: 'front' }], options: [{ id: 'stitch_color', value: 'white' }], is_ignored: false });
+    // XL: the only XL sold (Purple/XL) has no design file, so it is never the template; the first variant with one is.
+    expect(posts[2].files).toEqual([{ id: 771, type: 'front' }]);
+    expect(await caches.default.match(new Request('https://wizardshit.store/api/shop/products'))).toBeUndefined();
+    // Nothing to add is a refusal, not a silent no-op.
+    const dup = await run(adminAddColor(env(), 501, 'Purple'));
+    expect(dup.status).toBe(409);
+  });
+
+  it('removes a colour by deleting its variants, but never the last colour', async () => {
+    const out = await (await adminRemoveColor(env(), 501, 'Purple')).json();
+    expect(out.removed.map((r) => r.id)).toEqual([9003, 9004]);
+    expect(calls.filter((c) => /\/store\/variants\/900[34]$/.test(c.url) && c.method === 'DELETE')).toHaveLength(2);
+    const none = await run(adminRemoveColor(env(), 501, 'Teal'));
+    expect(none.status).toBe(409);
+    // A one-colour product keeps it.
+    const last = await run(adminRemoveColor(env(), 505, 'Black'));
+    expect(last.status).toBe(409);
+    expect((await last.json()).error).toMatch(/only colour left/i);
+    expect(calls.filter((c) => /\/store\/variants\/9501$/.test(c.url))).toHaveLength(0);
+  });
+
   it("lists every card's Printful variants with stock status, so a missing colour explains itself", async () => {
     rows['FROM merch_items'] = [
       { id: 1, title: 'EARL CROUCH HOODIE', visible: 1, printful_id: 501 },

@@ -41,6 +41,7 @@
  *   GET /api/admin/shop/orders        -> the shop's own order book (paid? printed? paid out?)
  *   GET /api/admin/shop/health        -> are the Stripe/Printful secrets shaped right, and do they work?
  *   GET /api/admin/shop/catalog       -> every merch card's Printful variants and their stock status
+ *   GET/POST /api/admin/shop/products/<pf>/colors, DELETE …/colors/<color> -> the colours a card sells, changed in Printful
  *   POST /api/admin/shop/orders/<ref>/confirm -> send a paid order to print by hand
  *   GET /api/admin/donations          -> every donation and the running totals
  */
@@ -57,6 +58,9 @@ import {
   adminDonations,
   adminShopHealth,
   adminCatalogHealth,
+  adminProductColors,
+  adminAddColor,
+  adminRemoveColor,
   cleanSecret,
   purgeCatalogCache,
   shopErrorResponse,
@@ -1658,6 +1662,25 @@ async function route(request, env, ctx, url, path, method) {
         }
         if (method === 'GET' && path === '/api/admin/shop/catalog') {
           return adminCatalogHealth(env);
+        }
+        {
+          // Colours a card sells, straight in Printful: list, add, remove.
+          const m = path.match(/^\/api\/admin\/shop\/products\/(\d{1,12})\/colors(?:\/([^/]{1,60}))?$/);
+          if (m) {
+            const pfId = Number(m[1]);
+            try {
+              if (method === 'GET' && !m[2]) return await adminProductColors(env, pfId);
+              if (method === 'POST' && !m[2]) {
+                const body = await request.json().catch(() => ({}));
+                return await adminAddColor(env, pfId, body && body.color);
+              }
+              if (method === 'DELETE' && m[2]) return await adminRemoveColor(env, pfId, decodeURIComponent(m[2]));
+            } catch (e) {
+              const known = shopErrorResponse(e);
+              if (known) return known;
+              throw e;
+            }
+          }
         }
         {
           const m = path.match(/^\/api\/admin\/shop\/orders\/([A-Z0-9-]{4,40})\/confirm$/);

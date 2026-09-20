@@ -1313,6 +1313,130 @@ export async function adminCatalogHealth(env) {
   return json({ products }, 200, { 'Cache-Control': 'no-store' });
 }
 
+/* ------------------------------------------------ colours, from the console --- */
+
+/**
+ * A sync product with the catalog product behind it, so each sync variant can
+ * be named by the catalog's own colour and size (the only reliable source:
+ * sync variant names are free text).
+ */
+async function productWithCatalog(env, printfulId) {
+  const r = await printful(env, '/store/products/' + encodeURIComponent(printfulId));
+  const product = r.sync_product || {};
+  const variants = (r.sync_variants || []).filter((v) => !v.is_ignored);
+  if (!variants.length) throw new ShopError('That Printful product has no variants to copy a design from.', 409);
+  const catalogId = variants[0].product && variants[0].product.product_id;
+  if (!catalogId) throw new ShopError('Printful did not say which catalog product this is.', 502);
+  const cat = await printful(env, '/products/' + encodeURIComponent(catalogId));
+  const catalogVariants = cat.variants || [];
+  const byId = new Map(catalogVariants.map((cv) => [cv.id, cv]));
+  const colorOf = (v) => (byId.get(v.variant_id) || {}).color || '';
+  const sizeOf = (v) => (byId.get(v.variant_id) || {}).size || '';
+  return { product, variants, catalogId, catalogName: (cat.product && cat.product.title) || '', catalogVariants, colorOf, sizeOf };
+}
+
+/** Every colour the catalog makes this product in, and which ones are sold. */
+export async function adminProductColors(env, printfulId) {
+  const p = await productWithCatalog(env, printfulId);
+  const synced = new Set(p.variants.map((v) => v.variant_id));
+  // The sizes sold today; a new colour mirrors them (or everything, for a
+  // product with no size axis yet).
+  const sizes = [...new Set(p.variants.map(p.sizeOf).filter(Boolean))];
+  const colors = new Map();
+  for (const cv of p.catalogVariants) {
+    const key = cv.color || '';
+    if (!colors.has(key)) colors.set(key, { color: key, color_code: cv.color_code || null, offered: 0, in_stock: 0, would_add: 0, sizes: [] });
+    const c = colors.get(key);
+    const inStock = cv.in_stock !== false;
+    const isSynced = synced.has(cv.id);
+    const wanted = !sizes.length || sizes.includes(cv.size);
+    c.sizes.push({ size: cv.size, in_stock: inStock, offered: isSynced });
+    if (isSynced) c.offered++;
+    if (inStock) c.in_stock++;
+    if (!isSynced && wanted) c.would_add++;
+  }
+  return json(
+    {
+      product: { id: p.product.id, name: p.product.name, catalog_id: p.catalogId, catalog_name: p.catalogName },
+      sizes,
+      colors: [...colors.values()],
+    },
+    200,
+    { 'Cache-Control': 'no-store' },
+  );
+}
+
+/**
+ * Offer a colour: one new sync variant per size sold today, each carrying
+ * the design files and options of the existing variant in that size (or the
+ * first one), at its price. Additive: nothing existing is touched. Needs a
+ * Printful token with the store-products write scope.
+ */
+export async function adminAddColor(env, printfulId, color) {
+  color = String(color || '').trim();
+  if (!color) throw new ShopError('Which colour?');
+  const p = await productWithCatalog(env, printfulId);
+  const synced = new Set(p.variants.map((v) => v.variant_id));
+  const sizes = [...new Set(p.variants.map(p.sizeOf).filter(Boolean))];
+  const targets = p.catalogVariants.filter((cv) => (cv.color || '') === color && !synced.has(cv.id) && (!sizes.length || sizes.includes(cv.size)));
+  if (!targets.length) {
+    throw new ShopError(color + ' is already offered in every size you sell, or Printful does not make this product in it.', 409);
+  }
+  const created = [];
+  const failed = [];
+  // Only a variant that actually carries a design file can be copied; a
+  // blank variant would sell a blank garment.
+  const libraryFiles = (v) => (v.files || []).filter((f) => f.type !== 'preview' && f.id).map((f) => ({ id: f.id, type: f.type }));
+  const withDesign = p.variants.filter((v) => libraryFiles(v).length);
+  if (!withDesign.length) throw new ShopError('None of this product\'s variants carries a design file to copy. Set the design up in Printful first.', 409);
+  for (const cv of targets) {
+    // The existing variant in the same size (same placement and scale), else any with a design.
+    const template = withDesign.find((v) => p.sizeOf(v) === cv.size) || withDesign[0];
+    // The print/embroidery files by library id; the mockup ("preview") is
+    // Printful's to regenerate for the new colour.
+    const files = libraryFiles(template);
+    const body = {
+      variant_id: cv.id,
+      retail_price: template.retail_price,
+      is_ignored: false,
+      files,
+      options: template.options || [],
+    };
+    try {
+      const made = await printful(env, '/store/products/' + encodeURIComponent(p.product.id) + '/variants', { method: 'POST', body });
+      created.push({ id: made && made.id, size: cv.size });
+    } catch (e) {
+      failed.push({ size: cv.size, error: redactUpstream(e.message) });
+    }
+  }
+  await purgeCatalogCache();
+  return json({ color, created, failed }, failed.length && !created.length ? 502 : 200, { 'Cache-Control': 'no-store' });
+}
+
+/** Stop offering a colour: delete its sync variants. Never the last colour. */
+export async function adminRemoveColor(env, printfulId, color) {
+  color = String(color || '').trim();
+  if (!color) throw new ShopError('Which colour?');
+  const p = await productWithCatalog(env, printfulId);
+  const doomed = p.variants.filter((v) => p.colorOf(v) === color);
+  if (!doomed.length) throw new ShopError(color + ' is not offered on this product.', 409);
+  if (doomed.length === p.variants.length) {
+    throw new ShopError('That is the only colour left. Add another first, or hide the card instead.', 409);
+  }
+  const removed = [];
+  const failed = [];
+  for (const v of doomed) {
+    try {
+      await printful(env, '/store/variants/' + encodeURIComponent(v.id), { method: 'DELETE' });
+      removed.push({ id: v.id, size: p.sizeOf(v) });
+    } catch (e) {
+      failed.push({ size: p.sizeOf(v), error: redactUpstream(e.message) });
+    }
+  }
+  await purgeCatalogCache();
+  return json({ color, removed, failed }, failed.length && !removed.length ? 502 : 200, { 'Cache-Control': 'no-store' });
+}
+
 export async function adminShopHealth(env) {
   const shape = (raw) => {
     const value = String(raw ?? '');

@@ -746,6 +746,71 @@ export const ADMIN_HTML = `<!DOCTYPE html>
     return box;
   }
 
+  // The colours a card sells, changed in Printful itself: tick to add (the
+  // design is copied onto that colour in every size sold), untick to remove.
+  // Takes effect in Printful straight away — no SAVE involved.
+  function colorsPanel(item) {
+    var box = el('div', 'full');
+    var open = false;
+    var toggle = el('button', 'btn', 'Colors \u25B8');
+    toggle.type = 'button';
+    var panel = el('div', 'mode-line');
+    panel.style.display = 'none';
+    panel.style.marginTop = '0.5rem';
+    function load() {
+      panel.textContent = 'Asking Printful\u2026';
+      return api('/api/admin/shop/products/' + item.printful_id + '/colors').then(function (d) {
+        panel.innerHTML = '';
+        var head = el('div', '', d.product.catalog_name + (d.sizes.length ? ' \u00b7 sizes sold: ' + d.sizes.join(', ') : ''));
+        head.style.marginBottom = '0.4rem';
+        panel.appendChild(head);
+        panel.appendChild(el('div', '', 'Tick a colour to sell it (your design is copied onto it in those sizes); untick to stop. This changes the product in Printful right away.'));
+        d.colors.forEach(function (c) {
+          var row = el('label', '');
+          row.style.display = 'flex'; row.style.alignItems = 'center'; row.style.gap = '0.5rem'; row.style.margin = '0.35rem 0'; row.style.cursor = 'pointer';
+          var cb = el('input'); cb.type = 'checkbox'; cb.checked = c.offered > 0;
+          var sw = el('span', ''); sw.style.width = '14px'; sw.style.height = '14px'; sw.style.borderRadius = '50%'; sw.style.border = '1px solid #888'; sw.style.background = c.color_code || 'transparent';
+          var note = c.offered ? 'offered in ' + c.offered + (c.offered === 1 ? ' size' : ' sizes') : (c.would_add ? 'would add ' + c.would_add + (c.would_add === 1 ? ' size' : ' sizes') : 'nothing to add');
+          if (!c.in_stock) note += ' \u00b7 out of stock at Printful';
+          var txt = el('span', '', c.color + ' \u2014 ' + note);
+          if (!c.in_stock) txt.style.color = '#ff7a7a';
+          cb.disabled = !c.offered && !c.would_add;
+          cb.addEventListener('change', function () {
+            var adding = cb.checked;
+            var msg = adding
+              ? 'Sell ' + item.title + ' in ' + c.color + '? This creates ' + c.would_add + ' variant' + (c.would_add === 1 ? '' : 's') + ' in Printful with your current design.'
+              : 'Stop selling ' + item.title + ' in ' + c.color + '? This deletes ' + c.offered + ' variant' + (c.offered === 1 ? '' : 's') + ' in Printful.';
+            if (!confirm(msg)) { cb.checked = !adding; return; }
+            cb.disabled = true;
+            var req = adding
+              ? api('/api/admin/shop/products/' + item.printful_id + '/colors', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ color: c.color }) })
+              : api('/api/admin/shop/products/' + item.printful_id + '/colors/' + encodeURIComponent(c.color), { method: 'DELETE' });
+            req.then(function (r) {
+              var n = adding ? r.created.length : r.removed.length;
+              var bad = r.failed || [];
+              toast((adding ? 'Added ' : 'Removed ') + c.color + ' (' + n + ')' + (bad.length ? ' \u2014 ' + bad.length + ' failed: ' + bad.map(function (f) { return f.size + ': ' + f.error; }).join('; ') : ''), bad.length > 0);
+            }).catch(function (e) {
+              toast(e.message, true);
+            }).then(load);
+          });
+          row.appendChild(cb); row.appendChild(sw); row.appendChild(txt);
+          panel.appendChild(row);
+        });
+      }).catch(function (e) {
+        panel.textContent = e.message === 'login required' ? '' : e.message;
+      });
+    }
+    toggle.addEventListener('click', function () {
+      open = !open;
+      toggle.textContent = open ? 'Colors \u25BE' : 'Colors \u25B8';
+      panel.style.display = open ? '' : 'none';
+      if (open) load();
+    });
+    box.appendChild(toggle);
+    box.appendChild(panel);
+    return box;
+  }
+
   function loadPfProducts() {
     if (pfLoading) return;
     pfLoading = true;
@@ -761,6 +826,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
       body.appendChild(field('Title', item.title, function (v) { item.title = v; }));
       body.appendChild(field('Printful link (fallback while the shop is closed)', item.url, function (v) { item.url = v; }));
       body.appendChild(pfPicker(item));
+      if (item.printful_id) body.appendChild(colorsPanel(item));
       body.appendChild(imageField('Product image', item, 'image', !!item.sticker));
       var checks = el('div', 'checks full');
       checks.appendChild(checkbox('sticker style', item.sticker, function (v) { item.sticker = v ? 1 : 0; }));
