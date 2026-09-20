@@ -40,6 +40,7 @@
  *   GET /api/admin/printful/products  -> Printful store products (needs PRINTFUL_TOKEN)
  *   GET /api/admin/shop/orders        -> the shop's own order book (paid? printed? paid out?)
  *   GET /api/admin/shop/health        -> are the Stripe/Printful secrets shaped right, and do they work?
+ *   POST /api/admin/shop/reconcile     -> ask Stripe about every unpaid order/gift and mark the paid ones
  *   GET /api/admin/shop/catalog       -> every merch card's Printful variants and their stock status
  *   GET/POST /api/admin/shop/products/<pf>/colors, DELETE …/colors/<color> -> the colours a card sells, changed in Printful
  *   POST /api/admin/shop/products/<pf>/mockup -> copy Printful's mockup into R2 for use as the card image
@@ -58,6 +59,7 @@ import {
   adminConfirmOrder,
   adminDonations,
   adminShopHealth,
+  adminReconcilePayments,
   adminCatalogHealth,
   adminProductColors,
   adminAddColor,
@@ -1661,6 +1663,15 @@ async function route(request, env, ctx, url, path, method) {
         }
         if (method === 'GET' && path === '/api/admin/shop/health') {
           return adminShopHealth(env);
+        }
+        if (method === 'POST' && path === '/api/admin/shop/reconcile') {
+          try {
+            return await adminReconcilePayments(env);
+          } catch (e) {
+            const known = shopErrorResponse(e);
+            if (known) return known;
+            throw e;
+          }
         }
         if (method === 'GET' && path === '/api/admin/shop/catalog') {
           return adminCatalogHealth(env);

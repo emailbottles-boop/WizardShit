@@ -5,6 +5,7 @@ import {
   adminAddColor,
   adminCatalogHealth,
   adminProductColors,
+  adminReconcilePayments,
   adminRemoveColor,
   adminDonations,
   adminShopHealth,
@@ -159,6 +160,12 @@ function installFetch() {
     }
     if (url.startsWith('https://api.printful.com/orders') && method === 'POST') {
       return pfEnvelope({ id: 771122, external_id: JSON.parse(body).external_id, status: 'draft' });
+    }
+    if (method === 'GET' && /\/v1\/checkout\/sessions\/cs_/.test(url)) {
+      const id = url.split('/checkout/sessions/')[1];
+      if (id === 'cs_paid') return jsonRes({ id, payment_status: 'paid', status: 'complete', payment_intent: 'pi_paid', customer_details: { email: 'buyer@example.com' } });
+      if (id === 'cs_open') return jsonRes({ id, payment_status: 'unpaid', status: 'open' });
+      return jsonRes({ error: { message: 'No such checkout.session: ' + id } }, 404);
     }
     if (url.startsWith('https://api.stripe.com/v1/checkout/sessions')) {
       if (stripeFails) return jsonRes({ error: { message: 'Your card was declined, sort of' } }, 402);
@@ -1131,6 +1138,33 @@ describe('donations', () => {
 });
 
 describe('the console', () => {
+  it('CHECK PAYMENTS asks Stripe about unpaid orders and marks the paid ones, holding them for payout', async () => {
+    rows["FROM orders WHERE status IN ('pending_payment', 'payment_failed')"] = [
+      { reference: 'WIZ-PAID', stripe_session: 'cs_paid' },
+      { reference: 'WIZ-OPEN', stripe_session: 'cs_open' },
+      { reference: 'WIZ-GONE', stripe_session: 'cs_gone' },
+    ];
+    rows["FROM donations WHERE status IN ('pending', 'failed')"] = [{ reference: 'GIFT-1', stripe_session: 'cs_paid' }];
+    const out = await (await adminReconcilePayments(env())).json();
+    expect(out).toMatchObject({ checked: 4, paid: ['WIZ-PAID'], paid_gifts: ['GIFT-1'], confirmed: [], mode: 'payout' });
+    expect(out.still_unpaid).toEqual([{ reference: 'WIZ-OPEN', stripe: 'unpaid / open' }]);
+    expect(out.errors).toEqual([{ reference: 'WIZ-GONE', error: 'Stripe: No such checkout.session: cs_gone' }]);
+    const paidUpdate = statements.find((st) => st.sql.startsWith("UPDATE orders SET status = 'paid'"));
+    expect(paidUpdate.args).toEqual(['cs_paid', 'pi_paid', 'buyer@example.com', 'buyer@example.com', 'WIZ-PAID']);
+    // Held for payout: nothing went to Printful.
+    expect(call(/\/orders\/@/)).toBeUndefined();
+    expect(call(/\/confirm$/)).toBeUndefined();
+  });
+
+  it('CHECK PAYMENTS sends a paid order to print at once when the shop confirms on payment', async () => {
+    rows["FROM orders WHERE status IN ('pending_payment', 'payment_failed')"] = [{ reference: 'WIZ-PAID', stripe_session: 'cs_paid' }];
+    rows['SELECT status FROM orders'] = { status: 'paid' };
+    const out = await (await adminReconcilePayments(env({ CONFIRM_ON_PAYOUT: 'false' }))).json();
+    expect(out.paid).toEqual(['WIZ-PAID']);
+    expect(out.confirmed).toEqual(['WIZ-PAID']);
+    expect(call(/\/confirm$/, 'POST')).toBeDefined();
+  });
+
   it("offers Printful's own mockup as a card image: a variant preview first, else the product thumbnail", async () => {
     expect(await printfulMockup(env(), 501)).toEqual({ url: 'https://files.cdn.printful.com/black.png', name: 'Unisex Hoodie' });
     expect(await printfulMockup(env(), 503)).toEqual({ url: 'https://files.cdn.printful.com/beanie.png', name: 'Wizard Beanie' });

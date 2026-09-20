@@ -1625,6 +1625,63 @@ export async function adminShopHealth(env) {
   );
 }
 
+/**
+ * Ask Stripe directly about every order and gift still marked unpaid that
+ * has a checkout session, and mark paid the ones Stripe says are paid. The
+ * webhook is the normal path; this is the owner's safety net for when a
+ * webhook never arrived (a wrong signing secret, an endpoint not set up):
+ * a customer who paid must never sit as "abandoned".
+ */
+export async function adminReconcilePayments(env) {
+  if (!cleanSecret(env.STRIPE_SECRET_KEY)) throw new ShopError('Payments are not switched on yet.', 503);
+  const orders = await env.DB.prepare(
+    "SELECT reference, stripe_session FROM orders WHERE status IN ('pending_payment', 'payment_failed') AND stripe_session <> '' ORDER BY id DESC LIMIT 50",
+  ).all();
+  const gifts = await env.DB.prepare(
+    "SELECT reference, stripe_session FROM donations WHERE status IN ('pending', 'failed') AND stripe_session <> '' ORDER BY id DESC LIMIT 50",
+  ).all();
+  const paid = [];
+  const paidGifts = [];
+  const confirmed = [];
+  const stillUnpaid = [];
+  const errors = [];
+  for (const o of orders.results || []) {
+    try {
+      const s = await stripe(env, 'GET', '/checkout/sessions/' + encodeURIComponent(o.stripe_session));
+      if (s && s.payment_status === 'paid') {
+        await markOrderPaid(env, o.reference, s);
+        paid.push(o.reference);
+        // Same as the webhook would have done on the day: confirm at once
+        // unless the shop holds orders for the payout (and never on test keys).
+        if (!confirmOnPayout(env) && !stripeTestMode(env)) {
+          const outcome = await confirmOrder(env, o.reference);
+          if (outcome.status !== 'not-found') confirmed.push(o.reference);
+        }
+      } else {
+        stillUnpaid.push({ reference: o.reference, stripe: s ? String(s.payment_status || '?') + ' / ' + String(s.status || '?') : 'unknown' });
+      }
+    } catch (e) {
+      errors.push({ reference: o.reference, error: redactUpstream(e.message) });
+    }
+  }
+  for (const g of gifts.results || []) {
+    try {
+      const s = await stripe(env, 'GET', '/checkout/sessions/' + encodeURIComponent(g.stripe_session));
+      if (s && s.payment_status === 'paid') {
+        await markDonationPaid(env, g.reference, s);
+        paidGifts.push(g.reference);
+      }
+    } catch (e) {
+      errors.push({ reference: g.reference, error: redactUpstream(e.message) });
+    }
+  }
+  return json(
+    { checked: (orders.results || []).length + (gifts.results || []).length, paid, paid_gifts: paidGifts, confirmed, still_unpaid: stillUnpaid, errors, mode: confirmOnPayout(env) ? 'payout' : 'payment' },
+    200,
+    { 'Cache-Control': 'no-store' },
+  );
+}
+
 export async function adminOrders(env) {
   const rows = await env.DB.prepare('SELECT * FROM orders ORDER BY id DESC LIMIT 300').all();
   return json(

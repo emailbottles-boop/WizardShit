@@ -1042,7 +1042,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
   function orderBadge(o) {
     if (o.status === 'confirmed') return el('span', 'badge good', 'PRINTING · ' + (o.printful_status || 'pending'));
     if (o.status === 'paid') return el('span', 'badge wait', o.stripe_payout ? 'PAID · IN BANK' : 'PAID · WAITING FOR PAYOUT');
-    if (o.status === 'pending_payment') return el('span', 'badge', 'NOT PAID (abandoned checkout)');
+    if (o.status === 'pending_payment') return el('span', 'badge', 'NOT PAID (abandoned checkout \u2014 or a missed Stripe message: press CHECK PAYMENTS)');
     if (o.status === 'payment_failed') return el('span', 'badge bad', 'PAYMENT FAILED');
     if (o.status === 'refunded') return el('span', 'badge bad', 'REFUNDED');
     if (o.status === 'missing') return el('span', 'badge bad', 'PAID BUT NO PRINTFUL ORDER — fulfil by hand');
@@ -1146,7 +1146,30 @@ export const ADMIN_HTML = `<!DOCTYPE html>
         catReport.textContent = e.message;
       }).then(function () { cat.disabled = false; });
     });
+    // The safety net for a webhook that never arrived: ask Stripe directly
+    // about every unpaid order and mark the paid ones.
+    var rec = el('button', 'btn primary', 'CHECK PAYMENTS');
+    rec.type = 'button';
+    rec.style.marginBottom = '0.9rem';
+    rec.style.marginLeft = '0.6rem';
+    rec.title = 'Ask Stripe about every order still marked unpaid and mark the paid ones';
+    rec.addEventListener('click', function () {
+      rec.disabled = true;
+      api('/api/admin/shop/reconcile', { method: 'POST' }).then(function (r) {
+        var bits = [];
+        if (r.paid.length) bits.push('marked paid: ' + r.paid.join(', ') + (r.mode === 'payout' ? ' (held for payout)' : ''));
+        if (r.confirmed.length) bits.push('sent to print: ' + r.confirmed.join(', '));
+        if (r.paid_gifts.length) bits.push('gifts paid: ' + r.paid_gifts.join(', '));
+        if (r.still_unpaid.length) bits.push(r.still_unpaid.length + ' still unpaid at Stripe');
+        if (r.errors.length) bits.push(r.errors.length + ' could not be checked: ' + r.errors.map(function (x) { return x.reference + ' \u2014 ' + x.error; }).join('; '));
+        toast('Checked ' + r.checked + ' \u2014 ' + (bits.join(' \u00b7 ') || 'nothing to mark'), r.errors.length > 0);
+        loadOrders();
+      }).catch(function (e) {
+        if (e.message !== 'login required') toast(e.message, true);
+      }).then(function () { rec.disabled = false; });
+    });
     listEl.appendChild(check);
+    listEl.appendChild(rec);
     listEl.appendChild(cat);
     listEl.appendChild(report);
     listEl.appendChild(catReport);
