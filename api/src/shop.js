@@ -1379,6 +1379,26 @@ export async function adminProductColors(env, printfulId) {
 }
 
 /**
+ * A variant's options as Printful will accept them on a new variant. Printful
+ * hands back every option slot it knows, empty ones included, and refuses an
+ * empty `thread_colors` on a flat-embroidery product ("thread_colors option is
+ * missing or incorrect"). So: empty slots are dropped, hex colours are
+ * uppercased the way Printful lists them, and when `thread_colors` is empty
+ * but another thread list has values (a beanie stored its black and white
+ * under `thread_colors_3d`), those fill it.
+ */
+export function cloneOptions(options) {
+  const hex = (v) => (typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v) ? v.toUpperCase() : v);
+  const filled = (o) => o && o.id && o.value !== null && o.value !== undefined && o.value !== '' && !(Array.isArray(o.value) && !o.value.length);
+  const out = (options || []).filter(filled).map((o) => ({ id: o.id, value: Array.isArray(o.value) ? o.value.map(hex) : hex(o.value) }));
+  if (!out.some((o) => o.id === 'thread_colors')) {
+    const threads = [...new Set(out.filter((o) => /^thread_colors/.test(o.id) && Array.isArray(o.value)).flatMap((o) => o.value))];
+    if (threads.length) out.push({ id: 'thread_colors', value: threads });
+  }
+  return out;
+}
+
+/**
  * Offer a colour: one new sync variant per size sold today, each carrying
  * the design files and options of the existing variant in that size (or the
  * first one), at its price. Additive: nothing existing is touched. Needs a
@@ -1406,7 +1426,7 @@ export async function adminAddColor(env, printfulId, color) {
     .map((f) => ({
       id: f.id,
       type: f.type,
-      ...(Array.isArray(f.options) && f.options.length ? { options: f.options } : {}),
+      ...(Array.isArray(f.options) && f.options.length ? { options: cloneOptions(f.options) } : {}),
       ...(f.position && typeof f.position === 'object' ? { position: f.position } : {}),
     }));
   const withDesign = p.variants.filter((v) => libraryFiles(v).length);
@@ -1422,7 +1442,7 @@ export async function adminAddColor(env, printfulId, color) {
       retail_price: template.retail_price,
       is_ignored: false,
       files,
-      options: template.options || [],
+      options: cloneOptions(template.options),
     };
     try {
       const made = await printful(env, '/store/products/' + encodeURIComponent(p.product.id) + '/variants', { method: 'POST', body });
