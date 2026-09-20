@@ -1651,7 +1651,7 @@ export async function adminShopHealth(env) {
     {
       stripe: { ...stripeKey, test_mode: stripeTestMode(env), live: stripeLive },
       printful: { ...printfulToken, live: printfulLive },
-      webhook: { ...webhook, stored: stored.length > 0, endpoint },
+      webhook: { ...webhook, stored: stored.length > 0, usable: usableSecret(env.STRIPE_WEBHOOK_SECRET) || stored.length > 0, endpoint },
       publishable: !!publishableKey(env),
       mode: confirmOnPayout(env) ? 'payout' : 'payment',
     },
@@ -1673,6 +1673,11 @@ export const WEBHOOK_EVENTS = [
   'payout.failed',
   'payout.canceled',
 ];
+
+/** True when a signing secret set by hand could ever verify anything. */
+export function usableSecret(raw) {
+  return /^whsec_[A-Za-z0-9_-]+$/.test(cleanSecret(raw));
+}
 
 /** Where Stripe must send events: the shop's own domain, never workers.dev. */
 export function webhookUrl(env) {
@@ -1708,7 +1713,8 @@ export async function webhookStatus(env) {
   const wanted = webhookUrl(env);
   const list = await stripe(env, 'GET', '/webhook_endpoints', { limit: 100 });
   const endpoints = ((list && list.data) || []).map((e) => describeEndpoint(e, wanted));
-  const ours = endpoints.find((e) => e.ours);
+  // A live one at the right address first; a switched-off one only if that is all there is.
+  const ours = endpoints.find((e) => e.ours && e.status === 'enabled') || endpoints.find((e) => e.ours);
   const nearMiss = ours ? null : endpoints.find((e) => sameHost(e.url, wanted));
   let problem = null;
   if (!ours && nearMiss) problem = 'Stripe is sending to ' + nearMiss.url + ' (wrong address) and every message is bouncing';
@@ -1731,11 +1737,16 @@ export async function adminRepairWebhook(env) {
   if (!cleanSecret(env.STRIPE_SECRET_KEY)) throw new ShopError('Payments are not switched on yet.', 503);
   const before = await webhookStatus(env);
   const wanted = before.url;
-  if (before.ok) return json({ action: 'already-ok', ...before }, 200, { 'Cache-Control': 'no-store' });
+  // Can the handler check a signature at all? A secret set by hand that
+  // carries characters no key has (a mangled paste) is as good as none: every
+  // delivery would be refused even at the right address. Then the only fix
+  // with nothing to type is a fresh endpoint whose secret the Worker keeps.
+  const canVerify = usableSecret(env.STRIPE_WEBHOOK_SECRET) || (await storedWebhookSecret(env)).length > 0;
+  if (before.ok && canVerify) return json({ action: 'already-ok', ...before }, 200, { 'Cache-Control': 'no-store' });
 
   let action;
   let stored = false;
-  if (before.endpoint) {
+  if (before.endpoint && canVerify) {
     // Fix in place: address, events, enabled. Secret unchanged.
     await stripe(env, 'POST', '/webhook_endpoints/' + encodeURIComponent(before.endpoint.id), {
       url: wanted,
@@ -1753,8 +1764,14 @@ export async function adminRepairWebhook(env) {
     const secret = cleanSecret(created && created.secret);
     if (!secret) throw new ShopError('Stripe created the endpoint but handed back no signing secret.', 502);
     await env.DB.prepare("INSERT INTO settings (key, value) VALUES ('stripe_webhook_secret', ?) ON CONFLICT(key) DO UPDATE SET value = ?").bind(secret, secret).run();
-    action = 'created';
     stored = true;
+    action = 'created';
+    if (before.endpoint) {
+      // The old one is switched off, not deleted: Stripe stops bouncing off
+      // it, and the owner can still see it in the dashboard.
+      await stripe(env, 'POST', '/webhook_endpoints/' + encodeURIComponent(before.endpoint.id), { disabled: true });
+      action = 'replaced';
+    }
   }
   const after = await webhookStatus(env);
   return json({ action, secret_stored: stored, ...after }, 200, { 'Cache-Control': 'no-store' });

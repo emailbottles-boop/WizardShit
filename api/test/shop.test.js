@@ -195,6 +195,7 @@ function installFetch() {
       if (!e) return jsonRes({ error: { message: 'No such webhook endpoint: ' + id } }, 404);
       if (form.get('url')) e.url = form.get('url');
       if (form.get('disabled') === 'false') e.status = 'enabled';
+      if (form.get('disabled') === 'true') e.status = 'disabled';
       const events = [...form.entries()].filter(([k]) => k.startsWith('enabled_events[')).map(([, v]) => v);
       if (events.length) e.enabled_events = events;
       return jsonRes(e);
@@ -1442,7 +1443,7 @@ describe('the console', () => {
       let out = await (await adminShopHealth(env({ STRIPE_SECRET_KEY: '"rk_live_good"\r\n', PRINTFUL_TOKEN: 'pf_fake', STRIPE_WEBHOOK_SECRET: 'whsec_x', STRIPE_PUBLISHABLE_KEY: 'pk_live_1' }))).json();
       expect(out.stripe).toEqual({ set: true, prefix: 'rk_', length: 12, stray: true, odd: 0, test_mode: false, live: 'ok' });
       expect(out.printful.live).toBe('ok');
-      expect(out.webhook).toMatchObject({ set: true, prefix: 'whsec_', length: 7, stray: false, odd: 0, stored: false });
+      expect(out.webhook).toMatchObject({ set: true, prefix: 'whsec_', length: 7, stray: false, odd: 0, stored: false, usable: true });
       expect(out.webhook.endpoint).toMatchObject({ ok: false, problem: 'no endpoint set up: Stripe is not telling the shop about payments' });
       expect(out.publishable).toBe(true);
       expect(JSON.stringify(out)).not.toContain('rk_live_good');
@@ -1531,6 +1532,32 @@ describe('the webhook endpoint, from the console', () => {
     expect([...form.entries()].filter(([k]) => k.startsWith('enabled_events[')).map(([, v]) => v)).toEqual(ALL);
     expect(stmt('stripe_webhook_secret').args).toEqual(['whsec_made_by_stripe', 'whsec_made_by_stripe']);
     expect(JSON.stringify(out)).not.toContain('whsec_made');
+  });
+
+  it('FIX WEBHOOK makes a fresh endpoint and switches the old one off when the hand-set secret is unusable', async () => {
+    // The owner pasted a secret with 30 characters no key has: every delivery
+    // is refused whatever the address. Moving the endpoint would fix nothing.
+    webhookEndpoints = [{ id: 'we_typo', url: 'https://wizardshit.store/api/webhooks/strip', status: 'enabled', enabled_events: ALL }];
+    const out = await (await adminRepairWebhook(env({ STRIPE_WEBHOOK_SECRET: 'whsec_' + 'а'.repeat(30) }))).json(); // Cyrillic а
+    expect(out).toMatchObject({ action: 'replaced', secret_stored: true, ok: true });
+    expect(call(/\/v1\/webhook_endpoints$/, 'POST')).toBeDefined();
+    expect(new URLSearchParams(call(/webhook_endpoints\/we_typo$/, 'POST').body).get('disabled')).toBe('true');
+    expect(statements.find((st) => st.sql.startsWith('INSERT INTO settings')).args).toEqual(['whsec_made_by_stripe', 'whsec_made_by_stripe']);
+    expect(JSON.stringify(out)).not.toContain('whsec_made');
+    // The right-address endpoint is the live one; the old one stays visible but off.
+    expect(out.endpoint.id).toBe('we_new');
+    expect(webhookEndpoints.find((e) => e.id === 'we_typo').status).toBe('disabled');
+  });
+
+  it('FIX WEBHOOK replaces even a right-address endpoint when nothing can verify its signature', async () => {
+    webhookEndpoints = [{ id: 'we_ok', url: RIGHT, status: 'enabled', enabled_events: ALL }];
+    const out = await (await adminRepairWebhook(env({ STRIPE_WEBHOOK_SECRET: '' }))).json();
+    expect(out).toMatchObject({ action: 'replaced', secret_stored: true, ok: true });
+    // And once the Worker keeps a secret, the same endpoint counts as right.
+    calls = [];
+    rows["SELECT value FROM settings WHERE key = 'stripe_webhook_secret'"] = { value: 'whsec_made_by_stripe' };
+    expect((await (await adminRepairWebhook(env({ STRIPE_WEBHOOK_SECRET: '' }))).json()).action).toBe('already-ok');
+    expect(calls.filter((c) => /webhook_endpoints/.test(c.url) && c.method === 'POST')).toHaveLength(0);
   });
 
   it('does nothing when the endpoint is already right', async () => {

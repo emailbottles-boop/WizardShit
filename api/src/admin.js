@@ -1106,8 +1106,10 @@ export const ADMIN_HTML = `<!DOCTYPE html>
         // every delivery, and the shop never hears that anyone paid.
         var ep = h.webhook.endpoint;
         if (ep) {
-          line(ep.ok, 'Stripe webhook endpoint ' + (ep.ok ? ep.url + ' — enabled, every event on' : (ep.problem || 'not right')));
-          if (!ep.ok) {
+          var epText = ep.ok ? ep.url + ' — enabled, every event on' : (ep.problem || 'not right');
+          if (ep.ok && !h.webhook.usable) epText += ' — but the signing secret cannot check anything, so every message is refused';
+          line(ep.ok && h.webhook.usable, 'Stripe webhook endpoint ' + epText);
+          if (!ep.ok || !h.webhook.usable) {
             var fix = el('button', 'btn primary', 'FIX WEBHOOK');
             fix.type = 'button';
             fix.style.marginTop = '0.4rem';
@@ -1117,6 +1119,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
               api('/api/admin/shop/webhook/repair', { method: 'POST' }).then(function (r) {
                 var what = r.action === 'moved' ? 'moved the endpoint to ' + r.url
                   : r.action === 'created' ? 'created the endpoint at ' + r.url + ' (the Worker keeps its signing secret)'
+                  : r.action === 'replaced' ? 'made a fresh endpoint at ' + r.url + ' and switched the old one off (the Worker keeps the new signing secret)'
                   : r.action === 'updated' ? 'switched on every event at ' + r.url
                   : 'already right';
                 toast('Webhook: ' + what + (r.ok ? '' : ' — still: ' + r.problem), !r.ok);
