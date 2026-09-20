@@ -19,7 +19,8 @@ jobs:
     defaults: { run: { working-directory: api } }
     steps:
       - uses: actions/checkout@v4
-        with: { ref: ${{ github.event.workflow_run.head_sha }} }
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
       - name: Check the deploy secrets are set
         id: secrets
         env:
