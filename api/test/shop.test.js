@@ -5,6 +5,7 @@ import {
   adminAddColor,
   adminCatalogHealth,
   adminProductColors,
+  adminReconcilePayments,
   adminRemoveColor,
   adminDonations,
   adminShopHealth,
@@ -110,6 +111,7 @@ let rows = {}; // handlers keyed by a fragment of SQL -> row(s)
 let draftStatus = 'draft';
 let confirmFails = new Set();
 let payoutCharges = [];
+let payouts = []; // what GET /v1/payouts?status=paid lists
 let stripeFails = false;
 let stripeEmbeddedName = 'embedded_page'; // what the stand-in Stripe's API version calls the on-site mode
 
@@ -160,6 +162,12 @@ function installFetch() {
     if (url.startsWith('https://api.printful.com/orders') && method === 'POST') {
       return pfEnvelope({ id: 771122, external_id: JSON.parse(body).external_id, status: 'draft' });
     }
+    if (method === 'GET' && /\/v1\/checkout\/sessions\/cs_/.test(url)) {
+      const id = url.split('/checkout/sessions/')[1];
+      if (id === 'cs_paid') return jsonRes({ id, payment_status: 'paid', status: 'complete', payment_intent: 'pi_paid', customer_details: { email: 'buyer@example.com' } });
+      if (id === 'cs_open') return jsonRes({ id, payment_status: 'unpaid', status: 'open' });
+      return jsonRes({ error: { message: 'No such checkout.session: ' + id } }, 404);
+    }
     if (url.startsWith('https://api.stripe.com/v1/checkout/sessions')) {
       if (stripeFails) return jsonRes({ error: { message: 'Your card was declined, sort of' } }, 402);
       // Which name of the on-site mode this "API version" knows; the other is refused as Stripe does.
@@ -170,6 +178,7 @@ function installFetch() {
       return jsonRes({ id: 'cs_test_123', url: 'https://checkout.stripe.com/c/pay/cs_test_123', client_secret: 'cs_test_123_secret_abc' });
     }
     if (url.startsWith('https://api.stripe.com/v1/customers')) return jsonRes({ id: 'cus_1' });
+    if (url.startsWith('https://api.stripe.com/v1/payouts')) return jsonRes({ data: payouts, has_more: false });
     if (url.startsWith('https://api.stripe.com/v1/balance_transactions')) {
       return jsonRes({
         data: payoutCharges.map((c) => ({ id: 'txn_' + c.id, type: 'charge', source: { object: 'charge', ...c } })),
@@ -295,6 +304,7 @@ beforeEach(() => {
   draftStatus = 'draft';
   confirmFails = new Set();
   payoutCharges = [];
+  payouts = [];
   stripeFails = false;
   stripeEmbeddedName = 'embedded_page';
   installFetch();
@@ -1131,6 +1141,71 @@ describe('donations', () => {
 });
 
 describe('the console', () => {
+  it('CHECK PAYMENTS asks Stripe about unpaid orders and marks the paid ones, holding them for payout', async () => {
+    rows["FROM orders WHERE status IN ('pending_payment', 'payment_failed')"] = [
+      { reference: 'WIZ-PAID', stripe_session: 'cs_paid' },
+      { reference: 'WIZ-OPEN', stripe_session: 'cs_open' },
+      { reference: 'WIZ-GONE', stripe_session: 'cs_gone' },
+    ];
+    rows["FROM donations WHERE status IN ('pending', 'failed')"] = [{ reference: 'GIFT-1', stripe_session: 'cs_paid' }];
+    const out = await (await adminReconcilePayments(env())).json();
+    expect(out).toMatchObject({ checked: 4, paid: ['WIZ-PAID'], paid_gifts: ['GIFT-1'], confirmed: [], mode: 'payout' });
+    expect(out.still_unpaid).toEqual([{ reference: 'WIZ-OPEN', stripe: 'unpaid / open' }]);
+    expect(out.errors).toEqual([{ reference: 'WIZ-GONE', error: 'Stripe: No such checkout.session: cs_gone' }]);
+    const paidUpdate = statements.find((st) => st.sql.startsWith("UPDATE orders SET status = 'paid'"));
+    expect(paidUpdate.args).toEqual(['cs_paid', 'pi_paid', 'buyer@example.com', 'buyer@example.com', 'WIZ-PAID']);
+    // Held for payout: nothing went to Printful.
+    expect(call(/\/orders\/@/)).toBeUndefined();
+    expect(call(/\/confirm$/)).toBeUndefined();
+  });
+
+  it('CHECK PAYMENTS sends a held order to print once Stripe has paid it out', async () => {
+    // WIZ-HELD was marked paid on the day; the payout.paid message never
+    // arrived. WIZ-DONE is already printing and must not be asked about again.
+    rows["FROM orders WHERE status = 'paid'"] = [{ reference: 'WIZ-HELD' }];
+    rows['SELECT status FROM orders'] = { status: 'paid' };
+    payouts = [{ id: 'po_new', object: 'payout', status: 'paid' }];
+    payoutCharges = [
+      { id: 'ch_h', metadata: { order_reference: 'WIZ-HELD' } },
+      { id: 'ch_d', metadata: { order_reference: 'WIZ-DONE' } },
+    ];
+    const out = await (await adminReconcilePayments(env())).json();
+    expect(out).toMatchObject({ paid: [], paid_out: ['WIZ-HELD'], payouts_checked: ['po_new'], still_held: [], errors: [], mode: 'payout' });
+    expect(call(/\/payouts\?status=paid/)).toBeDefined();
+    expect(call(/balance_transactions\?payout=po_new/)).toBeDefined();
+    expect(calls.filter((c) => /\/confirm$/.test(c.url))).toHaveLength(1);
+    expect(statements.filter((s) => s.sql.includes("status = 'confirmed'")).map((s) => s.args[2])).toEqual(['WIZ-HELD']);
+    // Bookkeeping still records the payout against every order in it.
+    expect(statements.filter((s) => s.sql.includes('stripe_payout = ? WHERE reference')).map((s) => s.args)).toEqual([['po_new', 'WIZ-HELD'], ['po_new', 'WIZ-DONE']]);
+  });
+
+  it('CHECK PAYMENTS leaves a held order waiting when no payout has carried it yet', async () => {
+    rows["FROM orders WHERE status = 'paid'"] = [{ reference: 'WIZ-HELD' }];
+    payouts = [{ id: 'po_old', object: 'payout', status: 'paid' }];
+    payoutCharges = [{ id: 'ch_x', metadata: { order_reference: 'WIZ-OTHER' } }];
+    const out = await (await adminReconcilePayments(env())).json();
+    expect(out).toMatchObject({ paid_out: [], still_held: ['WIZ-HELD'], payouts_checked: ['po_old'], errors: [] });
+    expect(call(/\/confirm$/)).toBeUndefined();
+  });
+
+  it('CHECK PAYMENTS never asks Stripe about payouts when nothing is held, nor on test keys', async () => {
+    await adminReconcilePayments(env());
+    expect(call(/\/payouts/)).toBeUndefined();
+    rows["FROM orders WHERE status = 'paid'"] = [{ reference: 'WIZ-HELD' }];
+    await adminReconcilePayments(env({ STRIPE_SECRET_KEY: 'sk_test_fake' }));
+    expect(call(/\/payouts/)).toBeUndefined();
+    expect(call(/\/confirm$/)).toBeUndefined();
+  });
+
+  it('CHECK PAYMENTS sends a paid order to print at once when the shop confirms on payment', async () => {
+    rows["FROM orders WHERE status IN ('pending_payment', 'payment_failed')"] = [{ reference: 'WIZ-PAID', stripe_session: 'cs_paid' }];
+    rows['SELECT status FROM orders'] = { status: 'paid' };
+    const out = await (await adminReconcilePayments(env({ CONFIRM_ON_PAYOUT: 'false' }))).json();
+    expect(out.paid).toEqual(['WIZ-PAID']);
+    expect(out.confirmed).toEqual(['WIZ-PAID']);
+    expect(call(/\/confirm$/, 'POST')).toBeDefined();
+  });
+
   it("offers Printful's own mockup as a card image: a variant preview first, else the product thumbnail", async () => {
     expect(await printfulMockup(env(), 501)).toEqual({ url: 'https://files.cdn.printful.com/black.png', name: 'Unisex Hoodie' });
     expect(await printfulMockup(env(), 503)).toEqual({ url: 'https://files.cdn.printful.com/beanie.png', name: 'Wizard Beanie' });
