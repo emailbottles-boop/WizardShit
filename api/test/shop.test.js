@@ -1129,6 +1129,11 @@ describe('the console', () => {
     expect(by.Black).toMatchObject({ offered: 2, would_add: 1, color_code: '#000' }); // XL not sold yet
     expect(by.White).toMatchObject({ offered: 0, would_add: 3 }); // S, L, XL — never 5XL
     expect(by.Purple).toMatchObject({ offered: 2, would_add: 0, in_stock: 1 });
+    // The design data a copy is made from, per variant, previews left out.
+    expect(out.design[0]).toEqual({
+      id: 9001, color: 'Black', size: 'S', options: [{ id: 'stitch_color', value: 'white' }],
+      files: [{ id: 771, type: 'front', options: [{ id: 'thread_colors', value: ['#000000', '#FFFFFF'] }], position: { area_width: 1800, area_height: 2400, width: 1800, height: 1800, top: 300, left: 0 } }],
+    });
   });
 
   it('adds a colour by cloning the design onto it in every size sold, then clears the catalog cache', async () => {

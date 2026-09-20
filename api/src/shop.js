@@ -1356,11 +1356,22 @@ export async function adminProductColors(env, printfulId) {
     if (inStock) c.in_stock++;
     if (!isSynced && wanted) c.would_add++;
   }
+  // What a clone copies: the design files and options as Printful stores
+  // them on the existing variants. Owner-only, and the quickest way to see
+  // why Printful refuses a copy.
+  const design = p.variants.map((v) => ({
+    id: v.id,
+    color: p.colorOf(v),
+    size: p.sizeOf(v),
+    options: v.options || [],
+    files: (v.files || []).filter((f) => f.type !== 'preview').map((f) => ({ id: f.id || null, type: f.type, options: f.options || [], position: f.position || null })),
+  }));
   return json(
     {
       product: { id: p.product.id, name: p.product.name, catalog_id: p.catalogId, catalog_name: p.catalogName },
       sizes,
       colors: [...colors.values()],
+      design,
     },
     200,
     { 'Cache-Control': 'no-store' },
