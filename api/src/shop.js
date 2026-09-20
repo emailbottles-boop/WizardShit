@@ -1101,17 +1101,16 @@ export async function chargesInPayout(env, payoutId) {
   return { orders, donations, skipped };
 }
 
-async function handlePayoutPaid(env, payout) {
-  const payoutId = payout && payout.id;
-  if (!payoutId) return json({ received: true, confirmed: false });
-
-  let batch;
-  try {
-    batch = await chargesInPayout(env, payoutId);
-  } catch (e) {
-    console.error('payout ' + payoutId + ': could not read charges:', e);
-    return json({ error: 'Could not read the payout.' }, 503);
-  }
+/**
+ * Everything a paid payout means for the book: the money for these charges is
+ * in the bank, so record the payout against each order and gift and (in
+ * confirm-on-payout mode, on live keys) send the orders to print. `only`
+ * narrows the confirm step to those references — the console's safety net
+ * passes the orders still held, so already-printing ones are not re-asked.
+ * Throws when the payout cannot be read from Stripe.
+ */
+async function settlePayout(env, payoutId, only) {
+  const batch = await chargesInPayout(env, payoutId);
 
   // Bookkeeping first, whatever the mode: this money is in the bank now.
   for (const d of batch.donations) {
@@ -1135,6 +1134,7 @@ async function handlePayoutPaid(env, payout) {
   for (const o of batch.orders) {
     await env.DB.prepare('UPDATE orders SET stripe_payout = ? WHERE reference = ?').bind(payoutId, o.reference).run();
     if (!confirmOnPayout(env)) continue; // the charge event already confirmed it
+    if (only && !only.has(o.reference)) continue;
     if (stripeTestMode(env)) {
       console.warn('TEST MODE — not confirming ' + o.reference);
       continue;
@@ -1160,13 +1160,28 @@ async function handlePayoutPaid(env, payout) {
     }
   }
 
+  return { confirmed, failed, missing, donations: batch.donations.map((d) => d.reference), skipped: batch.skipped.length };
+}
+
+async function handlePayoutPaid(env, payout) {
+  const payoutId = payout && payout.id;
+  if (!payoutId) return json({ received: true, confirmed: false });
+
+  let result;
+  try {
+    result = await settlePayout(env, payoutId);
+  } catch (e) {
+    console.error('payout ' + payoutId + ': could not read charges:', e);
+    return json({ error: 'Could not read the payout.' }, 503);
+  }
+  const { confirmed, failed, missing, donations } = result;
   if (failed.length) {
     // 5xx earns a Stripe retry. Everything confirmed stays confirmed; the
     // retry only has the failures left to do.
     return json({ error: 'Could not confirm every order.', confirmed, failed }, 503);
   }
-  console.info('payout ' + payoutId + ': ' + confirmed.length + ' confirmed, ' + batch.donations.length + ' donations in bank, ' + batch.skipped.length + ' skipped.');
-  return json({ received: true, confirmed: confirmed.length > 0, orders: confirmed, donations: batch.donations.map((d) => d.reference), ...(missing.length ? { missing } : {}) });
+  console.info('payout ' + payoutId + ': ' + confirmed.length + ' confirmed, ' + donations.length + ' donations in bank, ' + result.skipped + ' skipped.');
+  return json({ received: true, confirmed: confirmed.length > 0, orders: confirmed, donations, ...(missing.length ? { missing } : {}) });
 }
 
 export async function handleStripeWebhook(request, env) {
@@ -1630,7 +1645,9 @@ export async function adminShopHealth(env) {
  * has a checkout session, and mark paid the ones Stripe says are paid. The
  * webhook is the normal path; this is the owner's safety net for when a
  * webhook never arrived (a wrong signing secret, an endpoint not set up):
- * a customer who paid must never sit as "abandoned".
+ * a customer who paid must never sit as "abandoned". In confirm-on-payout
+ * mode it then looks at Stripe's recent paid payouts for any order still
+ * held, so a missed payout.paid never leaves a paid order unprinted either.
  */
 export async function adminReconcilePayments(env) {
   if (!cleanSecret(env.STRIPE_SECRET_KEY)) throw new ShopError('Payments are not switched on yet.', 503);
@@ -1675,8 +1692,56 @@ export async function adminReconcilePayments(env) {
       errors.push({ reference: g.reference, error: redactUpstream(e.message) });
     }
   }
+  // The payout step: orders Stripe has paid out since (the webhook would have
+  // confirmed them on the day) go to print now. Only the held ones are asked
+  // about, and only when there are any, so a quiet shop costs no calls.
+  const paidOut = [];
+  const payoutsChecked = [];
+  let stillHeld = [];
+  if (confirmOnPayout(env) && !stripeTestMode(env)) {
+    const held = await env.DB.prepare("SELECT reference FROM orders WHERE status = 'paid' ORDER BY id DESC LIMIT 50").all();
+    const waiting = new Set((held.results || []).map((r) => r.reference));
+    if (waiting.size) {
+      try {
+        const list = await stripe(env, 'GET', '/payouts', { status: 'paid', limit: 10 });
+        for (const p of (list && list.data) || []) {
+          if (!p || !p.id) continue;
+          try {
+            const result = await settlePayout(env, p.id, waiting);
+            payoutsChecked.push(p.id);
+            for (const r of result.confirmed) {
+              paidOut.push(r);
+              waiting.delete(r);
+            }
+            for (const r of result.missing) {
+              errors.push({ reference: r, error: 'paid out, but Printful has no order for it' });
+              waiting.delete(r);
+            }
+            for (const r of result.failed) errors.push({ reference: r, error: 'paid out, but Printful would not confirm it' });
+          } catch (e) {
+            errors.push({ reference: p.id, error: redactUpstream(e.message) });
+          }
+          if (!waiting.size) break;
+        }
+      } catch (e) {
+        errors.push({ reference: 'payouts', error: redactUpstream(e.message) });
+      }
+    }
+    stillHeld = [...waiting];
+  }
   return json(
-    { checked: (orders.results || []).length + (gifts.results || []).length, paid, paid_gifts: paidGifts, confirmed, still_unpaid: stillUnpaid, errors, mode: confirmOnPayout(env) ? 'payout' : 'payment' },
+    {
+      checked: (orders.results || []).length + (gifts.results || []).length,
+      paid,
+      paid_gifts: paidGifts,
+      confirmed,
+      still_unpaid: stillUnpaid,
+      paid_out: paidOut,
+      payouts_checked: payoutsChecked,
+      still_held: stillHeld,
+      errors,
+      mode: confirmOnPayout(env) ? 'payout' : 'payment',
+    },
     200,
     { 'Cache-Control': 'no-store' },
   );

@@ -1152,7 +1152,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
     rec.type = 'button';
     rec.style.marginBottom = '0.9rem';
     rec.style.marginLeft = '0.6rem';
-    rec.title = 'Ask Stripe about every order still marked unpaid and mark the paid ones';
+    rec.title = 'Ask Stripe about every order still marked unpaid and mark the paid ones; then send any order Stripe has paid out to print';
     rec.addEventListener('click', function () {
       rec.disabled = true;
       api('/api/admin/shop/reconcile', { method: 'POST' }).then(function (r) {
@@ -1160,6 +1160,8 @@ export const ADMIN_HTML = `<!DOCTYPE html>
         if (r.paid.length) bits.push('marked paid: ' + r.paid.join(', ') + (r.mode === 'payout' ? ' (held for payout)' : ''));
         if (r.confirmed.length) bits.push('sent to print: ' + r.confirmed.join(', '));
         if (r.paid_gifts.length) bits.push('gifts paid: ' + r.paid_gifts.join(', '));
+        if (r.paid_out && r.paid_out.length) bits.push('paid out, now sent to print: ' + r.paid_out.join(', '));
+        if (r.still_held && r.still_held.length) bits.push(r.still_held.length + ' paid, waiting for Stripe to pay out (press again after the payout)');
         if (r.still_unpaid.length) bits.push(r.still_unpaid.length + ' still unpaid at Stripe');
         if (r.errors.length) bits.push(r.errors.length + ' could not be checked: ' + r.errors.map(function (x) { return x.reference + ' \u2014 ' + x.error; }).join('; '));
         toast('Checked ' + r.checked + ' \u2014 ' + (bits.join(' \u00b7 ') || 'nothing to mark'), r.errors.length > 0);

@@ -111,6 +111,7 @@ let rows = {}; // handlers keyed by a fragment of SQL -> row(s)
 let draftStatus = 'draft';
 let confirmFails = new Set();
 let payoutCharges = [];
+let payouts = []; // what GET /v1/payouts?status=paid lists
 let stripeFails = false;
 let stripeEmbeddedName = 'embedded_page'; // what the stand-in Stripe's API version calls the on-site mode
 
@@ -177,6 +178,7 @@ function installFetch() {
       return jsonRes({ id: 'cs_test_123', url: 'https://checkout.stripe.com/c/pay/cs_test_123', client_secret: 'cs_test_123_secret_abc' });
     }
     if (url.startsWith('https://api.stripe.com/v1/customers')) return jsonRes({ id: 'cus_1' });
+    if (url.startsWith('https://api.stripe.com/v1/payouts')) return jsonRes({ data: payouts, has_more: false });
     if (url.startsWith('https://api.stripe.com/v1/balance_transactions')) {
       return jsonRes({
         data: payoutCharges.map((c) => ({ id: 'txn_' + c.id, type: 'charge', source: { object: 'charge', ...c } })),
@@ -302,6 +304,7 @@ beforeEach(() => {
   draftStatus = 'draft';
   confirmFails = new Set();
   payoutCharges = [];
+  payouts = [];
   stripeFails = false;
   stripeEmbeddedName = 'embedded_page';
   installFetch();
@@ -1153,6 +1156,44 @@ describe('the console', () => {
     expect(paidUpdate.args).toEqual(['cs_paid', 'pi_paid', 'buyer@example.com', 'buyer@example.com', 'WIZ-PAID']);
     // Held for payout: nothing went to Printful.
     expect(call(/\/orders\/@/)).toBeUndefined();
+    expect(call(/\/confirm$/)).toBeUndefined();
+  });
+
+  it('CHECK PAYMENTS sends a held order to print once Stripe has paid it out', async () => {
+    // WIZ-HELD was marked paid on the day; the payout.paid message never
+    // arrived. WIZ-DONE is already printing and must not be asked about again.
+    rows["FROM orders WHERE status = 'paid'"] = [{ reference: 'WIZ-HELD' }];
+    rows['SELECT status FROM orders'] = { status: 'paid' };
+    payouts = [{ id: 'po_new', object: 'payout', status: 'paid' }];
+    payoutCharges = [
+      { id: 'ch_h', metadata: { order_reference: 'WIZ-HELD' } },
+      { id: 'ch_d', metadata: { order_reference: 'WIZ-DONE' } },
+    ];
+    const out = await (await adminReconcilePayments(env())).json();
+    expect(out).toMatchObject({ paid: [], paid_out: ['WIZ-HELD'], payouts_checked: ['po_new'], still_held: [], errors: [], mode: 'payout' });
+    expect(call(/\/payouts\?status=paid/)).toBeDefined();
+    expect(call(/balance_transactions\?payout=po_new/)).toBeDefined();
+    expect(calls.filter((c) => /\/confirm$/.test(c.url))).toHaveLength(1);
+    expect(statements.filter((s) => s.sql.includes("status = 'confirmed'")).map((s) => s.args[2])).toEqual(['WIZ-HELD']);
+    // Bookkeeping still records the payout against every order in it.
+    expect(statements.filter((s) => s.sql.includes('stripe_payout = ? WHERE reference')).map((s) => s.args)).toEqual([['po_new', 'WIZ-HELD'], ['po_new', 'WIZ-DONE']]);
+  });
+
+  it('CHECK PAYMENTS leaves a held order waiting when no payout has carried it yet', async () => {
+    rows["FROM orders WHERE status = 'paid'"] = [{ reference: 'WIZ-HELD' }];
+    payouts = [{ id: 'po_old', object: 'payout', status: 'paid' }];
+    payoutCharges = [{ id: 'ch_x', metadata: { order_reference: 'WIZ-OTHER' } }];
+    const out = await (await adminReconcilePayments(env())).json();
+    expect(out).toMatchObject({ paid_out: [], still_held: ['WIZ-HELD'], payouts_checked: ['po_old'], errors: [] });
+    expect(call(/\/confirm$/)).toBeUndefined();
+  });
+
+  it('CHECK PAYMENTS never asks Stripe about payouts when nothing is held, nor on test keys', async () => {
+    await adminReconcilePayments(env());
+    expect(call(/\/payouts/)).toBeUndefined();
+    rows["FROM orders WHERE status = 'paid'"] = [{ reference: 'WIZ-HELD' }];
+    await adminReconcilePayments(env({ STRIPE_SECRET_KEY: 'sk_test_fake' }));
+    expect(call(/\/payouts/)).toBeUndefined();
     expect(call(/\/confirm$/)).toBeUndefined();
   });
 
