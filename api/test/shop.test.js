@@ -1167,7 +1167,14 @@ describe('the console', () => {
       expect(out.created).toEqual([{ id: 9301, size: 'One size', attempts: 3 }]);
       expect(n).toBe(3);
       const labels = cloneAttempts(BEANIE.sync_variants[0], 6003, (v) => v.files.map((f) => ({ id: f.id, type: f.type }))).map((a) => a.label);
-      expect(labels).toEqual(['as stored, thread colours on file and variant', 'as stored, variant only', 'without the 3D slot', 'uppercased']);
+      expect(labels).toEqual(['as stored, thread colours on file and variant', 'as stored, variant only', 'without the 3D slot', 'uppercased', 'no thread colours, other options kept', 'no options at all']);
+      const bodies = cloneAttempts(BEANIE.sync_variants[0], 6003, (v) => v.files.map((f) => ({ id: f.id, type: f.type }))).map((a) => a.body);
+      expect(bodies[4].options).toEqual([{ id: 'embroidery_type', value: 'flat' }]);
+      expect(bodies[5].options).toBeUndefined();
+      // With a source URL on the file, one more shape references it by URL.
+      const withUrl = { ...BEANIE.sync_variants[0], files: [{ id: 1, type: 'default', url: 'https://files.cdn.printful.com/src.png' }] };
+      const last = cloneAttempts(withUrl, 6003, (v) => v.files.map((f) => ({ id: f.id, type: f.type }))).pop();
+      expect(last).toEqual({ label: 'file by URL, no options', body: { variant_id: 6003, retail_price: '22.00', is_ignored: false, files: [{ type: 'default', url: 'https://files.cdn.printful.com/src.png' }] } });
     } finally {
       globalThis.fetch = realFetch;
     }
