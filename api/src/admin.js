@@ -386,7 +386,11 @@ export const ADMIN_HTML = `<!DOCTYPE html>
         throw new Error('login required');
       }
       return res.json().then(function (data) {
-        if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+        if (!res.ok) {
+          var err = new Error(data.error || ('HTTP ' + res.status));
+          if (data && data.failed) err.failed = data.failed;
+          throw err;
+        }
         return data;
       });
     });
@@ -785,13 +789,24 @@ export const ADMIN_HTML = `<!DOCTYPE html>
             var req = adding
               ? api('/api/admin/shop/products/' + item.printful_id + '/colors', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ color: c.color }) })
               : api('/api/admin/shop/products/' + item.printful_id + '/colors/' + encodeURIComponent(c.color), { method: 'DELETE' });
+            var showSent = function (bad) {
+              // A refusal, with the request it refused, stays on screen to be copied.
+              var box = el('pre', '');
+              box.style.whiteSpace = 'pre-wrap'; box.style.fontSize = '0.72rem'; box.style.userSelect = 'all'; box.style.color = '#ff7a7a';
+              box.textContent = bad.map(function (f) { return f.size + ': ' + f.error + (f.sent ? '\\nsent: ' + JSON.stringify(f.sent) : ''); }).join('\\n\\n');
+              panel.appendChild(box);
+            };
             req.then(function (r) {
               var n = adding ? r.created.length : r.removed.length;
               var bad = r.failed || [];
               toast((adding ? 'Added ' : 'Removed ') + c.color + ' (' + n + ')' + (bad.length ? ' \u2014 ' + bad.length + ' failed: ' + bad.map(function (f) { return f.size + ': ' + f.error; }).join('; ') : ''), bad.length > 0);
+              return load().then(function () { if (bad.length) showSent(bad); });
             }).catch(function (e) {
               toast(e.message, true);
-            }).then(load);
+              return load().then(function () {
+                if (e.failed) showSent(e.failed);
+              });
+            });
           });
           row.appendChild(cb); row.appendChild(sw); row.appendChild(txt);
           panel.appendChild(row);
