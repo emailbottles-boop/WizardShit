@@ -42,6 +42,7 @@
  *   GET /api/admin/shop/health        -> are the Stripe/Printful secrets shaped right, and do they work?
  *   GET /api/admin/shop/catalog       -> every merch card's Printful variants and their stock status
  *   GET/POST /api/admin/shop/products/<pf>/colors, DELETE …/colors/<color> -> the colours a card sells, changed in Printful
+ *   POST /api/admin/shop/products/<pf>/mockup -> copy Printful's mockup into R2 for use as the card image
  *   POST /api/admin/shop/orders/<ref>/confirm -> send a paid order to print by hand
  *   GET /api/admin/donations          -> every donation and the running totals
  */
@@ -61,6 +62,7 @@ import {
   adminProductColors,
   adminAddColor,
   adminRemoveColor,
+  printfulMockup,
   cleanSecret,
   purgeCatalogCache,
   shopErrorResponse,
@@ -1662,6 +1664,33 @@ async function route(request, env, ctx, url, path, method) {
         }
         if (method === 'GET' && path === '/api/admin/shop/catalog') {
           return adminCatalogHealth(env);
+        }
+        {
+          // Printful's mockup of a card's product, copied into R2 as an image
+          // the card can use — same checks as an upload.
+          const m = path.match(/^\/api\/admin\/shop\/products\/(\d{1,12})\/mockup$/);
+          if (m && method === 'POST') {
+            try {
+              const { url: src, name } = await printfulMockup(env, Number(m[1]));
+              const res = await fetch(src, { signal: AbortSignal.timeout(20000) });
+              if (!res.ok) return json({ error: 'Printful would not serve the mockup (HTTP ' + res.status + ').' }, 502);
+              const type = (res.headers.get('Content-Type') || '').split(';')[0].trim().toLowerCase();
+              const ext = IMAGE_TYPES[type];
+              if (!ext) return json({ error: 'Printful sent something that is not an image (' + (type || 'unknown') + ').' }, 502);
+              const body = await res.arrayBuffer();
+              if (!body.byteLength || body.byteLength > MAX_UPLOAD_BYTES) return json({ error: 'The mockup is empty or too large (8MB max).' }, 502);
+              const bad = checkImageBytes(body, type);
+              if (bad) return json({ error: bad }, 502);
+              const given = name.toLowerCase().replace(/[^a-z0-9_-]+/g, '-').slice(0, 40) || 'printful';
+              const key = Date.now().toString(36) + '-' + crypto.randomUUID().slice(0, 8) + '-' + given + '.' + ext;
+              await env.IMAGES.put(key, body, { httpMetadata: { contentType: type } });
+              return json({ key, url: url.origin + '/img/' + key });
+            } catch (e) {
+              const known = shopErrorResponse(e);
+              if (known) return known;
+              throw e;
+            }
+          }
         }
         {
           // Colours a card sells, straight in Printful: list, add, remove.

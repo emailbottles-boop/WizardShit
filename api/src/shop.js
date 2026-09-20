@@ -1336,6 +1336,23 @@ async function productWithCatalog(env, printfulId) {
   return { product, variants, catalogId, catalogName: (cat.product && cat.product.title) || '', catalogVariants, colorOf, sizeOf };
 }
 
+/** Printful's own mockup of a product: the first variant's preview, else the
+ *  product thumbnail. The console offers it as the card image, so the owner
+ *  never has to download and re-upload Printful's picture. */
+export async function printfulMockup(env, printfulId) {
+  const r = await printful(env, '/store/products/' + encodeURIComponent(printfulId));
+  const product = r.sync_product || {};
+  const variants = (r.sync_variants || []).filter((v) => !v.is_ignored);
+  let url = '';
+  for (const v of variants) {
+    const preview = (v.files || []).find((f) => f.type === 'preview' && f.preview_url);
+    if (preview) { url = preview.preview_url; break; }
+  }
+  if (!url) url = product.thumbnail_url || '';
+  if (!/^https:\/\/[^/]+\.printful\.com\//i.test(url)) throw new ShopError('Printful has no mockup for this product yet — try again in a few minutes.', 409);
+  return { url, name: String(product.name || 'printful') };
+}
+
 /** Every colour the catalog makes this product in, and which ones are sold. */
 export async function adminProductColors(env, printfulId) {
   const p = await productWithCatalog(env, printfulId);
