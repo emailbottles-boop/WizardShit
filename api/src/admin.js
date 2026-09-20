@@ -796,6 +796,19 @@ export const ADMIN_HTML = `<!DOCTYPE html>
           row.appendChild(cb); row.appendChild(sw); row.appendChild(txt);
           panel.appendChild(row);
         });
+        // The design data a copy is made from, for when Printful refuses one.
+        var det = el('button', 'btn', 'Show design details');
+        det.type = 'button';
+        det.style.marginTop = '0.4rem';
+        var pre = el('pre', '');
+        pre.style.display = 'none';
+        pre.style.whiteSpace = 'pre-wrap';
+        pre.style.fontSize = '0.72rem';
+        pre.style.userSelect = 'all';
+        pre.textContent = JSON.stringify(d.design, null, 1);
+        det.addEventListener('click', function () { pre.style.display = pre.style.display === 'none' ? '' : 'none'; });
+        panel.appendChild(det);
+        panel.appendChild(pre);
       }).catch(function (e) {
         panel.textContent = e.message === 'login required' ? '' : e.message;
       });
