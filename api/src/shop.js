@@ -1184,15 +1184,33 @@ async function handlePayoutPaid(env, payout) {
   return json({ received: true, confirmed: confirmed.length > 0, orders: confirmed, donations, ...(missing.length ? { missing } : {}) });
 }
 
+/** The signing secret the Worker stored when it set the endpoint up itself
+ *  (FIX WEBHOOK in the console); '' when it never did. */
+async function storedWebhookSecret(env) {
+  try {
+    const row = await env.DB.prepare("SELECT value FROM settings WHERE key = 'stripe_webhook_secret'").first();
+    return cleanSecret(row && row.value);
+  } catch {
+    return '';
+  }
+}
+
 export async function handleStripeWebhook(request, env) {
   const secret = cleanSecret(env.STRIPE_WEBHOOK_SECRET);
-  if (!secret) {
-    console.error('STRIPE_WEBHOOK_SECRET is not set; refusing to process.');
-    return json({ error: 'Webhook is not configured.' }, 500);
-  }
   // Raw text, never request.json(): re-serialising changes the bytes.
   const rawBody = await request.text();
-  const check = await verifyStripeSignature(rawBody, request.headers.get('stripe-signature'), secret);
+  const header = request.headers.get('stripe-signature');
+  // The secret set by hand first; only if that does not sign this delivery,
+  // the one the Worker kept for an endpoint it created itself.
+  let check = secret ? await verifyStripeSignature(rawBody, header, secret) : { valid: false, reason: 'no signing secret configured' };
+  if (!check.valid) {
+    const stored = await storedWebhookSecret(env);
+    if (!secret && !stored) {
+      console.error('STRIPE_WEBHOOK_SECRET is not set; refusing to process.');
+      return json({ error: 'Webhook is not configured.' }, 500);
+    }
+    if (stored && stored !== secret) check = await verifyStripeSignature(rawBody, header, stored);
+  }
   if (!check.valid) {
     console.warn('webhook rejected: ' + check.reason);
     return json({ error: 'Invalid signature.' }, 400);
@@ -1622,22 +1640,124 @@ export async function adminShopHealth(env) {
   const stripeKey = shape(env.STRIPE_SECRET_KEY);
   const printfulToken = shape(env.PRINTFUL_TOKEN);
   const webhook = shape(env.STRIPE_WEBHOOK_SECRET);
-  const [stripeLive, printfulLive] = await Promise.all([
+  const [stripeLive, printfulLive, endpoint, stored] = await Promise.all([
     stripeKey.set ? probe(() => stripe(env, 'GET', '/checkout/sessions', { limit: 1 })) : 'not set',
     // Asked with a scope the shop actually uses (the catalog), not store details.
     printfulToken.set ? probe(() => printful(env, '/store/products?limit=1')) : 'not set',
+    stripeKey.set ? webhookStatus(env).catch((e) => ({ url: webhookUrl(env), ok: false, problem: 'could not ask Stripe: ' + redactUpstream(e.message), endpoints: [] })) : null,
+    storedWebhookSecret(env),
   ]);
   return json(
     {
       stripe: { ...stripeKey, test_mode: stripeTestMode(env), live: stripeLive },
       printful: { ...printfulToken, live: printfulLive },
-      webhook,
+      webhook: { ...webhook, stored: stored.length > 0, endpoint },
       publishable: !!publishableKey(env),
       mode: confirmOnPayout(env) ? 'payout' : 'payment',
     },
     200,
     { 'Cache-Control': 'no-store' },
   );
+}
+
+/* ------------------------------------------- the webhook, from the console --- */
+
+/** Every event the handler acts on. Stripe sends only what an endpoint is
+ *  subscribed to, so a missing one here is a silent hole in the money path. */
+export const WEBHOOK_EVENTS = [
+  'checkout.session.completed',
+  'checkout.session.async_payment_succeeded',
+  'checkout.session.async_payment_failed',
+  'charge.refunded',
+  'payout.paid',
+  'payout.failed',
+  'payout.canceled',
+];
+
+/** Where Stripe must send events: the shop's own domain, never workers.dev. */
+export function webhookUrl(env) {
+  return String(env.SITE_URL || 'https://wizardshit.store').trim().replace(/\/+$/, '') + '/api/webhooks/stripe';
+}
+
+function describeEndpoint(e, wanted) {
+  const events = Array.isArray(e.enabled_events) ? e.enabled_events : [];
+  const all = events.includes('*');
+  return {
+    id: e.id,
+    url: String(e.url || ''),
+    status: String(e.status || ''),
+    ours: String(e.url || '') === wanted,
+    missing_events: all ? [] : WEBHOOK_EVENTS.filter((x) => !events.includes(x)),
+  };
+}
+
+function sameHost(a, b) {
+  try {
+    return new URL(a).host === new URL(b).host;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * What Stripe has for this shop's webhook: the endpoint at the right
+ * address, or the nearest wrong one (a typo in the path, which 404s every
+ * delivery and leaves paid orders looking abandoned), and what is wrong.
+ */
+export async function webhookStatus(env) {
+  const wanted = webhookUrl(env);
+  const list = await stripe(env, 'GET', '/webhook_endpoints', { limit: 100 });
+  const endpoints = ((list && list.data) || []).map((e) => describeEndpoint(e, wanted));
+  const ours = endpoints.find((e) => e.ours);
+  const nearMiss = ours ? null : endpoints.find((e) => sameHost(e.url, wanted));
+  let problem = null;
+  if (!ours && nearMiss) problem = 'Stripe is sending to ' + nearMiss.url + ' (wrong address) and every message is bouncing';
+  else if (!ours) problem = 'no endpoint set up: Stripe is not telling the shop about payments';
+  else if (ours.status !== 'enabled') problem = 'the endpoint is ' + ours.status;
+  else if (ours.missing_events.length) problem = 'not subscribed to ' + ours.missing_events.join(', ');
+  return { url: wanted, ok: !problem, problem, endpoint: ours || nearMiss || null, endpoints };
+}
+
+/**
+ * Put the endpoint right, the way the owner would by hand but with nothing
+ * to type: an endpoint at a wrong address on the shop's own domain is moved
+ * to the right one (its signing secret stays the same, so the secret set by
+ * hand keeps working); one at the right address gets every event and is
+ * re-enabled; none at all is created, and the secret Stripe hands back
+ * (only ever at creation) is kept by the Worker so the handler can verify
+ * with it. Test keys manage test-mode endpoints; live keys, live ones.
+ */
+export async function adminRepairWebhook(env) {
+  if (!cleanSecret(env.STRIPE_SECRET_KEY)) throw new ShopError('Payments are not switched on yet.', 503);
+  const before = await webhookStatus(env);
+  const wanted = before.url;
+  if (before.ok) return json({ action: 'already-ok', ...before }, 200, { 'Cache-Control': 'no-store' });
+
+  let action;
+  let stored = false;
+  if (before.endpoint) {
+    // Fix in place: address, events, enabled. Secret unchanged.
+    await stripe(env, 'POST', '/webhook_endpoints/' + encodeURIComponent(before.endpoint.id), {
+      url: wanted,
+      enabled_events: WEBHOOK_EVENTS,
+      disabled: false,
+      description: 'wizardshit.store shop (managed by the Worker)',
+    });
+    action = before.endpoint.ours ? 'updated' : 'moved';
+  } else {
+    const created = await stripe(env, 'POST', '/webhook_endpoints', {
+      url: wanted,
+      enabled_events: WEBHOOK_EVENTS,
+      description: 'wizardshit.store shop (managed by the Worker)',
+    });
+    const secret = cleanSecret(created && created.secret);
+    if (!secret) throw new ShopError('Stripe created the endpoint but handed back no signing secret.', 502);
+    await env.DB.prepare("INSERT INTO settings (key, value) VALUES ('stripe_webhook_secret', ?) ON CONFLICT(key) DO UPDATE SET value = ?").bind(secret, secret).run();
+    action = 'created';
+    stored = true;
+  }
+  const after = await webhookStatus(env);
+  return json({ action, secret_stored: stored, ...after }, 200, { 'Cache-Control': 'no-store' });
 }
 
 /**

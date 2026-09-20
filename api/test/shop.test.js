@@ -6,6 +6,8 @@ import {
   adminCatalogHealth,
   adminProductColors,
   adminReconcilePayments,
+  adminRepairWebhook,
+  webhookStatus,
   adminRemoveColor,
   adminDonations,
   adminShopHealth,
@@ -112,6 +114,7 @@ let draftStatus = 'draft';
 let confirmFails = new Set();
 let payoutCharges = [];
 let payouts = []; // what GET /v1/payouts?status=paid lists
+let webhookEndpoints = []; // what Stripe has under /v1/webhook_endpoints
 let stripeFails = false;
 let stripeEmbeddedName = 'embedded_page'; // what the stand-in Stripe's API version calls the on-site mode
 
@@ -179,6 +182,24 @@ function installFetch() {
     }
     if (url.startsWith('https://api.stripe.com/v1/customers')) return jsonRes({ id: 'cus_1' });
     if (url.startsWith('https://api.stripe.com/v1/payouts')) return jsonRes({ data: payouts, has_more: false });
+    if (url === 'https://api.stripe.com/v1/webhook_endpoints' && method === 'POST') {
+      const form = new URLSearchParams(body);
+      const made = { id: 'we_new', object: 'webhook_endpoint', url: form.get('url'), status: 'enabled', enabled_events: form.getAll('enabled_events[]').length ? form.getAll('enabled_events[]') : [...form.entries()].filter(([k]) => k.startsWith('enabled_events[')).map(([, v]) => v) };
+      webhookEndpoints.push(made);
+      return jsonRes({ ...made, secret: 'whsec_made_by_stripe' });
+    }
+    if (/\/v1\/webhook_endpoints\/we_/.test(url) && method === 'POST') {
+      const id = url.split('/webhook_endpoints/')[1];
+      const form = new URLSearchParams(body);
+      const e = webhookEndpoints.find((x) => x.id === id);
+      if (!e) return jsonRes({ error: { message: 'No such webhook endpoint: ' + id } }, 404);
+      if (form.get('url')) e.url = form.get('url');
+      if (form.get('disabled') === 'false') e.status = 'enabled';
+      const events = [...form.entries()].filter(([k]) => k.startsWith('enabled_events[')).map(([, v]) => v);
+      if (events.length) e.enabled_events = events;
+      return jsonRes(e);
+    }
+    if (url.startsWith('https://api.stripe.com/v1/webhook_endpoints')) return jsonRes({ data: webhookEndpoints, has_more: false });
     if (url.startsWith('https://api.stripe.com/v1/balance_transactions')) {
       return jsonRes({
         data: payoutCharges.map((c) => ({ id: 'txn_' + c.id, type: 'charge', source: { object: 'charge', ...c } })),
@@ -305,6 +326,7 @@ beforeEach(() => {
   confirmFails = new Set();
   payoutCharges = [];
   payouts = [];
+  webhookEndpoints = [];
   stripeFails = false;
   stripeEmbeddedName = 'embedded_page';
   installFetch();
@@ -974,7 +996,9 @@ describe('the webhook', () => {
       env(),
     );
     expect(res.status).toBe(400);
-    expect(statements).toEqual([]);
+    // Nothing written: the only statement a forgery may cause is the read
+    // for a Worker-kept signing secret.
+    expect(statements.filter((s) => !/^SELECT value FROM settings/.test(s.sql))).toEqual([]);
   });
 
   it('records a payment and holds the draft until the payout (default mode)', async () => {
@@ -1418,7 +1442,8 @@ describe('the console', () => {
       let out = await (await adminShopHealth(env({ STRIPE_SECRET_KEY: '"rk_live_good"\r\n', PRINTFUL_TOKEN: 'pf_fake', STRIPE_WEBHOOK_SECRET: 'whsec_x', STRIPE_PUBLISHABLE_KEY: 'pk_live_1' }))).json();
       expect(out.stripe).toEqual({ set: true, prefix: 'rk_', length: 12, stray: true, odd: 0, test_mode: false, live: 'ok' });
       expect(out.printful.live).toBe('ok');
-      expect(out.webhook).toEqual({ set: true, prefix: 'whsec_', length: 7, stray: false, odd: 0 });
+      expect(out.webhook).toMatchObject({ set: true, prefix: 'whsec_', length: 7, stray: false, odd: 0, stored: false });
+      expect(out.webhook.endpoint).toMatchObject({ ok: false, problem: 'no endpoint set up: Stripe is not telling the shop about payments' });
       expect(out.publishable).toBe(true);
       expect(JSON.stringify(out)).not.toContain('rk_live_good');
       out = await (await adminShopHealth(env({ STRIPE_SECRET_KEY: 'rk_live_bаd!', STRIPE_WEBHOOK_SECRET: '' }))).json(); // a Cyrillic а and a !
@@ -1460,5 +1485,75 @@ describe('the console', () => {
 
     rows['SELECT status FROM orders'] = { status: 'paid' };
     await expect(adminConfirmOrder(env({ STRIPE_SECRET_KEY: 'sk_test_x' }), 'WIZ-T')).rejects.toThrow(/test keys/);
+  });
+});
+
+describe('the webhook endpoint, from the console', () => {
+  const RIGHT = 'https://wizardshit.store/api/webhooks/stripe';
+  const ALL = ['checkout.session.completed', 'checkout.session.async_payment_succeeded', 'checkout.session.async_payment_failed', 'charge.refunded', 'payout.paid', 'payout.failed', 'payout.canceled'];
+
+  it('spots an endpoint at a wrong address on the shop domain (the typo that bounced every delivery)', async () => {
+    webhookEndpoints = [{ id: 'we_typo', url: 'https://wizardshit.store/api/webhooks/strip', status: 'enabled', enabled_events: ALL }];
+    const st = await webhookStatus(env());
+    expect(st.ok).toBe(false);
+    expect(st.problem).toBe('Stripe is sending to https://wizardshit.store/api/webhooks/strip (wrong address) and every message is bouncing');
+    expect(st.endpoint.id).toBe('we_typo');
+    expect(st.url).toBe(RIGHT);
+  });
+
+  it('FIX WEBHOOK moves that endpoint to the right address, keeping its signing secret', async () => {
+    webhookEndpoints = [{ id: 'we_typo', url: 'https://wizardshit.store/api/webhooks/strip', status: 'enabled', enabled_events: ['checkout.session.completed'] }];
+    const out = await (await adminRepairWebhook(env())).json();
+    expect(out).toMatchObject({ action: 'moved', secret_stored: false, ok: true, problem: null });
+    const upd = call(/webhook_endpoints\/we_typo$/, 'POST');
+    const form = new URLSearchParams(upd.body);
+    expect(form.get('url')).toBe(RIGHT);
+    expect([...form.entries()].filter(([k]) => k.startsWith('enabled_events[')).map(([, v]) => v)).toEqual(ALL);
+    expect(form.get('disabled')).toBe('false');
+    expect(call(/\/v1\/webhook_endpoints$/, 'POST')).toBeUndefined();
+    expect(stmt('stripe_webhook_secret')).toBeUndefined();
+  });
+
+  it('FIX WEBHOOK switches on every missing event at a right-address endpoint', async () => {
+    webhookEndpoints = [{ id: 'we_ok', url: RIGHT, status: 'disabled', enabled_events: ['checkout.session.completed'] }];
+    expect((await webhookStatus(env())).problem).toBe('the endpoint is disabled');
+    const out = await (await adminRepairWebhook(env())).json();
+    expect(out).toMatchObject({ action: 'updated', ok: true });
+    expect(webhookEndpoints[0]).toMatchObject({ status: 'enabled', enabled_events: ALL });
+  });
+
+  it('FIX WEBHOOK creates the endpoint when there is none and keeps the secret Stripe hands back, never showing it', async () => {
+    const out = await (await adminRepairWebhook(env())).json();
+    expect(out).toMatchObject({ action: 'created', secret_stored: true, ok: true });
+    const made = call(/\/v1\/webhook_endpoints$/, 'POST');
+    const form = new URLSearchParams(made.body);
+    expect(form.get('url')).toBe(RIGHT);
+    expect([...form.entries()].filter(([k]) => k.startsWith('enabled_events[')).map(([, v]) => v)).toEqual(ALL);
+    expect(stmt('stripe_webhook_secret').args).toEqual(['whsec_made_by_stripe', 'whsec_made_by_stripe']);
+    expect(JSON.stringify(out)).not.toContain('whsec_made');
+  });
+
+  it('does nothing when the endpoint is already right', async () => {
+    webhookEndpoints = [{ id: 'we_ok', url: RIGHT, status: 'enabled', enabled_events: ['*'] }];
+    const out = await (await adminRepairWebhook(env())).json();
+    expect(out.action).toBe('already-ok');
+    expect(calls.filter((c) => /webhook_endpoints/.test(c.url) && c.method === 'POST')).toHaveLength(0);
+  });
+
+  it('the handler accepts a delivery signed with the secret the Worker kept, and still rejects a stranger', async () => {
+    rows["SELECT value FROM settings WHERE key = 'stripe_webhook_secret'"] = { value: 'whsec_made_by_stripe' };
+    const payload = JSON.stringify({ id: 'evt_s', type: 'ping' });
+    const t = Math.floor(Date.now() / 1000);
+    const send = async (secret) =>
+      handleStripeWebhook(new Request(RIGHT, { method: 'POST', headers: { 'stripe-signature': await signForTests(payload, secret, t) }, body: payload }), env());
+    expect((await send('whsec_made_by_stripe')).status).toBe(200);
+    expect((await send(SECRET)).status).toBe(200); // the one set by hand still works
+    expect((await send('whsec_stranger')).status).toBe(400);
+  });
+
+  it('the handler refuses everything when no secret is known at all', async () => {
+    const payload = JSON.stringify({ id: 'evt_s', type: 'ping' });
+    const res = await handleStripeWebhook(new Request(RIGHT, { method: 'POST', headers: { 'stripe-signature': await signForTests(payload, SECRET, Math.floor(Date.now() / 1000)) }, body: payload }), env({ STRIPE_WEBHOOK_SECRET: '' }));
+    expect(res.status).toBe(500);
   });
 });

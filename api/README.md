@@ -342,12 +342,23 @@ draft in the console with a CONFIRM button.
 
 3. Deploy: `npx wrangler deploy`.
 
-4. In Stripe (live mode): Developers → Webhooks → **Add destination**,
-   endpoint URL `https://wizardshit.store/api/webhooks/stripe`, listening to
-   `checkout.session.completed`, `checkout.session.async_payment_succeeded`,
+4. The Stripe webhook. Easiest: in the console's ORDERS tab press
+   **CHECK KEYS**; if the endpoint line is red, press **FIX WEBHOOK**. The
+   Worker then creates the endpoint at `https://wizardshit.store/api/webhooks/stripe`
+   with every event the shop needs and keeps the signing secret Stripe hands
+   back (in D1, `settings.stripe_webhook_secret`), so there is nothing to
+   copy. An endpoint that already exists with a typo in its address is moved
+   to the right one instead, keeping its secret.
+   By hand instead: Stripe (live mode) → Developers → Webhooks → **Add
+   destination**, endpoint URL `https://wizardshit.store/api/webhooks/stripe`,
+   listening to `checkout.session.completed`,
+   `checkout.session.async_payment_succeeded`,
    `checkout.session.async_payment_failed`, `payout.paid`, `payout.failed`,
    `payout.canceled` and `charge.refunded`. Copy its signing secret into
    `STRIPE_WEBHOOK_SECRET` (step 2) and deploy again if you set it afterwards.
+   Either way, **CHECK PAYMENTS** on the ORDERS tab is the safety net when a
+   message was missed: it asks Stripe directly and marks paid orders paid,
+   and sends paid-out ones to print.
 
 5. In the console's MERCH tab, pick the Printful product each card sells
    ("Sold on the site as") and SAVE & PUBLISH. Cards with a product get
