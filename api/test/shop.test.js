@@ -40,7 +40,7 @@ const SECRET = 'whsec_test_secret';
 const PRODUCT = {
   sync_product: { id: 501, name: 'Unisex Hoodie', thumbnail_url: 'https://files.cdn.printful.com/hoodie.png' },
   sync_variants: [
-    { id: 9001, variant_id: 4011, name: 'Unisex Hoodie - Black / S', retail_price: '45.00', currency: 'USD', availability_status: 'active', product: { variant_id: 4011, product_id: 146, name: 'Hoodie Black / S' }, options: [{ id: 'stitch_color', value: 'white' }], files: [{ id: 771, type: 'front', url: 'https://files.cdn.printful.com/front.png' }, { type: 'preview', preview_url: 'https://files.cdn.printful.com/black.png' }] },
+    { id: 9001, variant_id: 4011, name: 'Unisex Hoodie - Black / S', retail_price: '45.00', currency: 'USD', availability_status: 'active', product: { variant_id: 4011, product_id: 146, name: 'Hoodie Black / S' }, options: [{ id: 'stitch_color', value: 'white' }], files: [{ id: 771, type: 'front', url: 'https://files.cdn.printful.com/front.png', options: [{ id: 'thread_colors', value: ['#000000', '#FFFFFF'] }], position: { area_width: 1800, area_height: 2400, width: 1800, height: 1800, top: 300, left: 0 } }, { type: 'preview', preview_url: 'https://files.cdn.printful.com/black.png' }] },
     { id: 9002, variant_id: 4012, name: 'Unisex Hoodie - Black / L', retail_price: '45.00', currency: 'USD', availability_status: 'active', product: { variant_id: 4012, product_id: 146, name: 'Hoodie Black / L' }, options: [{ id: 'stitch_color', value: 'white' }], files: [{ id: 771, type: 'front', url: 'https://files.cdn.printful.com/front.png' }, { type: 'preview', preview_url: 'https://files.cdn.printful.com/black.png' }] },
     { id: 9003, variant_id: 4021, name: 'Unisex Hoodie - Purple / L', retail_price: '47.50', currency: 'USD', availability_status: 'active', product: { variant_id: 4021, product_id: 146, name: 'Hoodie Purple / L' }, files: [{ id: 772, type: 'front', url: 'https://files.cdn.printful.com/front-p.png' }, { type: 'preview', preview_url: 'https://files.cdn.printful.com/purple.png' }] },
     { id: 9004, variant_id: 4022, name: 'Unisex Hoodie - Purple / XL', retail_price: '47.50', currency: 'USD', availability_status: 'out_of_stock', product: { variant_id: 4022, product_id: 146, name: 'Hoodie Purple / XL' }, files: [] },
@@ -1118,6 +1118,7 @@ describe('the console', () => {
     expect(redactUpstream('bad whsec_1234567890abcdef here')).toBe('bad whsec_… here');
     expect(redactUpstream('scopes: sync_products/write (store 12345678)')).toBe('scopes: sync_products/write (store …)');
     expect(redactUpstream('order 12345 ok')).toBe('order 12345 ok'); // short numbers are fine
+    expect(redactUpstream('Allowed values: #FFFFFF, #000000, #333333, #96A1A8')).toBe('Allowed values: #FFFFFF, #000000, #333333, #96A1A8'); // hex colours are not ids
   });
 
   it('lists the colours Printful makes a product in, and which are sold', async () => {
@@ -1140,10 +1141,13 @@ describe('the console', () => {
     expect(out.failed).toEqual([]);
     const posts = calls.filter((c) => c.url.endsWith('/store/products/501/variants') && c.method === 'POST').map((c) => JSON.parse(c.body));
     expect(posts.map((b) => b.variant_id)).toEqual([4041, 4042, 4043]);
-    // Same size's design where one exists (S -> Black/S file 771, options too); a size never sold copies the first variant.
-    expect(posts[0]).toMatchObject({ retail_price: '45.00', files: [{ id: 771, type: 'front' }], options: [{ id: 'stitch_color', value: 'white' }], is_ignored: false });
+    // Same size's design where one exists (S -> Black/S file 771, with the file's own thread colours and placement, and the variant's options).
+    const file771 = { id: 771, type: 'front', options: [{ id: 'thread_colors', value: ['#000000', '#FFFFFF'] }], position: { area_width: 1800, area_height: 2400, width: 1800, height: 1800, top: 300, left: 0 } };
+    expect(posts[0]).toEqual({ variant_id: 4041, retail_price: '45.00', files: [file771], options: [{ id: 'stitch_color', value: 'white' }], is_ignored: false });
+    // L copies Black/L (file 771 without options: none to copy).
+    expect(posts[1].files).toEqual([{ id: 771, type: 'front' }]);
     // XL: the only XL sold (Purple/XL) has no design file, so it is never the template; the first variant with one is.
-    expect(posts[2].files).toEqual([{ id: 771, type: 'front' }]);
+    expect(posts[2].files).toEqual([file771]);
     expect(await caches.default.match(new Request('https://wizardshit.store/api/shop/products'))).toBeUndefined();
     // Nothing to add is a refusal, not a silent no-op.
     const dup = await run(adminAddColor(env(), 501, 'Purple'));

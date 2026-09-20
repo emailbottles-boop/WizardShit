@@ -1280,8 +1280,9 @@ export function redactUpstream(message) {
     .replace(/\b(sk|rk|pk|whsec)_[A-Za-z0-9_*?-]+/g, '$1_…')
     // A bare tail left after somebody else's asterisks.
     .replace(/\*{2,}[A-Za-z0-9]+/g, '****')
-    // Long digit runs: store ids, token ids, account ids.
-    .replace(/\b\d{6,}\b/g, '…');
+    // Long digit runs: store ids, token ids, account ids — but not a hex
+    // colour like #000000, which Printful lists in its own error messages.
+    .replace(/(?<![#A-Za-z0-9_])\d{6,}\b/g, '…');
 }
 
 /**
@@ -1386,7 +1387,17 @@ export async function adminAddColor(env, printfulId, color) {
   const failed = [];
   // Only a variant that actually carries a design file can be copied; a
   // blank variant would sell a blank garment.
-  const libraryFiles = (v) => (v.files || []).filter((f) => f.type !== 'preview' && f.id).map((f) => ({ id: f.id, type: f.type }));
+  // Each file goes over by library id with its own options and placement:
+  // for embroidery the thread colours live on the file, and a file without
+  // them is refused by Printful ("thread_colors option is missing").
+  const libraryFiles = (v) => (v.files || [])
+    .filter((f) => f.type !== 'preview' && f.id)
+    .map((f) => ({
+      id: f.id,
+      type: f.type,
+      ...(Array.isArray(f.options) && f.options.length ? { options: f.options } : {}),
+      ...(f.position && typeof f.position === 'object' ? { position: f.position } : {}),
+    }));
   const withDesign = p.variants.filter((v) => libraryFiles(v).length);
   if (!withDesign.length) throw new ShopError('None of this product\'s variants carries a design file to copy. Set the design up in Printful first.', 409);
   for (const cv of targets) {
