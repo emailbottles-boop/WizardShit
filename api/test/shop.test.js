@@ -1082,6 +1082,10 @@ describe('the webhook', () => {
     const first = await deliver(env(), { id: 'evt_p2', type: 'payout.paid', data: { object: { id: 'po_2', object: 'payout' } } });
     expect(first.status).toBe(503);
     expect(await first.json()).toEqual({ error: 'Could not confirm every order.', confirmed: ['WIZ-FINE'], failed: ['WIZ-BROKEN'] });
+    // The refusal is kept on the row, so the console can show it beside the order.
+    expect(stmt('UPDATE orders SET confirm_error').args).toEqual(['Printful: Printful is having a moment', 'WIZ-BROKEN']);
+    // And a confirmed order carries none.
+    expect(statements.find((st) => st.sql.includes("status = 'confirmed'")).sql).toContain("confirm_error = ''");
 
     calls = [];
     confirmFails = new Set();
@@ -1089,6 +1093,17 @@ describe('the webhook', () => {
     const retry = await deliver(env(), { id: 'evt_p2', type: 'payout.paid', data: { object: { id: 'po_2', object: 'payout' } } });
     expect(retry.status).toBe(200);
     expect(calls.filter((c) => /\/confirm$/.test(c.url))).toHaveLength(0);
+  });
+
+  it('a paid payout proves the payment: an order the checkout message missed is marked paid before it is confirmed', async () => {
+    payoutCharges = [{ id: 'ch_late', payment_intent: 'pi_late', metadata: { order_reference: 'WIZ-LATE' } }];
+    const res = await deliver(env(), { id: 'evt_p5', type: 'payout.paid', data: { object: { id: 'po_5', object: 'payout' } } });
+    expect(res.status).toBe(200);
+    const paid = statements.find((st) => st.sql.startsWith("UPDATE orders SET status = 'paid', paid_at = COALESCE"));
+    expect(paid.args).toEqual(['pi_late', 'WIZ-LATE']);
+    expect(paid.sql).toContain("status IN ('pending_payment', 'payment_failed')");
+    // Marked paid before the confirm, so the confirm's own guard can move the row.
+    expect(statements.indexOf(paid)).toBeLessThan(statements.findIndex((st) => st.sql.includes("status = 'confirmed'")));
   });
 
   it('with confirm-on-payout off, a payout only does the bookkeeping', async () => {
@@ -1202,6 +1217,18 @@ describe('the console', () => {
     expect(statements.filter((s) => s.sql.includes("status = 'confirmed'")).map((s) => s.args[2])).toEqual(['WIZ-HELD']);
     // Bookkeeping still records the payout against every order in it.
     expect(statements.filter((s) => s.sql.includes('stripe_payout = ? WHERE reference')).map((s) => s.args)).toEqual([['po_new', 'WIZ-HELD'], ['po_new', 'WIZ-DONE']]);
+  });
+
+  it('CHECK PAYMENTS says why Printful would not print a paid-out order', async () => {
+    rows["FROM orders WHERE status = 'paid'"] = [{ reference: 'WIZ-BROKEN' }];
+    rows['SELECT status FROM orders'] = { status: 'paid' };
+    payouts = [{ id: 'po_x', object: 'payout', status: 'paid' }];
+    payoutCharges = [{ id: 'ch_x', metadata: { order_reference: 'WIZ-BROKEN' } }];
+    confirmFails = new Set(['WIZ-BROKEN']);
+    const out = await (await adminReconcilePayments(env())).json();
+    expect(out.paid_out).toEqual([]);
+    expect(out.errors).toEqual([{ reference: 'WIZ-BROKEN', error: 'paid out, but Printful would not print it: Printful: Printful is having a moment' }]);
+    expect(stmt('UPDATE orders SET confirm_error').args).toEqual(['Printful: Printful is having a moment', 'WIZ-BROKEN']);
   });
 
   it('CHECK PAYMENTS leaves a held order waiting when no payout has carried it yet', async () => {
@@ -1471,6 +1498,7 @@ describe('the console', () => {
     expect(out.totals).toEqual({ received: 3000, in_bank: 2500, gifts: 2 });
     // The column is added in place when an older table lacks it.
     expect(statements.some((st) => st.sql.startsWith('ALTER TABLE orders ADD COLUMN donation'))).toBe(true);
+    expect(statements.some((st) => st.sql.startsWith('ALTER TABLE orders ADD COLUMN confirm_error'))).toBe(true);
   });
 
   it('lets the owner confirm a paid order by hand, and nothing else', async () => {

@@ -151,6 +151,7 @@ CREATE TABLE IF NOT EXISTS orders (
   subtotal              INTEGER NOT NULL DEFAULT 0,      -- cents
   shipping              INTEGER NOT NULL DEFAULT 0,
   donation              INTEGER NOT NULL DEFAULT 0,      -- optional gift left in the checkout box; part of total
+  confirm_error         TEXT NOT NULL DEFAULT '',        -- what Printful said the last time it would not print this order; '' once it does
   total                 INTEGER NOT NULL DEFAULT 0,      -- subtotal + shipping + donation: what Stripe charges (pre-tax)
   currency              TEXT NOT NULL DEFAULT 'USD',
   printful_order_id     INTEGER,
