@@ -40,6 +40,7 @@
  *   GET /api/admin/printful/products  -> Printful store products (needs PRINTFUL_TOKEN)
  *   GET /api/admin/shop/orders        -> the shop's own order book (paid? printed? paid out?)
  *   GET /api/admin/shop/health        -> are the Stripe/Printful secrets shaped right, and do they work?
+ *   GET /api/admin/shop/catalog       -> every merch card's Printful variants and their stock status
  *   POST /api/admin/shop/orders/<ref>/confirm -> send a paid order to print by hand
  *   GET /api/admin/donations          -> every donation and the running totals
  */
@@ -55,6 +56,7 @@ import {
   adminConfirmOrder,
   adminDonations,
   adminShopHealth,
+  adminCatalogHealth,
   cleanSecret,
   purgeCatalogCache,
   shopErrorResponse,
@@ -1653,6 +1655,9 @@ async function route(request, env, ctx, url, path, method) {
         }
         if (method === 'GET' && path === '/api/admin/shop/health') {
           return adminShopHealth(env);
+        }
+        if (method === 'GET' && path === '/api/admin/shop/catalog') {
+          return adminCatalogHealth(env);
         }
         {
           const m = path.match(/^\/api\/admin\/shop\/orders\/([A-Z0-9-]{4,40})\/confirm$/);

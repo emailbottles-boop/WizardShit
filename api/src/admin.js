@@ -981,8 +981,48 @@ export const ADMIN_HTML = `<!DOCTYPE html>
         report.textContent = e.message;
       }).then(function () { check.disabled = false; });
     });
+    // And one that shows what Printful is actually offering for each card,
+    // with stock status — why a colour or size is missing from the site.
+    var cat = el('button', 'btn', 'CHECK CATALOG');
+    cat.type = 'button';
+    cat.style.marginBottom = '0.9rem';
+    cat.style.marginLeft = '0.6rem';
+    var catReport = el('div', 'mode-line');
+    catReport.style.display = 'none';
+    cat.addEventListener('click', function () {
+      cat.disabled = true;
+      catReport.style.display = '';
+      catReport.textContent = 'Asking Printful about every card…';
+      api('/api/admin/shop/catalog').then(function (d) {
+        catReport.innerHTML = '';
+        (d.products || []).forEach(function (p) {
+          var head = el('div', '', (p.visible ? '' : '(hidden) ') + p.title + (p.printful_name ? ' — Printful: ' + p.printful_name : ' — not linked to a Printful product'));
+          head.style.fontWeight = '700';
+          head.style.marginTop = '0.5rem';
+          catReport.appendChild(head);
+          if (p.error) {
+            var er = el('div', '', '  ✗ Printful could not serve this product: ' + p.error);
+            er.style.color = '#ff7a7a';
+            catReport.appendChild(er);
+            return;
+          }
+          if (!p.variants.length && p.printful_id) catReport.appendChild(el('div', '', '  (no variants synced)'));
+          p.variants.forEach(function (v) {
+            var label = [v.color, v.size].filter(Boolean).join(' / ') || v.name;
+            var line = el('div', '', (v.on_site ? '  ✓ ' : '  ✗ ') + label + ' · ' + cents(v.price, v.currency) + (v.on_site ? '' : ' · ' + v.status.replace(/_/g, ' ') + ' at Printful — hidden from the site until it is active'));
+            if (!v.on_site) line.style.color = '#ff7a7a';
+            catReport.appendChild(line);
+          });
+        });
+        if (!(d.products || []).length) catReport.textContent = 'No merch cards yet.';
+      }).catch(function (e) {
+        catReport.textContent = e.message;
+      }).then(function () { cat.disabled = false; });
+    });
     listEl.appendChild(check);
+    listEl.appendChild(cat);
     listEl.appendChild(report);
+    listEl.appendChild(catReport);
 
     var rows = orders.orders || [];
     if (!rows.length) {
