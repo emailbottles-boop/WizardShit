@@ -1426,6 +1426,15 @@ export function cloneAttempts(template, catalogVariantId, libraryFiles) {
   if (JSON.stringify(upper) !== JSON.stringify(stored)) {
     attempts.push({ label: 'uppercased', body: { ...base, files: withThreadsOnFiles(files, upper), options: upper } });
   }
+  // Printful itself stored the template with no thread colours at all
+  // (thread_colors: []), so the shapes that carry none come next: only the
+  // non-thread options, then no options at all, then the file by URL rather
+  // than library id in case the id reference is what fails the check.
+  const noThreads = stored.filter((o) => !/thread_colors/.test(o.id));
+  attempts.push({ label: 'no thread colours, other options kept', body: { ...base, files, options: noThreads } });
+  attempts.push({ label: 'no options at all', body: { ...base, files } });
+  const byUrl = (template.files || []).filter((f) => f.type !== 'preview' && f.url).map((f) => ({ type: f.type, url: f.url }));
+  if (byUrl.length) attempts.push({ label: 'file by URL, no options', body: { ...base, files: byUrl } });
   return attempts;
 }
 
