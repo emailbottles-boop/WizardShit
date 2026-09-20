@@ -1387,8 +1387,8 @@ export async function adminProductColors(env, printfulId) {
  * but another thread list has values (a beanie stored its black and white
  * under `thread_colors_3d`), those fill it.
  */
-export function cloneOptions(options) {
-  const hex = (v) => (typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v) ? v.toUpperCase() : v);
+export function cloneOptions(options, { uppercase = false } = {}) {
+  const hex = (v) => (uppercase && typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v) ? v.toUpperCase() : v);
   const filled = (o) => o && o.id && o.value !== null && o.value !== undefined && o.value !== '' && !(Array.isArray(o.value) && !o.value.length);
   const out = (options || []).filter(filled).map((o) => ({ id: o.id, value: Array.isArray(o.value) ? o.value.map(hex) : hex(o.value) }));
   if (!out.some((o) => o.id === 'thread_colors')) {
@@ -1396,6 +1396,37 @@ export function cloneOptions(options) {
     if (threads.length) out.push({ id: 'thread_colors', value: threads });
   }
   return out;
+}
+
+/**
+ * The bodies to try, in order, when cloning a template variant onto a
+ * catalog variant. Printful's refusal for embroidery ("thread_colors option
+ * is missing or incorrect") does not say which shape it wants, and a refused
+ * attempt creates nothing, so several shapes are tried: exactly as stored
+ * (case and all), then without the file-level copy, then without the 3D
+ * slot, then uppercased. The first accepted wins.
+ */
+export function cloneAttempts(template, catalogVariantId, libraryFiles) {
+  const base = { variant_id: catalogVariantId, retail_price: template.retail_price, is_ignored: false };
+  const withThreadsOnFiles = (files, options) => {
+    const threads = options.find((o) => o.id === 'thread_colors');
+    return files.map((f) => (threads && !(f.options || []).some((o) => o.id === 'thread_colors') ? { ...f, options: [...(f.options || []), threads] } : f));
+  };
+  const stored = cloneOptions(template.options);
+  const files = libraryFiles(template);
+  const attempts = [
+    { label: 'as stored, thread colours on file and variant', body: { ...base, files: withThreadsOnFiles(files, stored), options: stored } },
+    { label: 'as stored, variant only', body: { ...base, files, options: stored } },
+  ];
+  if (stored.some((o) => o.id === 'thread_colors_3d')) {
+    const flatOnly = stored.filter((o) => o.id !== 'thread_colors_3d');
+    attempts.push({ label: 'without the 3D slot', body: { ...base, files: withThreadsOnFiles(files, flatOnly), options: flatOnly } });
+  }
+  const upper = cloneOptions(template.options, { uppercase: true });
+  if (JSON.stringify(upper) !== JSON.stringify(stored)) {
+    attempts.push({ label: 'uppercased', body: { ...base, files: withThreadsOnFiles(files, upper), options: upper } });
+  }
+  return attempts;
 }
 
 /**
@@ -1434,28 +1465,23 @@ export async function adminAddColor(env, printfulId, color) {
   for (const cv of targets) {
     // The existing variant in the same size (same placement and scale), else any with a design.
     const template = withDesign.find((v) => p.sizeOf(v) === cv.size) || withDesign[0];
-    // The print/embroidery files by library id; the mockup ("preview") is
-    // Printful's to regenerate for the new colour.
-    const options = cloneOptions(template.options);
-    const threads = options.find((o) => o.id === 'thread_colors');
-    // Embroidery thread colours are documented on the file as well as on the
-    // variant; a file that has none of its own gets the variant's.
-    const files = libraryFiles(template).map((f) => (threads && !(f.options || []).some((o) => o.id === 'thread_colors') ? { ...f, options: [...(f.options || []), threads] } : f));
-    const body = {
-      variant_id: cv.id,
-      retail_price: template.retail_price,
-      is_ignored: false,
-      files,
-      options,
-    };
-    try {
-      const made = await printful(env, '/store/products/' + encodeURIComponent(p.product.id) + '/variants', { method: 'POST', body });
-      created.push({ id: made && made.id, size: cv.size });
-    } catch (e) {
-      // What was sent travels with the refusal (no secrets in it), so a
-      // refusal can be read against the request without guessing.
-      failed.push({ size: cv.size, error: redactUpstream(e.message), sent: { variant_id: body.variant_id, retail_price: body.retail_price, files: body.files, options: body.options } });
+    const refusals = [];
+    let made = null;
+    for (const attempt of cloneAttempts(template, cv.id, libraryFiles)) {
+      try {
+        made = await printful(env, '/store/products/' + encodeURIComponent(p.product.id) + '/variants', { method: 'POST', body: attempt.body });
+        break;
+      } catch (e) {
+        // What was sent travels with the refusal (no secrets in it), so a
+        // refusal can be read against the request without guessing.
+        const { variant_id, retail_price, files, options } = attempt.body;
+        refusals.push({ attempt: attempt.label, error: redactUpstream(e.message), sent: { variant_id, retail_price, files, options } });
+        // Anything but a validation refusal (a scope, an outage) is not worth retrying.
+        if (!(e instanceof PrintfulError) || e.status !== 400) break;
+      }
     }
+    if (made) created.push({ id: made.id, size: cv.size, attempts: refusals.length + 1 });
+    else failed.push({ size: cv.size, error: refusals.map((r) => r.attempt + ': ' + r.error).join(' | '), sent: refusals.map((r) => r.sent) });
   }
   await purgeCatalogCache();
   // When nothing could be made, say why in `error` too: the console shows

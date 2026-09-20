@@ -10,6 +10,7 @@ import {
   adminShopHealth,
   chargesInPayout,
   cleanSecret,
+  cloneAttempts,
   cloneOptions,
   encodeForm,
   forgetSchemaForTests,
@@ -128,12 +129,12 @@ function installFetch() {
 
     if (url.startsWith('https://api.printful.com/store/products/501')) return pfEnvelope(PRODUCT);
     if (url.startsWith('https://api.printful.com/store/products/502')) return pfEnvelope(STICKER);
+    if (url === 'https://api.printful.com/store/products/503/variants' && method === 'POST') return pfEnvelope({ id: 9300, ...JSON.parse(body) });
     if (url.startsWith('https://api.printful.com/store/products/503')) return pfEnvelope(BEANIE);
     if (url === 'https://api.printful.com/store/products/501/variants' && method === 'POST') return pfEnvelope({ id: 9900 + calls.length, ...JSON.parse(body) });
     if (/\/store\/variants\/\d+$/.test(url) && method === 'DELETE') return pfEnvelope(null);
     if (url === 'https://api.printful.com/products/146') return pfEnvelope(HOODIE_CATALOG);
     if (url === 'https://api.printful.com/products/300') return pfEnvelope(BEANIE_CATALOG);
-    if (url === 'https://api.printful.com/store/products/503/variants' && method === 'POST') return pfEnvelope({ id: 9300, ...JSON.parse(body) });
     if (url.startsWith('https://api.printful.com/store/products/505')) return pfEnvelope(ONECOLOR);
     if (url === 'https://api.printful.com/products/301') return pfEnvelope(ONECOLOR_CATALOG);
     if (url.startsWith('https://api.printful.com/store/products/')) return jsonRes({ code: 404, result: 'Not Found' }, 404);
@@ -1128,21 +1129,65 @@ describe('donations', () => {
 });
 
 describe('the console', () => {
-  it('clones an embroidered beanie with its thread colours filled in the way Printful accepts', async () => {
+  it('clones an embroidered beanie exactly as Printful stores it, filling thread_colors from the list that had values', async () => {
     const res = await adminAddColor(env(), 503, 'Navy');
     expect(res.status).toBe(200);
-    const post = JSON.parse(calls.find((c) => c.url.endsWith('/store/products/503/variants') && c.method === 'POST').body);
+    expect((await res.json()).created).toEqual([{ id: 9300, size: 'One size', attempts: 1 }]);
+    const posts = calls.filter((c) => c.url.endsWith('/store/products/503/variants') && c.method === 'POST');
+    expect(posts).toHaveLength(1);
+    const post = JSON.parse(posts[0].body);
     expect(post.variant_id).toBe(6003);
-    // The file carries the thread colours too, since Printful documents them there as well.
-    expect(post.files).toEqual([{ id: 937410063, type: 'default', options: [{ id: 'thread_colors', value: ['#000000', '#FFFFFF'] }] }]);
-    // Empty slots dropped, hex uppercased, and thread_colors filled from the list that had values.
+    // First attempt: as stored (case kept), thread colours on the file too, empty slots dropped.
+    expect(post.files).toEqual([{ id: 937410063, type: 'default', options: [{ id: 'thread_colors', value: ['#000000', '#ffffff'] }] }]);
     expect(post.options).toEqual([
       { id: 'embroidery_type', value: 'flat' },
-      { id: 'thread_colors_3d', value: ['#000000', '#FFFFFF'] },
-      { id: 'thread_colors', value: ['#000000', '#FFFFFF'] },
+      { id: 'thread_colors_3d', value: ['#000000', '#ffffff'] },
+      { id: 'thread_colors', value: ['#000000', '#ffffff'] },
     ]);
-    expect(cloneOptions([{ id: 'thread_colors', value: ['#cc3366'] }, { id: 'x', value: '' }])).toEqual([{ id: 'thread_colors', value: ['#CC3366'] }]);
+    expect(cloneOptions([{ id: 'thread_colors', value: ['#cc3366'] }, { id: 'x', value: '' }])).toEqual([{ id: 'thread_colors', value: ['#cc3366'] }]);
+    expect(cloneOptions([{ id: 'thread_colors', value: ['#cc3366'] }], { uppercase: true })).toEqual([{ id: 'thread_colors', value: ['#CC3366'] }]);
     expect(cloneOptions(undefined)).toEqual([]);
+  });
+
+  it('when Printful refuses the shape it stores, tries the other shapes before giving up, and reports each', async () => {
+    // Printful accepts only the third shape (no 3D slot).
+    const realFetch = globalThis.fetch;
+    let n = 0;
+    globalThis.fetch = async (url, init) => {
+      if (String(url).endsWith('/store/products/503/variants') && init.method === 'POST') {
+        n++;
+        const body = JSON.parse(init.body);
+        if (body.options.some((o) => o.id === 'thread_colors_3d')) return jsonRes({ code: 400, result: 'thread_colors option is missing or incorrect!' }, 400);
+        return pfEnvelope({ id: 9301, ...body });
+      }
+      return realFetch(url, init);
+    };
+    try {
+      const out = await (await adminAddColor(env(), 503, 'Navy')).json();
+      expect(out.created).toEqual([{ id: 9301, size: 'One size', attempts: 3 }]);
+      expect(n).toBe(3);
+      const labels = cloneAttempts(BEANIE.sync_variants[0], 6003, (v) => v.files.map((f) => ({ id: f.id, type: f.type }))).map((a) => a.label);
+      expect(labels).toEqual(['as stored, thread colours on file and variant', 'as stored, variant only', 'without the 3D slot', 'uppercased']);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+    // A refusal that is not a validation error (a missing scope) stops after the first attempt.
+    let posts = 0;
+    globalThis.fetch = async (url, init) => {
+      if (String(url).endsWith('/store/products/503/variants') && init.method === 'POST') {
+        posts++;
+        return jsonRes({ code: 403, result: 'This endpoint requires any of the following scopes granted: sync_products/write!' }, 403);
+      }
+      return realFetch(url, init);
+    };
+    try {
+      const res = await adminAddColor(env(), 503, 'Navy');
+      expect(res.status).toBe(502);
+      expect(posts).toBe(1);
+      expect((await res.json()).failed[0].sent).toHaveLength(1);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
   });
 
   it('redacts keys and long ids out of upstream error text', () => {
@@ -1203,7 +1248,7 @@ describe('the console', () => {
       const out = await res.json();
       expect(out.created).toEqual([]);
       expect(out.failed).toHaveLength(3);
-      expect(out.failed[0].sent).toMatchObject({ variant_id: 4041, retail_price: '45.00' });
+      expect(out.failed[0].sent[0]).toMatchObject({ variant_id: 4041, retail_price: '45.00' });
       expect(out.error).toMatch(/would not add White: S — .*sync_products\/write/);
       expect(out.error).not.toContain('12345678');
     } finally {
