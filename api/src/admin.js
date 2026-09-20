@@ -1041,6 +1041,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
 
   function orderBadge(o) {
     if (o.status === 'confirmed') return el('span', 'badge good', 'PRINTING · ' + (o.printful_status || 'pending'));
+    if (o.status === 'paid' && o.confirm_error) return el('span', 'badge bad', 'PAID' + (o.stripe_payout ? ' · IN BANK' : '') + ' — PRINTFUL WOULD NOT PRINT IT: ' + o.confirm_error + ' — fix that at Printful, then press Confirm');
     if (o.status === 'paid') return el('span', 'badge wait', o.stripe_payout ? 'PAID · IN BANK' : 'PAID · WAITING FOR PAYOUT');
     if (o.status === 'pending_payment') return el('span', 'badge', 'NOT PAID (abandoned checkout \u2014 or a missed Stripe message: press CHECK PAYMENTS)');
     if (o.status === 'payment_failed') return el('span', 'badge bad', 'PAYMENT FAILED');

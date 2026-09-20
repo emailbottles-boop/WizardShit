@@ -857,18 +857,34 @@ export function orderDonation(raw) {
  *  time it is needed (once per isolate), so a deploy is all an upgrade takes. */
 let ordersHaveDonation = false;
 export function forgetSchemaForTests() { ordersHaveDonation = false; }
+/** Columns added after the table first shipped, put in place on an older
+ *  database the first time they are needed: the gift left at checkout, and
+ *  the reason Printful last refused to print an order. */
 export async function ensureDonationColumn(env) {
   if (ordersHaveDonation) return;
   const info = await env.DB.prepare('PRAGMA table_info(orders)').all();
   const cols = (info && info.results ? info.results : []).map((c) => c && c.name);
-  if (!cols.includes('donation')) {
+  const wanted = [
+    ['donation', 'INTEGER NOT NULL DEFAULT 0'],
+    ['confirm_error', "TEXT NOT NULL DEFAULT ''"],
+  ];
+  for (const [name, ddl] of wanted) {
+    if (cols.includes(name)) continue;
     try {
-      await env.DB.prepare('ALTER TABLE orders ADD COLUMN donation INTEGER NOT NULL DEFAULT 0').run();
+      await env.DB.prepare('ALTER TABLE orders ADD COLUMN ' + name + ' ' + ddl).run();
     } catch (e) {
       if (!/duplicate column/i.test(String(e && e.message))) throw e;
     }
   }
   ordersHaveDonation = true;
+}
+
+/** What Printful said when it would not print an order, kept on the row so
+ *  the console can show it beside the order instead of burying it in a log. */
+async function recordConfirmError(env, reference, e) {
+  await ensureDonationColumn(env);
+  const text = redactUpstream(String((e && e.message) || e)).slice(0, 300);
+  await env.DB.prepare('UPDATE orders SET confirm_error = ? WHERE reference = ?').bind(text, reference).run();
 }
 
 /* ------------------------------------------------------------ donations --- */
@@ -1010,9 +1026,10 @@ export async function confirmOrder(env, reference) {
     const confirmed = await printful(env, '/orders/' + existing.id + '/confirm', { method: 'POST' });
     outcome = { status: 'confirmed', orderId: confirmed.id, printfulStatus: confirmed.status || 'pending' };
   }
+  await ensureDonationColumn(env);
   const changes = await runGuarded(
     env.DB.prepare(
-      "UPDATE orders SET status = 'confirmed', printful_order_id = ?, printful_status = ?, confirmed_at = COALESCE(confirmed_at, datetime('now')) WHERE reference = ? AND status IN ('paid', 'confirmed')",
+      "UPDATE orders SET status = 'confirmed', printful_order_id = ?, printful_status = ?, confirmed_at = COALESCE(confirmed_at, datetime('now')), confirm_error = '' WHERE reference = ? AND status IN ('paid', 'confirmed')",
     ).bind(outcome.orderId, outcome.printfulStatus, reference),
     'confirm',
     reference,
@@ -1091,7 +1108,7 @@ export async function chargesInPayout(env, payoutId) {
         skipped.push({ charge: c.id, reason: 'disputed', order: meta.order_reference || '', donation: meta.donation_reference || '' });
         continue;
       }
-      if (meta.order_reference) orders.push({ reference: meta.order_reference, charge: c.id });
+      if (meta.order_reference) orders.push({ reference: meta.order_reference, charge: c.id, payment_intent: typeof c.payment_intent === 'string' ? c.payment_intent : '' });
       else if (meta.donation_reference) donations.push({ reference: meta.donation_reference, charge: c.id });
       else skipped.push({ charge: c.id, reason: 'no-reference' });
     }
@@ -1130,9 +1147,15 @@ async function settlePayout(env, payoutId, only) {
 
   const confirmed = [];
   const failed = [];
+  const reasons = {};
   const missing = [];
   for (const o of batch.orders) {
     await env.DB.prepare('UPDATE orders SET stripe_payout = ? WHERE reference = ?').bind(payoutId, o.reference).run();
+    // Money for this charge is in the bank: that is proof of payment even if
+    // the checkout message never arrived, so the row cannot stay "not paid".
+    await env.DB.prepare(
+      "UPDATE orders SET status = 'paid', paid_at = COALESCE(paid_at, datetime('now')), stripe_payment_intent = CASE WHEN stripe_payment_intent = '' THEN ? ELSE stripe_payment_intent END WHERE reference = ? AND status IN ('pending_payment', 'payment_failed')",
+    ).bind(o.payment_intent || '', o.reference).run();
     if (!confirmOnPayout(env)) continue; // the charge event already confirmed it
     if (only && !only.has(o.reference)) continue;
     if (stripeTestMode(env)) {
@@ -1157,10 +1180,16 @@ async function settlePayout(env, payoutId, only) {
     } catch (e) {
       console.error('payout ' + payoutId + ': failed to confirm ' + o.reference + ':', e);
       failed.push(o.reference);
+      reasons[o.reference] = redactUpstream(String((e && e.message) || e));
+      try {
+        await recordConfirmError(env, o.reference, e);
+      } catch (e2) {
+        console.error('could not record the refusal for ' + o.reference + ':', e2);
+      }
     }
   }
 
-  return { confirmed, failed, missing, donations: batch.donations.map((d) => d.reference), skipped: batch.skipped.length };
+  return { confirmed, failed, reasons, missing, donations: batch.donations.map((d) => d.reference), skipped: batch.skipped.length };
 }
 
 async function handlePayoutPaid(env, payout) {
@@ -1854,7 +1883,7 @@ export async function adminReconcilePayments(env) {
               errors.push({ reference: r, error: 'paid out, but Printful has no order for it' });
               waiting.delete(r);
             }
-            for (const r of result.failed) errors.push({ reference: r, error: 'paid out, but Printful would not confirm it' });
+            for (const r of result.failed) errors.push({ reference: r, error: 'paid out, but Printful would not print it: ' + (result.reasons[r] || 'no reason given') });
           } catch (e) {
             errors.push({ reference: p.id, error: redactUpstream(e.message) });
           }
@@ -1916,7 +1945,13 @@ export async function adminConfirmOrder(env, reference) {
   if (row.status !== 'paid' && row.status !== 'confirmed') {
     throw new ShopError('Order ' + reference + ' is ' + row.status.replace('_', ' ') + ', not paid. Not confirming.', 409);
   }
-  const outcome = await confirmOrder(env, reference);
+  let outcome;
+  try {
+    outcome = await confirmOrder(env, reference);
+  } catch (e) {
+    await recordConfirmError(env, reference, e).catch(() => {});
+    throw e;
+  }
   if (outcome.status === 'not-found') throw new ShopError('No Printful order found for ' + reference + '.', 404);
   return json({ ok: true, ...outcome });
 }
