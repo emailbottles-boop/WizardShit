@@ -404,7 +404,6 @@
     viewB.addEventListener('click', function () { renderCart(); go('cart'); });
     actions.appendChild(viewB);
     info.appendChild(actions);
-    info.appendChild(el('div', 'shop-note', 'Printed to order. You pay securely on Stripe, and it ships once your payment settles.'));
 
     function refresh() {
       swatches.forEach(function (b) { b.classList.toggle('selected', b.dataset.color === chosen.color); });
