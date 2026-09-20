@@ -10,6 +10,7 @@ import {
   adminShopHealth,
   chargesInPayout,
   cleanSecret,
+  cloneOptions,
   encodeForm,
   forgetSchemaForTests,
   formatMoney,
@@ -49,13 +50,25 @@ const PRODUCT = {
   ],
 };
 // A beanie as Printful reports it: size field "One size", colour only in the name.
+const BEANIE_OPTIONS = [
+  { id: 'embroidery_type', value: 'flat' },
+  { id: 'thread_colors', value: [] },
+  { id: 'text_thread_colors', value: [] },
+  { id: 'thread_colors_3d', value: ['#000000', '#ffffff'] },
+  { id: 'license_type', value: [] },
+];
 const BEANIE = {
   sync_product: { id: 503, name: 'Wizard Beanie', thumbnail_url: 'https://files.cdn.printful.com/beanie.png' },
   sync_variants: [
-    { id: 9201, variant_id: 6001, name: 'Wizard Beanie - Black', size: 'One size', color: null, retail_price: '22.00', currency: 'USD', availability_status: 'active', files: [] },
-    { id: 9202, variant_id: 6002, name: 'Wizard Beanie - White', size: 'One size', color: null, retail_price: '22.00', currency: 'USD', availability_status: 'active', files: [] },
+    { id: 9201, variant_id: 6001, name: 'Wizard Beanie - Black', size: 'One size', color: null, retail_price: '22.00', currency: 'USD', availability_status: 'active', product: { variant_id: 6001, product_id: 300 }, options: BEANIE_OPTIONS, files: [{ id: 937410063, type: 'default', options: [], position: null }] },
+    { id: 9202, variant_id: 6002, name: 'Wizard Beanie - White', size: 'One size', color: null, retail_price: '22.00', currency: 'USD', availability_status: 'active', product: { variant_id: 6002, product_id: 300 }, options: BEANIE_OPTIONS, files: [{ id: 937410063, type: 'default', options: [], position: null }] },
   ],
 };
+const BEANIE_CATALOG = { product: { id: 300, title: 'Cuffed Beanie | Yupoong 1501KC' }, variants: [
+  { id: 6001, product_id: 300, color: 'Black', color_code: '#000', size: 'One size', in_stock: true },
+  { id: 6002, product_id: 300, color: 'White', color_code: '#fff', size: 'One size', in_stock: true },
+  { id: 6003, product_id: 300, color: 'Navy', color_code: '#003', size: 'One size', in_stock: true },
+] };
 // A product sold in one colour only (the last colour can never be removed).
 const ONECOLOR = {
   sync_product: { id: 505, name: 'Wizard Tote', thumbnail_url: 'https://files.cdn.printful.com/tote.png' },
@@ -119,6 +132,8 @@ function installFetch() {
     if (url === 'https://api.printful.com/store/products/501/variants' && method === 'POST') return pfEnvelope({ id: 9900 + calls.length, ...JSON.parse(body) });
     if (/\/store\/variants\/\d+$/.test(url) && method === 'DELETE') return pfEnvelope(null);
     if (url === 'https://api.printful.com/products/146') return pfEnvelope(HOODIE_CATALOG);
+    if (url === 'https://api.printful.com/products/300') return pfEnvelope(BEANIE_CATALOG);
+    if (url === 'https://api.printful.com/store/products/503/variants' && method === 'POST') return pfEnvelope({ id: 9300, ...JSON.parse(body) });
     if (url.startsWith('https://api.printful.com/store/products/505')) return pfEnvelope(ONECOLOR);
     if (url === 'https://api.printful.com/products/301') return pfEnvelope(ONECOLOR_CATALOG);
     if (url.startsWith('https://api.printful.com/store/products/')) return jsonRes({ code: 404, result: 'Not Found' }, 404);
@@ -1113,6 +1128,22 @@ describe('donations', () => {
 });
 
 describe('the console', () => {
+  it('clones an embroidered beanie with its thread colours filled in the way Printful accepts', async () => {
+    const res = await adminAddColor(env(), 503, 'Navy');
+    expect(res.status).toBe(200);
+    const post = JSON.parse(calls.find((c) => c.url.endsWith('/store/products/503/variants') && c.method === 'POST').body);
+    expect(post.variant_id).toBe(6003);
+    expect(post.files).toEqual([{ id: 937410063, type: 'default' }]);
+    // Empty slots dropped, hex uppercased, and thread_colors filled from the list that had values.
+    expect(post.options).toEqual([
+      { id: 'embroidery_type', value: 'flat' },
+      { id: 'thread_colors_3d', value: ['#000000', '#FFFFFF'] },
+      { id: 'thread_colors', value: ['#000000', '#FFFFFF'] },
+    ]);
+    expect(cloneOptions([{ id: 'thread_colors', value: ['#cc3366'] }, { id: 'x', value: '' }])).toEqual([{ id: 'thread_colors', value: ['#CC3366'] }]);
+    expect(cloneOptions(undefined)).toEqual([]);
+  });
+
   it('redacts keys and long ids out of upstream error text', () => {
     expect(redactUpstream('Invalid API Key provided: rk_live_****abcd????')).toBe('Invalid API Key provided: rk_…');
     expect(redactUpstream('bad whsec_1234567890abcdef here')).toBe('bad whsec_… here');
