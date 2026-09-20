@@ -1208,6 +1208,8 @@ describe('the console', () => {
   it('lists the colours Printful makes a product in, and which are sold', async () => {
     const out = await (await adminProductColors(env(), 501)).json();
     expect(out.product).toEqual({ id: 501, name: 'Unisex Hoodie', catalog_id: 146, catalog_name: 'Unisex Hoodie' });
+    expect(out.embroidered).toBe(false);
+    expect((await (await adminProductColors(env(), 503)).json()).embroidered).toBe(true);
     expect(out.sizes).toEqual(['S', 'L', 'XL']);
     const by = Object.fromEntries(out.colors.map((c) => [c.color, c]));
     expect(by.Black).toMatchObject({ offered: 2, would_add: 1, color_code: '#000' }); // XL not sold yet
