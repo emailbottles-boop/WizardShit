@@ -1,0 +1,12 @@
+{
+  "name": "wizardshit-site",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --check js/shop.js && node test/browser/run-all.mjs",
+    "test:worker": "npm --prefix api test"
+  },
+  "devDependencies": {
+    "playwright": "^1.55.0"
+  }
+}

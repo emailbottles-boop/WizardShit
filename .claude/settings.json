@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "deny": [
+      "Bash(npx wrangler deploy)",
+      "Bash(npx wrangler deploy:*)",
+      "Bash(wrangler deploy)",
+      "Bash(wrangler deploy:*)",
+      "Bash(npm run deploy)",
+      "Bash(npm run deploy:*)",
+      "Bash(npx wrangler secret:*)",
+      "Bash(wrangler secret:*)",
+      "Bash(npx wrangler d1 execute:*)",
+      "Bash(wrangler d1 execute:*)",
+      "Bash(npx wrangler rollback)",
+      "Bash(npx wrangler rollback:*)",
+      "Bash(git push origin main)",
+      "Bash(git push origin main:*)",
+      "Bash(git push -u origin main)",
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "Bash(git push --force-with-lease:*)",
+      "Bash(gh pr merge:*)",
+      "Bash(git reset --hard:*)",
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./api/.dev.vars)",
+      "Read(./api/.dev.vars.*)"
+    ]
+  }
+}
