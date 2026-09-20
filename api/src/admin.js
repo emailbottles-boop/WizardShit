@@ -775,7 +775,10 @@ export const ADMIN_HTML = `<!DOCTYPE html>
           var cb = el('input'); cb.type = 'checkbox'; cb.checked = c.offered > 0;
           var sw = el('span', ''); sw.style.width = '14px'; sw.style.height = '14px'; sw.style.borderRadius = '50%'; sw.style.border = '1px solid #888'; sw.style.background = c.color_code || 'transparent';
           var note = c.offered ? 'offered in ' + c.offered + (c.offered === 1 ? ' size' : ' sizes') : (c.would_add ? 'would add ' + c.would_add + (c.would_add === 1 ? ' size' : ' sizes') : 'nothing to add');
-          if (!c.in_stock) note += ' \u00b7 out of stock at Printful';
+          if (!c.in_stock) {
+            var where = (c.stock || []).filter(function (r) { return r.status !== 'in_stock'; }).map(function (r) { return r.region + ': ' + String(r.status).replace(/_/g, ' '); }).join(', ');
+            note += ' \u00b7 out of stock at Printful' + (where ? ' (' + where + ')' : '') + ' \u2014 it comes back on its own when Printful restocks';
+          }
           var txt = el('span', '', c.color + ' \u2014 ' + note);
           if (!c.in_stock) txt.style.color = '#ff7a7a';
           cb.disabled = !c.offered && !c.would_add;
