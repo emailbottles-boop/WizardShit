@@ -21,6 +21,7 @@ import {
   orderDonation,
   parseMoney,
   parseVariantName,
+  redactUpstream,
   signForTests,
   shopErrorResponse,
   verifyStripeSignature,
@@ -1112,6 +1113,13 @@ describe('donations', () => {
 });
 
 describe('the console', () => {
+  it('redacts keys and long ids out of upstream error text', () => {
+    expect(redactUpstream('Invalid API Key provided: rk_live_****abcd????')).toBe('Invalid API Key provided: rk_…');
+    expect(redactUpstream('bad whsec_1234567890abcdef here')).toBe('bad whsec_… here');
+    expect(redactUpstream('scopes: sync_products/write (store 12345678)')).toBe('scopes: sync_products/write (store …)');
+    expect(redactUpstream('order 12345 ok')).toBe('order 12345 ok'); // short numbers are fine
+  });
+
   it('lists the colours Printful makes a product in, and which are sold', async () => {
     const out = await (await adminProductColors(env(), 501)).json();
     expect(out.product).toEqual({ id: 501, name: 'Unisex Hoodie', catalog_id: 146, catalog_name: 'Unisex Hoodie' });
@@ -1140,6 +1148,25 @@ describe('the console', () => {
     // Nothing to add is a refusal, not a silent no-op.
     const dup = await run(adminAddColor(env(), 501, 'Purple'));
     expect(dup.status).toBe(409);
+    // Printful refusing every size: the reason reaches the console's `error` field, redacted.
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = async (url, init) => {
+      if (String(url).endsWith('/store/products/501/variants') && init.method === 'POST') {
+        return jsonRes({ code: 403, result: 'This endpoint requires any of the following scopes granted: sync_products/write! (store 12345678)' }, 403);
+      }
+      return realFetch(url, init);
+    };
+    try {
+      const res = await adminAddColor(env(), 501, 'White');
+      expect(res.status).toBe(502);
+      const out = await res.json();
+      expect(out.created).toEqual([]);
+      expect(out.failed).toHaveLength(3);
+      expect(out.error).toMatch(/would not add White: S — .*sync_products\/write/);
+      expect(out.error).not.toContain('12345678');
+    } finally {
+      globalThis.fetch = realFetch;
+    }
   });
 
   it('removes a colour by deleting its variants, but never the last colour', async () => {

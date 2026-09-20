@@ -1277,11 +1277,11 @@ export async function handleStripeWebhook(request, env) {
 export function redactUpstream(message) {
   return String(message ?? '')
     // A whole key-shaped token, however Stripe chose to mask its middle.
-    .replace(/(sk|rk|pk|whsec)_[A-Za-z0-9_*?-]+/g, '$1_…')
+    .replace(/\b(sk|rk|pk|whsec)_[A-Za-z0-9_*?-]+/g, '$1_…')
     // A bare tail left after somebody else's asterisks.
     .replace(/\*{2,}[A-Za-z0-9]+/g, '****')
     // Long digit runs: store ids, token ids, account ids.
-    .replace(/\d{6,}/g, '…');
+    .replace(/\b\d{6,}\b/g, '…');
 }
 
 /**
@@ -1410,7 +1410,15 @@ export async function adminAddColor(env, printfulId, color) {
     }
   }
   await purgeCatalogCache();
-  return json({ color, created, failed }, failed.length && !created.length ? 502 : 200, { 'Cache-Control': 'no-store' });
+  // When nothing could be made, say why in `error` too: the console shows
+  // that field, and Printful's reason (a missing scope, a rejected file) is
+  // the whole point.
+  const allFailed = failed.length && !created.length;
+  return json(
+    { color, created, failed, ...(allFailed ? { error: 'Printful would not add ' + color + ': ' + failed.map((f) => f.size + ' — ' + f.error).join('; ') } : {}) },
+    allFailed ? 502 : 200,
+    { 'Cache-Control': 'no-store' },
+  );
 }
 
 /** Stop offering a colour: delete its sync variants. Never the last colour. */
@@ -1434,7 +1442,12 @@ export async function adminRemoveColor(env, printfulId, color) {
     }
   }
   await purgeCatalogCache();
-  return json({ color, removed, failed }, failed.length && !removed.length ? 502 : 200, { 'Cache-Control': 'no-store' });
+  const allFailed = failed.length && !removed.length;
+  return json(
+    { color, removed, failed, ...(allFailed ? { error: 'Printful would not remove ' + color + ': ' + failed.map((f) => f.size + ' — ' + f.error).join('; ') } : {}) },
+    allFailed ? 502 : 200,
+    { 'Cache-Control': 'no-store' },
+  );
 }
 
 export async function adminShopHealth(env) {
