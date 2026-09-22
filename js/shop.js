@@ -5,7 +5,9 @@
 //
 // If the Worker says the shop is closed (no Stripe key yet, or no Printful
 // token), the cards stay plain links to Printful and the DONATE buttons keep
-// their old link, so nothing on the page ever goes dead.
+// their old link, so nothing on the page ever goes dead. A Stripe Payment
+// Link pasted into js/config.js (WIZ_DONATE_LINK) sits in between: without
+// the popup, the DONATE buttons send people there instead of the old link.
 (function () {
   'use strict';
 
@@ -919,14 +921,31 @@
     });
 
     // The DONATE buttons: with Stripe on, open the popup instead of leaving
-    // for the old donation page. Without it, they stay exactly as they were.
+    // for the old donation page. Otherwise, with a Stripe Payment Link in
+    // js/config.js, they go there. Without either, they stay exactly as they
+    // were.
+    var link = donateLink();
     document.querySelectorAll('.donate-btn').forEach(function (a) {
-      if (!donateOpen) return;
+      if (!donateOpen && !link) return;
       a.innerHTML = '';
       a.appendChild(el('span', 'donate-heart', '♥'));
       a.appendChild(document.createTextNode(' DONATE'));
-      a.addEventListener('click', function (e) { e.preventDefault(); open(); });
+      if (donateOpen) {
+        a.addEventListener('click', function (e) { e.preventDefault(); open(); });
+      } else {
+        a.href = link;
+        a.target = '_blank';
+        a.rel = 'noopener';
+      }
     });
+  }
+
+  // The Stripe Payment Link from js/config.js, or '' when there is none. Only
+  // an https link counts, so a stray value can never point the buttons at
+  // nothing.
+  function donateLink() {
+    var l = typeof window.WIZ_DONATE_LINK === 'string' ? window.WIZ_DONATE_LINK.trim() : '';
+    return /^https:\/\/[^\s]+$/.test(l) ? l : '';
   }
 
   /* ---------------------------------------------------------- arrivals --- */

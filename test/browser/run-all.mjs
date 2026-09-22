@@ -4,7 +4,7 @@
 //   npm test              (from the repo root; Playwright's Chromium installed)
 //   CHROME=/path/to/chromium npm test   to use a Chromium already on the machine
 import { spawnSync } from 'node:child_process';
-const scripts = ['site.mjs', 'crash.mjs', 'float-cart.mjs', 'refresh.mjs', 'console.mjs'];
+const scripts = ['site.mjs', 'donate-link.mjs', 'crash.mjs', 'float-cart.mjs', 'refresh.mjs', 'console.mjs'];
 let failed = 0;
 for (const s of scripts) {
   console.log('\n=== ' + s + ' ===');
