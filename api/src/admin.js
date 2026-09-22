@@ -1039,6 +1039,106 @@ export const ADMIN_HTML = `<!DOCTYPE html>
     return sign + sym + whole.toLocaleString('en-US') + '.' + frac;
   }
 
+  /* ---- receipts: what the owner sends the customer, by hand ---- */
+  function receiptEsc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; });
+  }
+  function receiptFirstName(o) {
+    var n = String(o.name || '').trim();
+    return n ? n.split(/\\s+/)[0] : 'there';
+  }
+  function receiptLines(o) {
+    return (o.items || []).map(function (it) {
+      var qty = Number(it.quantity) || 1;
+      var each = Number(it.unit_price) || 0;
+      return { label: qty + '× ' + it.name + (it.option ? ' (' + it.option + ')' : ''), amount: cents(qty * each, o.currency) };
+    });
+  }
+  function receiptStatus(o) {
+    if (o.status === 'confirmed') return 'It is being printed now and ships straight from the printer. You will get a tracking email when it is on its way.';
+    if (o.status === 'paid') return 'Your payment is in. It goes to print as soon as the payment settles (a few business days), then ships straight from the printer.';
+    if (o.status === 'refunded') return 'This order has been refunded to your card.';
+    if (o.status === 'missing') return 'Your payment is in and we are sorting out the print by hand. We will be in touch.';
+    return '';
+  }
+  function receiptSubject(o) {
+    return 'Your Wizard Shit order ' + o.reference;
+  }
+  function receiptText(o) {
+    var out = [];
+    out.push('Hi ' + receiptFirstName(o) + ',');
+    out.push('');
+    out.push('Thanks for your order from Wizard Shit. Here is your receipt.');
+    out.push('');
+    out.push('Order ' + o.reference + ' — placed ' + String(o.created_at || '').slice(0, 10));
+    if (o.name || o.place) out.push('Ship to: ' + [o.name, o.place].filter(Boolean).join(' · '));
+    out.push('');
+    receiptLines(o).forEach(function (l) { out.push(l.label + ' — ' + l.amount); });
+    out.push('');
+    out.push('Subtotal: ' + cents(o.subtotal, o.currency));
+    out.push('Shipping: ' + cents(o.shipping, o.currency));
+    if (o.donation > 0) out.push('Gift to Wizard Shit: ' + cents(o.donation, o.currency));
+    out.push('Total paid: ' + cents(o.total, o.currency) + ' ' + String(o.currency || 'USD').toUpperCase());
+    var st = receiptStatus(o);
+    if (st) { out.push(''); out.push(st); }
+    out.push('');
+    out.push('Questions? Just reply to this email.');
+    out.push('');
+    out.push('— Wizard Shit');
+    out.push('https://wizardshit.store');
+    return out.join('\\n');
+  }
+  function receiptHtml(o) {
+    var rows = receiptLines(o).map(function (l) {
+      return '<tr><td>' + receiptEsc(l.label) + '</td><td class="n">' + receiptEsc(l.amount) + '</td></tr>';
+    }).join('');
+    var st = receiptStatus(o);
+    return '<!doctype html><html><head><meta charset="utf-8"><title>' + receiptEsc('Receipt ' + o.reference) + '</title>' +
+      '<style>body{font:15px/1.5 -apple-system,Segoe UI,Helvetica,Arial,sans-serif;color:#111;max-width:640px;margin:2.5rem auto;padding:0 1.25rem}' +
+      'h1{font-size:1.5rem;margin:0}h1 span{color:#ff8a1f}.muted{color:#666}table{width:100%;border-collapse:collapse;margin:1.25rem 0}' +
+      'td{padding:0.45rem 0;border-bottom:1px solid #e5e5e5;vertical-align:top}td.n{text-align:right;white-space:nowrap}tr.total td{border-bottom:0;font-weight:700;font-size:1.05rem}' +
+      '.foot{margin-top:2rem;font-size:0.9rem;color:#666}@media print{body{margin:0}button{display:none}}</style></head><body>' +
+      '<h1>Wiz<span>@</span>rd Shit</h1><div class="muted">wizardshit.store</div>' +
+      '<p style="margin-top:1.5rem"><strong>Receipt</strong><br>Order ' + receiptEsc(o.reference) + ' · placed ' + receiptEsc(String(o.created_at || '').slice(0, 10)) + '</p>' +
+      (o.name || o.place || o.email ? '<p>' + receiptEsc([o.name, o.place].filter(Boolean).join(' · ')) + (o.email ? '<br><span class="muted">' + receiptEsc(o.email) + '</span>' : '') + '</p>' : '') +
+      '<table>' + rows +
+      '<tr><td>Subtotal</td><td class="n">' + receiptEsc(cents(o.subtotal, o.currency)) + '</td></tr>' +
+      '<tr><td>Shipping</td><td class="n">' + receiptEsc(cents(o.shipping, o.currency)) + '</td></tr>' +
+      (o.donation > 0 ? '<tr><td>Gift to Wizard Shit</td><td class="n">' + receiptEsc(cents(o.donation, o.currency)) + '</td></tr>' : '') +
+      '<tr class="total"><td>Total paid</td><td class="n">' + receiptEsc(cents(o.total, o.currency) + ' ' + String(o.currency || 'USD').toUpperCase()) + '</td></tr></table>' +
+      (st ? '<p>' + receiptEsc(st) + '</p>' : '') +
+      '<p class="foot">Thanks for supporting Wizard Shit. Questions? Reply to the email this came with.</p>' +
+      '<p><button onclick="window.print()">Print / save as PDF</button></p></body></html>';
+  }
+  function receiptButtons(o, acts) {
+    if (o.status === 'pending_payment' || o.status === 'payment_failed') return;
+    var mail = el('a', 'btn receipt-mail', 'Email receipt');
+    mail.href = 'mailto:' + encodeURIComponent(o.email || '') + '?subject=' + encodeURIComponent(receiptSubject(o)) + '&body=' + encodeURIComponent(receiptText(o));
+    mail.title = o.email ? 'Opens your email app with the receipt written out, addressed to ' + o.email : 'No email on this order';
+    acts.appendChild(mail);
+    var copy = el('button', 'btn receipt-copy', 'Copy receipt');
+    copy.type = 'button';
+    copy.title = 'Copies the receipt text, ready to paste into any email';
+    copy.onclick = function () {
+      var text = receiptText(o);
+      var done = function () { toast('Receipt copied' + (o.email ? ' — paste it into an email to ' + o.email : '')); };
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, function () { window.prompt('Copy the receipt:', text); });
+      else window.prompt('Copy the receipt:', text);
+    };
+    acts.appendChild(copy);
+    var print = el('button', 'btn receipt-print', 'Print receipt');
+    print.type = 'button';
+    print.title = 'Opens a clean receipt page: print it, or save it as a PDF to attach';
+    print.onclick = function () {
+      var w = window.open('', '_blank');
+      if (!w) { toast('Allow pop-ups for this page to open the receipt', true); return; }
+      w.document.open();
+      w.document.write(receiptHtml(o));
+      w.document.close();
+    };
+    acts.appendChild(print);
+  }
+
   function orderBadge(o) {
     if (o.status === 'confirmed') return el('span', 'badge good', 'PRINTING · ' + (o.printful_status || 'pending'));
     if (o.status === 'paid' && o.confirm_error) return el('span', 'badge bad', 'PAID' + (o.stripe_payout ? ' · IN BANK' : '') + ' — PRINTFUL WOULD NOT PRINT IT: ' + o.confirm_error + ' — fix that at Printful, then press Confirm');
@@ -1244,6 +1344,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
         };
         acts.appendChild(cB);
       }
+      receiptButtons(o, acts);
       if (acts.childNodes.length) card.appendChild(acts);
       listEl.appendChild(card);
     });

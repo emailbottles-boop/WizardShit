@@ -58,6 +58,25 @@ const modeText = await page.$eval('.mode-line', (e) => e.textContent);
 if (!/Confirm on payout/.test(modeText)) fail('mode line: ' + modeText);
 const badges = await page.$$eval('#list .item .badge', (b) => b.map((x) => x.textContent));
 if (!badges.includes('PAID · WAITING FOR PAYOUT') || !badges.includes('PRINTING · pending')) fail('badges ' + JSON.stringify(badges));
+// receipts: every paid or printing order offers an email, a copy and a printable page
+const mailHrefs = await page.$$eval('#list .item a.receipt-mail', (a) => a.map((x) => x.getAttribute('href')));
+if (mailHrefs.length !== 2) fail('expected a receipt email link per paid order, got ' + mailHrefs.length);
+const samMail = mailHrefs.find((h) => h.startsWith('mailto:sam%40example.com'));
+if (!samMail) fail('receipt email should be addressed to the buyer: ' + JSON.stringify(mailHrefs));
+const samBody = decodeURIComponent(samMail.split('&body=')[1]);
+for (const want of ['Hi Sam,', 'Order WIZ-TWO', '2\u00d7 Unisex Hoodie (Purple / L) \u2014 $95.00', 'Shipping: $4.99', 'Total paid: $99.99 USD', 'goes to print as soon as the payment settles']) {
+  if (!samBody.includes(want)) fail('receipt body missing ' + JSON.stringify(want) + ':\n' + samBody);
+}
+if (!decodeURIComponent(samMail).includes('subject=Your Wizard Shit order WIZ-TWO')) fail('receipt subject: ' + samMail);
+const [popup] = await Promise.all([page.waitForEvent('popup'), page.click('#list .item button.receipt-print')]);
+await popup.waitForFunction(() => document.body && document.body.textContent.includes('Total paid'));
+const receiptText = await popup.evaluate(() => document.body.textContent);
+for (const want of ['Receipt', 'Order WIZ-TWO', 'Sam Buyer', 'Unisex Hoodie (Purple / L)', '$99.99 USD']) {
+  if (!receiptText.includes(want)) fail('printable receipt missing ' + JSON.stringify(want));
+}
+await popup.close();
+if ((await page.$$('#list .item button.receipt-copy')).length !== 2) fail('expected a copy button per paid order');
+
 page.once('dialog', (d) => d.accept());
 await page.click('#list .item button.primary');
 await page.waitForFunction(() => document.body.textContent.includes('Confirmed'));
