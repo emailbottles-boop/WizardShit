@@ -1055,8 +1055,8 @@ export const ADMIN_HTML = `<!DOCTYPE html>
     });
   }
   function receiptStatus(o) {
-    if (o.status === 'confirmed') return 'It is being printed now and ships straight from the printer. You will get a tracking email when it is on its way.';
-    if (o.status === 'paid') return 'Your payment is in. It goes to print as soon as the payment settles (a few business days), then ships straight from the printer.';
+    if (o.status === 'confirmed') return 'It is being printed now. Expect it at your door in about 7 days.';
+    if (o.status === 'paid') return 'Your payment is in. Expect it at your door in about 12 days.';
     if (o.status === 'refunded') return 'This order has been refunded to your card.';
     if (o.status === 'missing') return 'Your payment is in and we are sorting out the print by hand. We will be in touch.';
     return '';
@@ -1082,7 +1082,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
     var st = receiptStatus(o);
     if (st) { out.push(''); out.push(st); }
     out.push('');
-    out.push('Questions? Just reply to this email.');
+    out.push('Questions? Email receipts@wizardshit.store.');
     out.push('');
     out.push('— Wizard Shit');
     out.push('https://wizardshit.store');
@@ -1107,7 +1107,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
       (o.donation > 0 ? '<tr><td>Gift to Wizard Shit</td><td class="n">' + receiptEsc(cents(o.donation, o.currency)) + '</td></tr>' : '') +
       '<tr class="total"><td>Total paid</td><td class="n">' + receiptEsc(cents(o.total, o.currency) + ' ' + String(o.currency || 'USD').toUpperCase()) + '</td></tr></table>' +
       (st ? '<p>' + receiptEsc(st) + '</p>' : '') +
-      '<p class="foot">Thanks for supporting Wizard Shit. Questions? Reply to the email this came with.</p>' +
+      '<p class="foot">Thanks for supporting Wizard Shit. Questions? Email receipts@wizardshit.store.</p>' +
       '<p><button onclick="window.print()">Print / save as PDF</button></p></body></html>';
   }
   function receiptButtons(o, acts) {
