@@ -64,7 +64,7 @@ if (mailHrefs.length !== 2) fail('expected a receipt email link per paid order, 
 const samMail = mailHrefs.find((h) => h.startsWith('mailto:sam%40example.com'));
 if (!samMail) fail('receipt email should be addressed to the buyer: ' + JSON.stringify(mailHrefs));
 const samBody = decodeURIComponent(samMail.split('&body=')[1]);
-for (const want of ['Hi Sam,', 'Order WIZ-TWO', '2\u00d7 Unisex Hoodie (Purple / L) \u2014 $95.00', 'Shipping: $4.99', 'Total paid: $99.99 USD', 'goes to print as soon as the payment settles']) {
+for (const want of ['Hi Sam,', 'Order WIZ-TWO', '2\u00d7 Unisex Hoodie (Purple / L) \u2014 $95.00', 'Shipping: $4.99', 'Total paid: $99.99 USD', 'Expect it at your door in about 12 days.', 'Questions? Email receipts@wizardshit.store.']) {
   if (!samBody.includes(want)) fail('receipt body missing ' + JSON.stringify(want) + ':\n' + samBody);
 }
 if (!decodeURIComponent(samMail).includes('subject=Your Wizard Shit order WIZ-TWO')) fail('receipt subject: ' + samMail);
