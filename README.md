@@ -12,6 +12,11 @@ Merch is printed to order by Printful and paid for through Stripe on the site
 itself. Orders go to print only once the money has reached the bank; see
 "the shop" in `api/README.md`.
 
+Donations: paste a Stripe Payment Link into `js/config.js` (`WIZ_DONATE_LINK`)
+and every DONATE button sends people to it. Once the Worker has its Stripe key,
+the on-site donate popup takes over instead; with neither, the buttons keep
+their original link.
+
 ## Checks and safety rails
 
 - `cd api && npx vitest run` — the Worker's money-path tests.
