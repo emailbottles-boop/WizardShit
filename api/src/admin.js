@@ -871,6 +871,117 @@ export const ADMIN_HTML = `<!DOCTYPE html>
     return box;
   }
 
+  // Each variant's price, set in Printful itself (where the shop and checkout
+  // read it). Shows Printful's cost and the margin after the card fee, so a
+  // price that loses money stands out. Takes effect right away — no SAVE.
+  function pricesPanel(item) {
+    var box = el('div', 'full');
+    var open = false;
+    var toggle = el('button', 'btn', 'Prices ▸');
+    toggle.type = 'button';
+    var panel = el('div', 'mode-line');
+    panel.style.display = 'none';
+    panel.style.marginTop = '0.5rem';
+    // "23.99" (or "2399" in a whole-unit currency) to integer minor units, no floats.
+    function toMinor(text, currency) {
+      var s = String(text || '').trim().replace(/^\\$/, '');
+      var zero = /^(BIF|CLP|DJF|GNF|JPY|KMF|KRW|MGA|PYG|RWF|VND|VUV|XAF|XOF|XPF)$/.test(String(currency || 'USD').toUpperCase());
+      var m = s.match(zero ? /^(\\d{1,9})$/ : /^(\\d{1,9})(?:\\.(\\d{1,2}))?$/);
+      if (!m) return null;
+      return zero ? Number(m[1]) : Number(m[1]) * 100 + Number((m[2] || '').padEnd(2, '0'));
+    }
+    function pct(m) { return (m * 100).toFixed(1) + '%'; }
+    function save(v, amount) {
+      return api('/api/admin/shop/products/' + item.printful_id + '/prices/' + v.id, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ price: amount }),
+      });
+    }
+    function load() {
+      panel.textContent = 'Asking Printful…';
+      return api('/api/admin/shop/products/' + item.printful_id + '/prices').then(function (d) {
+        panel.innerHTML = '';
+        var target = d.target_margin;
+        panel.appendChild(el('div', '', 'Cost is Printful’s price for the blank with its standard print (extra print placements cost more). Margin is after the card fee (2.9% + 30¢). Shipping is charged to the customer separately, so it is not counted. Saving changes the price in Printful right away; the site shows it within a couple of minutes.'));
+        var low = d.variants.filter(function (v) { return v.margin != null && v.margin < target && v.suggested > v.price; });
+        if (low.length) {
+          var all = el('button', 'btn primary', 'Use suggested price on the ' + low.length + ' under ' + pct(target));
+          all.type = 'button';
+          all.style.margin = '0.5rem 0';
+          all.addEventListener('click', function () {
+            var list = low.map(function (v) { return (v.color || '') + (v.size ? ' / ' + v.size : '') + ': ' + cents(v.price, v.currency) + ' → ' + cents(v.suggested, v.currency); }).join('\\n');
+            if (!confirm('Change these prices in Printful?\\n\\n' + list)) return;
+            all.disabled = true;
+            var done = 0, bad = [];
+            low.reduce(function (p, v) {
+              return p.then(function () {
+                return save(v, v.suggested).then(function () { done++; }, function (e) { bad.push((v.color || v.name) + (v.size ? ' / ' + v.size : '') + ': ' + e.message); });
+              });
+            }, Promise.resolve()).then(function () {
+              toast('Updated ' + done + ' price' + (done === 1 ? '' : 's') + (bad.length ? ' — ' + bad.length + ' failed: ' + bad.join('; ') : ''), bad.length > 0);
+              return load();
+            });
+          });
+          panel.appendChild(all);
+        }
+        d.variants.forEach(function (v) {
+          var row = el('div', '');
+          row.style.display = 'flex'; row.style.flexWrap = 'wrap'; row.style.alignItems = 'center'; row.style.gap = '0.5rem'; row.style.margin = '0.35rem 0';
+          var label = [v.color, v.size].filter(Boolean).join(' / ') || v.name;
+          var info = v.cost == null
+            ? 'cost unknown'
+            : 'cost ' + cents(v.cost, v.currency) + ' · you keep ' + cents(v.net, v.currency) + ' (' + pct(v.margin) + ')';
+          var txt = el('span', '', label + ' — ' + info);
+          if (v.net != null && v.net < 0) txt.style.color = '#ff7a7a';
+          else if (v.margin != null && v.margin < target) txt.style.color = '#ffcc66';
+          var input = el('input');
+          input.type = 'text';
+          input.inputMode = 'decimal';
+          input.value = cents(v.price, v.currency).replace(/^[^0-9]+/, '').replace(/,/g, '');
+          input.style.width = '6rem';
+          input.setAttribute('aria-label', 'Price for ' + label);
+          var btn = el('button', 'btn', 'Save');
+          btn.type = 'button';
+          btn.addEventListener('click', function () {
+            var amount = toMinor(input.value, v.currency);
+            if (!amount) { toast('Type a price like 23.99', true); return; }
+            if (amount === v.price) { toast('That is already the price.'); return; }
+            var warn = v.cost != null && amount - (Math.round(amount * 0.029) + 30) - v.cost < 0 ? '\\n\\nAt this price you lose money on every sale.' : '';
+            if (!confirm('Change ' + item.title + ' (' + label + ') from ' + cents(v.price, v.currency) + ' to ' + cents(amount, v.currency) + '?' + warn)) return;
+            btn.disabled = true;
+            save(v, amount).then(function (r) {
+              toast(label + ' is now ' + cents(r.price, r.currency));
+              return load();
+            }).catch(function (e) {
+              toast(e.message, true);
+              btn.disabled = false;
+            });
+          });
+          row.appendChild(txt); row.appendChild(input); row.appendChild(btn);
+          // Only ever a raise: a price already clearing the target is the owner's call.
+          if (v.suggested != null && v.suggested > v.price) {
+            var sug = el('button', 'btn', 'Suggest ' + cents(v.suggested, v.currency));
+            sug.type = 'button';
+            sug.title = 'The price that keeps ' + pct(target) + ' after Printful’s cost and the card fee, rounded up to .99';
+            sug.addEventListener('click', function () { input.value = cents(v.suggested, v.currency).replace(/^[^0-9]+/, '').replace(/,/g, ''); input.focus(); });
+            row.appendChild(sug);
+          }
+          panel.appendChild(row);
+        });
+      }).catch(function (e) {
+        panel.textContent = e.message === 'login required' ? '' : e.message;
+      });
+    }
+    toggle.addEventListener('click', function () {
+      open = !open;
+      toggle.textContent = open ? 'Prices ▾' : 'Prices ▸';
+      panel.style.display = open ? '' : 'none';
+      if (open) load();
+    });
+    box.appendChild(toggle);
+    box.appendChild(panel);
+    return box;
+  }
+
   function loadPfProducts() {
     if (pfLoading) return;
     pfLoading = true;
@@ -887,6 +998,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
       body.appendChild(field('Printful link (fallback while the shop is closed)', item.url, function (v) { item.url = v; }));
       body.appendChild(pfPicker(item));
       if (item.printful_id) body.appendChild(colorsPanel(item));
+      if (item.printful_id) body.appendChild(pricesPanel(item));
       body.appendChild(imageField('Product image', item, 'image', !!item.sticker));
       var checks = el('div', 'checks full');
       checks.appendChild(checkbox('sticker style', item.sticker, function (v) { item.sticker = v ? 1 : 0; }));

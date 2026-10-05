@@ -9,6 +9,8 @@ import {
   adminRepairWebhook,
   webhookStatus,
   adminRemoveColor,
+  adminProductPrices,
+  adminSetPrice,
   adminDonations,
   adminShopHealth,
   chargesInPayout,
@@ -84,12 +86,12 @@ const ONECOLOR_CATALOG = { product: { id: 301, title: 'Tote' }, variants: [{ id:
 const HOODIE_CATALOG = {
   product: { id: 146, title: 'Unisex Hoodie' },
   variants: [
-    { id: 4011, product_id: 146, color: 'Black', color_code: '#000', size: 'S', in_stock: true },
-    { id: 4012, product_id: 146, color: 'Black', color_code: '#000', size: 'L', in_stock: true },
+    { id: 4011, product_id: 146, color: 'Black', color_code: '#000', size: 'S', in_stock: true, price: '20.50' },
+    { id: 4012, product_id: 146, color: 'Black', color_code: '#000', size: 'L', in_stock: true, price: '20.50' },
     { id: 4013, product_id: 146, color: 'Black', color_code: '#000', size: 'XL', in_stock: true },
-    { id: 4021, product_id: 146, color: 'Purple', color_code: '#609', size: 'L', in_stock: true },
-    { id: 4022, product_id: 146, color: 'Purple', color_code: '#609', size: 'XL', in_stock: false, availability_status: [{ region: 'USA', status: 'temporary_out_of_stock' }, { region: 'EU', status: 'out_of_stock' }] },
-    { id: 4031, product_id: 146, color: 'Gold', color_code: '#fc0', size: 'L', in_stock: true },
+    { id: 4021, product_id: 146, color: 'Purple', color_code: '#609', size: 'L', in_stock: true, price: '20.50' },
+    { id: 4022, product_id: 146, color: 'Purple', color_code: '#609', size: 'XL', in_stock: false, price: '50.00', availability_status: [{ region: 'USA', status: 'temporary_out_of_stock' }, { region: 'EU', status: 'out_of_stock' }] },
+    { id: 4031, product_id: 146, color: 'Gold', color_code: '#fc0', size: 'L', in_stock: true, price: '33.00' },
     { id: 4041, product_id: 146, color: 'White', color_code: '#fff', size: 'S', in_stock: true },
     { id: 4042, product_id: 146, color: 'White', color_code: '#fff', size: 'L', in_stock: true },
     { id: 4043, product_id: 146, color: 'White', color_code: '#fff', size: 'XL', in_stock: false },
@@ -116,6 +118,9 @@ let payoutCharges = [];
 let payouts = []; // what GET /v1/payouts?status=paid lists
 let webhookEndpoints = []; // what Stripe has under /v1/webhook_endpoints
 let stripeFails = false;
+let storedPrices = new Map(); // retail prices Printful holds after a PUT /store/variants/<id>
+let priceStoreFails = null; // a Printful refusal for that PUT
+let priceReadBack = null; // what Printful reports after the PUT, if not what was sent
 let stripeEmbeddedName = 'embedded_page'; // what the stand-in Stripe's API version calls the on-site mode
 
 function pfEnvelope(result, code = 200) {
@@ -139,6 +144,18 @@ function installFetch() {
     if (url.startsWith('https://api.printful.com/store/products/503')) return pfEnvelope(BEANIE);
     if (url === 'https://api.printful.com/store/products/501/variants' && method === 'POST') return pfEnvelope({ id: 9900 + calls.length, ...JSON.parse(body) });
     if (/\/store\/variants\/\d+$/.test(url) && method === 'DELETE') return pfEnvelope(null);
+    if (/\/store\/variants\/\d+$/.test(url) && method === 'PUT') {
+      if (priceStoreFails) return jsonRes({ code: priceStoreFails.status, result: priceStoreFails.result }, priceStoreFails.status);
+      const id = Number(url.split('/').pop());
+      storedPrices.set(id, priceReadBack ?? JSON.parse(body).retail_price);
+      return pfEnvelope({ id });
+    }
+    if (/\/store\/variants\/\d+$/.test(url) && method === 'GET') {
+      const id = Number(url.split('/').pop());
+      const v = PRODUCT.sync_variants.find((x) => x.id === id);
+      const sv = { ...v, retail_price: storedPrices.get(id) ?? v.retail_price };
+      return pfEnvelope(id === 9005 ? { sync_variant: sv } : sv); // Printful's two shapes
+    }
     if (url === 'https://api.printful.com/products/146') return pfEnvelope(HOODIE_CATALOG);
     if (url === 'https://api.printful.com/products/300') return pfEnvelope(BEANIE_CATALOG);
     if (url.startsWith('https://api.printful.com/store/products/505')) return pfEnvelope(ONECOLOR);
@@ -329,6 +346,9 @@ beforeEach(() => {
   payouts = [];
   webhookEndpoints = [];
   stripeFails = false;
+  storedPrices = new Map();
+  priceStoreFails = null;
+  priceReadBack = null;
   stripeEmbeddedName = 'embedded_page';
   installFetch();
   vi.stubGlobal('caches', fakeCaches());
@@ -1426,6 +1446,81 @@ describe('the console', () => {
     expect(last.status).toBe(409);
     expect((await last.json()).error).toMatch(/only colour left/i);
     expect(calls.filter((c) => /\/store\/variants\/9501$/.test(c.url))).toHaveLength(0);
+  });
+
+  it('lists each variant with its price, Printful cost, margin after the card fee, and a suggested price', async () => {
+    const out = await (await adminProductPrices(env(), 501)).json();
+    expect(out.product).toEqual({ id: 501, name: 'Unisex Hoodie' });
+    expect(out.target_margin).toBe(0.3);
+    const by = Object.fromEntries(out.variants.map((v) => [v.color + '/' + v.size, v]));
+    // $45.00, cost $20.50, fee 2.9% (130.5 -> 131) + 30 = 161: keeps $22.89.
+    expect(by['Black/S']).toMatchObject({ id: 9001, price: 4500, currency: 'USD', cost: 2050, fee: 161, net: 2289 });
+    expect(by['Black/S'].margin).toBeCloseTo(0.5087, 4);
+    // Under 30%: $47.50 on a $33.00 blank keeps $12.82. Suggested: (3300 + 30) / 0.671 = 4962.7, up to $49.99.
+    expect(by['Gold/L']).toMatchObject({ price: 4750, cost: 3300, fee: 168, net: 1282, suggested: 4999 });
+    expect(by['Gold/L'].margin).toBeLessThan(0.3);
+    // Losing money: a $50.00 blank sold at $47.50.
+    expect(by['Purple/XL']).toMatchObject({ net: -418, suggested: 7499 });
+    // Nothing was written anywhere.
+    expect(calls.filter((c) => c.method !== 'GET')).toHaveLength(0);
+  });
+
+  it('sets a price in Printful as a decimal string, reads it back and clears the catalog cache', async () => {
+    vi.stubGlobal('caches', fakeCaches());
+    await caches.default.put(new Request('https://wizardshit.store/api/shop/products'), new Response('stale'));
+    const res = await adminSetPrice(env(), 501, 9005, 4999);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ id: 9005, before: 4750, price: 4999, currency: 'USD' });
+    const put = call(/\/store\/variants\/9005$/, 'PUT');
+    expect(JSON.parse(put.body)).toEqual({ retail_price: '49.99' });
+    expect(await caches.default.match(new Request('https://wizardshit.store/api/shop/products'))).toBeUndefined();
+    // Cents under ten keep their zero: $45.05 is "45.05", never "45.5".
+    await adminSetPrice(env(), 501, 9001, 4505);
+    expect(JSON.parse(calls.filter((c) => /\/store\/variants\/9001$/.test(c.url) && c.method === 'PUT').pop().body)).toEqual({ retail_price: '45.05' });
+  });
+
+  it('the shop and checkout charge the new price once it is set', async () => {
+    await adminSetPrice(env(), 501, 9001, 4999);
+    // Printful now reports the new price on the product, as it would after the PUT.
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = async (url, init) => {
+      if (String(url).startsWith('https://api.printful.com/store/products/501')) {
+        return pfEnvelope({ ...PRODUCT, sync_variants: PRODUCT.sync_variants.map((v) => ({ ...v, retail_price: storedPrices.get(v.id) ?? v.retail_price })) });
+      }
+      return realFetch(url, init);
+    };
+    try {
+      rows['FROM merch_items WHERE visible = 1 AND printful_id IS NOT NULL'] = [{ printful_id: 501 }];
+      const res = await handleShipping(post('/api/shop/shipping', { recipient: RECIPIENT, items: [{ product_id: 501, variant_id: 9001, quantity: 2 }] }), env(), CORS);
+      expect((await res.json()).subtotal).toBe(9998);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  it('refuses a bad amount or a variant from another product, and writes nothing', async () => {
+    for (const bad of [0, -100, 49.99, '4999', null, undefined, 1_000_001]) {
+      const res = await run(adminSetPrice(env(), 501, 9001, bad));
+      expect(res.status).toBe(400);
+    }
+    // 9101 is the sticker's, not the hoodie's.
+    const other = await run(adminSetPrice(env(), 501, 9101, 500));
+    expect(other.status).toBe(404);
+    expect(calls.filter((c) => c.method === 'PUT')).toHaveLength(0);
+  });
+
+  it('says so when Printful refuses the change or stores something else, with ids redacted', async () => {
+    priceStoreFails = { status: 403, result: 'This endpoint requires any of the following scopes granted: sync_products/write! (store 12345678)' };
+    const refused = await run(adminSetPrice(env(), 501, 9001, 4999));
+    expect(refused.status).toBe(502);
+    const err = (await refused.json()).error;
+    expect(err).toMatch(/would not change the price: .*sync_products\/write/);
+    expect(err).not.toContain('12345678');
+    priceStoreFails = null;
+    priceReadBack = '45.00';
+    const ignored = await run(adminSetPrice(env(), 501, 9001, 4999));
+    expect(ignored.status).toBe(502);
+    expect((await ignored.json()).error).toMatch(/now shows \$45\.00 for this variant, not \$49\.99/);
   });
 
   it("lists every card's Printful variants with stock status, so a missing colour explains itself", async () => {

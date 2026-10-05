@@ -43,6 +43,7 @@
  *   POST /api/admin/shop/reconcile     -> ask Stripe about every unpaid order/gift and mark the paid ones
  *   GET /api/admin/shop/catalog       -> every merch card's Printful variants and their stock status
  *   GET/POST /api/admin/shop/products/<pf>/colors, DELETE …/colors/<color> -> the colours a card sells, changed in Printful
+ *   GET /api/admin/shop/products/<pf>/prices, PUT …/prices/<variant> -> each variant's price and margin; set one in Printful
  *   POST /api/admin/shop/products/<pf>/mockup -> copy Printful's mockup into R2 for use as the card image
  *   POST /api/admin/shop/orders/<ref>/confirm -> send a paid order to print by hand
  *   GET /api/admin/donations          -> every donation and the running totals
@@ -65,6 +66,8 @@ import {
   adminProductColors,
   adminAddColor,
   adminRemoveColor,
+  adminProductPrices,
+  adminSetPrice,
   printfulMockup,
   cleanSecret,
   purgeCatalogCache,
@@ -1725,6 +1728,23 @@ async function route(request, env, ctx, url, path, method) {
                 return await adminAddColor(env, pfId, body && body.color);
               }
               if (method === 'DELETE' && m[2]) return await adminRemoveColor(env, pfId, decodeURIComponent(m[2]));
+            } catch (e) {
+              const known = shopErrorResponse(e);
+              if (known) return known;
+              throw e;
+            }
+          }
+        }
+        {
+          // Each variant's price, read and set in Printful (where the shop reads it).
+          const m = path.match(/^\/api\/admin\/shop\/products\/(\d{1,12})\/prices(?:\/(\d{1,12}))?$/);
+          if (m) {
+            try {
+              if (method === 'GET' && !m[2]) return await adminProductPrices(env, Number(m[1]));
+              if (method === 'PUT' && m[2]) {
+                const body = await request.json().catch(() => ({}));
+                return await adminSetPrice(env, Number(m[1]), Number(m[2]), body && body.price);
+              }
             } catch (e) {
               const known = shopErrorResponse(e);
               if (known) return known;
