@@ -301,6 +301,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
   <div class="toolbar">
     <button class="btn" id="addBtn">+ Add</button>
     <button class="btn" id="printfulBtn" style="display:none">Import from Printful</button>
+    <button class="btn" id="allPricesBtn" style="display:none" title="Raise every price on every linked card to its suggested price (never lowers one)">Use all suggested prices</button>
     <span id="dirtyFlag">● unsaved changes</span>
     <span style="flex:1"></span>
     <button class="btn" id="reloadBtn">Reload</button>
@@ -1704,6 +1705,7 @@ export const ADMIN_HTML = `<!DOCTYPE html>
     document.getElementById('addBtn').style.display = editable ? '' : 'none';
     document.getElementById('saveBtn').style.display = editable ? '' : 'none';
     document.getElementById('printfulBtn').style.display = tab === 'merch' ? '' : 'none';
+    document.getElementById('allPricesBtn').style.display = tab === 'merch' ? '' : 'none';
     if (tab === 'merch') {
       if (pfOpen) listEl.appendChild(renderPfPanel());
       renderMerch();
@@ -1740,6 +1742,73 @@ export const ADMIN_HTML = `<!DOCTYPE html>
     if (pfOpen && pfProducts === null) {
       loadPfProducts();
     }
+  };
+
+  // Every card's suggested prices in one go. Same rule as each variant's
+  // "Suggest" button (only ever a raise), one confirm listing every change,
+  // saved one at a time in Printful through the same endpoint as a single
+  // Save, which reads each price back. Price panels reload closed afterwards.
+  document.getElementById('allPricesBtn').onclick = function () {
+    var btn = this;
+    var label = btn.textContent;
+    var seen = {};
+    var cards = state.merch.filter(function (m) {
+      if (!m.printful_id || seen[m.printful_id]) return false;
+      seen[m.printful_id] = true;
+      return true;
+    });
+    if (!cards.length) { toast('No merch card is linked to a Printful product yet.', true); return; }
+    function name(item) { return item.title || ('Printful #' + item.printful_id); }
+    function variantLabel(v) { return [v.color, v.size].filter(Boolean).join(' / ') || v.name; }
+    function finish() { btn.disabled = false; btn.textContent = label; }
+    btn.disabled = true;
+    btn.textContent = 'Asking Printful\u2026';
+    var plan = [], unread = [];
+    cards.reduce(function (p, item) {
+      return p.then(function () {
+        return api('/api/admin/shop/products/' + item.printful_id + '/prices').then(function (d) {
+          (d.variants || []).forEach(function (v) {
+            if (v.suggested != null && v.suggested > v.price) plan.push({ item: item, v: v });
+          });
+        }, function (e) {
+          if (e.message === 'login required') throw e;
+          unread.push(name(item) + ': ' + e.message);
+        });
+      });
+    }, Promise.resolve()).then(function () {
+      var skipped = unread.length ? ' (could not read ' + unread.join('; ') + ')' : '';
+      if (!plan.length) {
+        toast('Every price is already at or above its suggested price' + skipped, unread.length > 0);
+        finish();
+        return;
+      }
+      var list = plan.map(function (x) {
+        return name(x.item) + ' (' + variantLabel(x.v) + '): ' + cents(x.v.price, x.v.currency) + ' \u2192 ' + cents(x.v.suggested, x.v.currency);
+      }).join('\\n');
+      if (!confirm('Raise ' + plan.length + ' price' + (plan.length === 1 ? '' : 's') + ' to the suggested price in Printful?\\n\\n' + list + (unread.length ? '\\n\\nCould not read: ' + unread.join('; ') : ''))) {
+        finish();
+        return;
+      }
+      btn.textContent = 'Saving\u2026';
+      var done = 0, bad = [];
+      return plan.reduce(function (p, x) {
+        return p.then(function () {
+          return api('/api/admin/shop/products/' + x.item.printful_id + '/prices/' + x.v.id, {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ price: x.v.suggested }),
+          }).then(function () { done++; }, function (e) {
+            if (e.message === 'login required') throw e;
+            bad.push(name(x.item) + ' (' + variantLabel(x.v) + '): ' + e.message);
+          });
+        });
+      }, Promise.resolve()).then(function () {
+        toast('Updated ' + done + ' of ' + plan.length + ' price' + (plan.length === 1 ? '' : 's') + (bad.length ? ' \u2014 ' + bad.length + ' failed: ' + bad.join('; ') : '') + skipped, bad.length > 0 || unread.length > 0);
+        finish();
+        render();
+      });
+    }).catch(function (e) {
+      if (e.message !== 'login required') toast(e.message, true);
+      finish();
+    });
   };
 
   document.getElementById('addBtn').onclick = function () {
