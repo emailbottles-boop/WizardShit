@@ -18,7 +18,7 @@ page.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resourc
 
 const confirmed = [];
 const pricePuts = [];
-const prices = { 9001: 4500, 9005: 4750 };
+const prices = { 9001: 4500, 9005: 4750, 9101: 400 };
 const priceRow = (id, color, size, cost, suggested) => {
   const price = prices[id];
   const fee = Math.round(price * 0.029) + 30;
@@ -38,7 +38,8 @@ await page.route('**/api/**', async (route) => {
     { id: 1, reference: 'WIZ-ONE', status: 'confirmed', name: 'Jo', place: 'Austin, TX, US', email: '', items: [{ name: 'Sticker of Rath', option: '', quantity: 1, unit_price: 400 }], units: 1, subtotal: 400, shipping: 399, total: 799, currency: 'USD', printful_order_id: 771100, printful_status: 'pending', stripe_payout: 'po_1', created_at: '2026-09-18 03:00:00' },
   ] });
   if (p === '/api/admin/shop/products/501/prices') return json({ product: { id: 501, name: 'Unisex Hoodie' }, target_margin: 0.3, variants: [priceRow(9001, 'Black', 'S', 2050, 3099), priceRow(9005, 'Gold', 'L', 3300, 4999)] });
-  const pm = p.match(/^\/api\/admin\/shop\/products\/501\/prices\/(\d+)$/);
+  if (p === '/api/admin/shop/products/502/prices') return json({ product: { id: 502, name: 'Sticker of Rath' }, target_margin: 0.3, variants: [{ id: 9101, name: 'Sticker of Rath - 3\u2033\u00d73\u2033', color: '', size: '3\u2033\u00d73\u2033', price: prices[9101], currency: 'USD', cost: 300, fee: 42, net: 58, margin: 0.145, suggested: 499 }] });
+  const pm = p.match(/^\/api\/admin\/shop\/products\/50[12]\/prices\/(\d+)$/);
   if (pm && req.method() === 'PUT') {
     const body = JSON.parse(req.postData());
     pricePuts.push({ id: Number(pm[1]), ...body });
@@ -96,6 +97,27 @@ if (await hoodie.getByRole('button', { name: /Use suggested price/ }).count()) f
 await page.selectOption('#list .item:nth-child(2) select', '502');
 const dirty = await page.$eval('#dirtyFlag', (e) => getComputedStyle(e).display !== 'none');
 if (!dirty) fail('changing the picker should mark unsaved changes');
+
+// Use all suggested prices: every linked card at once, only ever a raise.
+// The hoodie already sits at its suggestions; the sticker card just linked
+// to 502 is under, so exactly that one variant is raised.
+const allBtn = page.getByRole('button', { name: 'Use all suggested prices' });
+if (!(await allBtn.isVisible())) fail('the all-prices button belongs on the merch tab');
+let allDialog = '';
+page.once('dialog', (d) => { allDialog = d.message(); d.accept(); });
+const putsBefore = pricePuts.length;
+await allBtn.click();
+await page.waitForFunction(() => document.body.textContent.includes('Updated 1 of 1 price'));
+if (!allDialog.includes('Raise 1 price to the suggested price')) fail('all-prices confirm header: ' + allDialog);
+if (!allDialog.includes('TOTE (3\u2033\u00d73\u2033): $4.00 \u2192 $4.99')) fail('all-prices confirm should list the change: ' + allDialog);
+if (allDialog.includes('Gold') || allDialog.includes('Black')) fail('prices already at their suggestion must not be listed: ' + allDialog);
+if (JSON.stringify(pricePuts.slice(putsBefore)) !== JSON.stringify([{ id: 9101, price: 499 }])) fail('all-prices PUTs: ' + JSON.stringify(pricePuts.slice(putsBefore)));
+// Run again: nothing left under its suggestion, nothing sent, no dialog.
+page.once('dialog', (d) => { fail('no confirm expected when nothing changes: ' + d.message()); d.dismiss(); });
+await allBtn.click();
+await page.waitForFunction(() => document.body.textContent.includes('Every price is already at or above its suggested price'));
+if (pricePuts.length !== putsBefore + 1) fail('a second run must send nothing');
+page.removeAllListeners('dialog');
 
 // orders tab
 await page.click('.tab[data-tab=orders]');
