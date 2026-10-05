@@ -17,6 +17,14 @@ page.on('pageerror', (e) => errors.push(String(e)));
 page.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resource/.test(m.text())) errors.push(m.text()); });
 
 const confirmed = [];
+const pricePuts = [];
+const prices = { 9001: 4500, 9005: 4750 };
+const priceRow = (id, color, size, cost, suggested) => {
+  const price = prices[id];
+  const fee = Math.round(price * 0.029) + 30;
+  const net = price - fee - cost;
+  return { id, name: 'Unisex Hoodie - ' + color + ' / ' + size, color, size, price, currency: 'USD', cost, fee, net, margin: net / price, suggested };
+};
 await page.route('**/api/**', async (route) => {
   const req = route.request();
   const p = new URL(req.url()).pathname;
@@ -29,6 +37,15 @@ await page.route('**/api/**', async (route) => {
     { id: 2, reference: 'WIZ-TWO', status: 'paid', name: 'Sam Buyer', place: 'Renton, WA, US', email: 'sam@example.com', items: [{ name: 'Unisex Hoodie', option: 'Purple / L', quantity: 2, unit_price: 4750 }], units: 2, subtotal: 9500, shipping: 499, total: 9999, currency: 'USD', printful_order_id: 771122, printful_status: 'draft', stripe_payout: '', created_at: '2026-09-19 03:00:00' },
     { id: 1, reference: 'WIZ-ONE', status: 'confirmed', name: 'Jo', place: 'Austin, TX, US', email: '', items: [{ name: 'Sticker of Rath', option: '', quantity: 1, unit_price: 400 }], units: 1, subtotal: 400, shipping: 399, total: 799, currency: 'USD', printful_order_id: 771100, printful_status: 'pending', stripe_payout: 'po_1', created_at: '2026-09-18 03:00:00' },
   ] });
+  if (p === '/api/admin/shop/products/501/prices') return json({ product: { id: 501, name: 'Unisex Hoodie' }, target_margin: 0.3, variants: [priceRow(9001, 'Black', 'S', 2050, 3099), priceRow(9005, 'Gold', 'L', 3300, 4999)] });
+  const pm = p.match(/^\/api\/admin\/shop\/products\/501\/prices\/(\d+)$/);
+  if (pm && req.method() === 'PUT') {
+    const body = JSON.parse(req.postData());
+    pricePuts.push({ id: Number(pm[1]), ...body });
+    const before = prices[pm[1]];
+    prices[pm[1]] = body.price;
+    return json({ id: Number(pm[1]), before, price: body.price, currency: 'USD' });
+  }
   if (/\/api\/admin\/shop\/orders\/WIZ-TWO\/confirm$/.test(p) && req.method() === 'POST') { confirmed.push('WIZ-TWO'); return json({ ok: true, status: 'confirmed', orderId: 771122 }); }
   if (p === '/api/admin/donations') return json({ donate: true, totals: { received: 3500, in_bank: 2500, gifts: 2 }, donations: [
     { id: 2, reference: 'GIFT-B', status: 'paid', amount: 1000, currency: 'USD', name: '', email: 'x@example.com', message: '', public: 0, created_at: '2026-09-19 04:00:00', paid_at: '2026-09-19 04:01:00' },
@@ -47,6 +64,35 @@ await page.waitForFunction(() => { const s = document.querySelector('#list .item
 const picked = await page.$$eval('#list .item select', (sels) => sels.map((s) => s.value + ':' + s.options[s.selectedIndex].textContent));
 if (picked[0] !== '501:Unisex Hoodie') fail('hoodie picker should preselect its Printful product: ' + picked[0]);
 if (!/^:/.test(picked[1])) fail('tote picker should be link only: ' + picked[1]);
+// prices: each variant's price, cost and margin, editable in place
+const hoodie = page.locator('#list .item').first();
+await hoodie.getByRole('button', { name: 'Prices \u25B8' }).click();
+const goldRow = hoodie.locator('div', { hasText: /^Gold \/ L \u2014 cost/ }).last();
+await goldRow.waitFor();
+const goldText = await goldRow.locator('span').first().textContent();
+if (!goldText.includes('cost $33.00 \u00b7 you keep $12.82 (27.0%)')) fail('gold margin line: ' + goldText);
+const goldColor = await goldRow.locator('span').first().evaluate((e) => getComputedStyle(e).color);
+if (goldColor !== 'rgb(255, 204, 102)') fail('an under-30% price should be flagged amber: ' + goldColor);
+if ((await goldRow.locator('input').inputValue()) !== '47.50') fail('gold price input should hold 47.50');
+if ((await hoodie.getByRole('button', { name: 'Use suggested price on the 1 under 30.0%' }).count()) !== 1) fail('one price under 30% should offer the bulk button');
+await hoodie.screenshot({ path: OUT + 'console-prices.png' });
+if (await hoodie.getByRole('button', { name: 'Suggest $30.99' }).count()) fail('a price above 30% should not be offered a cut');
+// A typo is caught before anything is sent.
+await goldRow.locator('input').fill('4o.00');
+await goldRow.getByRole('button', { name: 'Save' }).click();
+await page.waitForFunction(() => document.body.textContent.includes('Type a price like 23.99'));
+if (pricePuts.length) fail('a bad price must not be sent');
+await goldRow.getByRole('button', { name: 'Suggest $49.99' }).click();
+if ((await goldRow.locator('input').inputValue()) !== '49.99') fail('suggest should fill 49.99');
+let priceDialog = '';
+page.once('dialog', (d) => { priceDialog = d.message(); d.accept(); });
+await goldRow.getByRole('button', { name: 'Save' }).click();
+await page.waitForFunction(() => document.body.textContent.includes('Gold / L is now $49.99'));
+if (!priceDialog.includes('from $47.50 to $49.99')) fail('price confirm should name both prices: ' + priceDialog);
+if (JSON.stringify(pricePuts) !== JSON.stringify([{ id: 9005, price: 4999 }])) fail('price PUT: ' + JSON.stringify(pricePuts));
+// The panel reloads with the new price, and nothing is left under 30%.
+await page.waitForFunction(() => [...document.querySelectorAll('#list .item input')].some((i) => i.value === '49.99' && i.getAttribute('aria-label') === 'Price for Gold / L'));
+if (await hoodie.getByRole('button', { name: /Use suggested price/ }).count()) fail('bulk button should be gone once every price clears 30%');
 await page.selectOption('#list .item:nth-child(2) select', '502');
 const dirty = await page.$eval('#dirtyFlag', (e) => getComputedStyle(e).display !== 'none');
 if (!dirty) fail('changing the picker should mark unsaved changes');

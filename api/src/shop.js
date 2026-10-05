@@ -1642,6 +1642,110 @@ export async function adminRemoveColor(env, printfulId, color) {
   );
 }
 
+/* ------------------------------------------------- prices, from the console --- */
+
+// Stripe's standard card fee, for the console's margin figure only. Nothing
+// the customer is charged is computed from these.
+const CARD_FEE_PERCENT = 0.029;
+const CARD_FEE_FIXED = 30;
+const TARGET_MARGIN = 0.3;
+// A ceiling on a price typed in the console, in minor units: $10,000 or
+// 10,000,000 of a whole-unit currency. A slipped key, not a real price.
+const MAX_PRICE = 1_000_000;
+
+/** Minor units back to the string Printful stores, without a float. */
+function printfulMoney(amount, currency) {
+  if (minorUnits(currency) === 1) return String(amount);
+  return Math.floor(amount / 100) + '.' + String(amount % 100).padStart(2, '0');
+}
+
+/** Up to the next .99 (a price already ending in .99 stays). Two-decimal only. */
+function upToNinetyNine(amount) {
+  return Math.floor(Math.ceil(amount - 1e-9) / 100) * 100 + 99;
+}
+
+/**
+ * Every variant a card sells, with its price and what Printful charges for
+ * it, so the owner can see the margin before changing a price. Cost is
+ * Printful's catalog price for the blank with its standard print; extra
+ * placements cost more, and shipping is charged to the customer on its own
+ * line at checkout, so neither is in it.
+ */
+export async function adminProductPrices(env, printfulId) {
+  const p = await productWithCatalog(env, printfulId);
+  const byId = new Map(p.catalogVariants.map((cv) => [cv.id, cv]));
+  const variants = p.variants.map((v) => {
+    const currency = String(v.currency || 'USD').toUpperCase();
+    const price = parseMoney(v.retail_price, currency);
+    const cv = byId.get(v.variant_id) || {};
+    // Printful's catalog is priced in USD; a margin across currencies would be
+    // a guess, so it is only worked out for a USD store.
+    let cost = null;
+    try {
+      if (currency === 'USD' && cv.price != null) cost = parseMoney(cv.price, 'USD');
+    } catch {
+      cost = null;
+    }
+    const fee = Math.round(price * CARD_FEE_PERCENT) + CARD_FEE_FIXED;
+    const net = cost == null ? null : price - fee - cost;
+    return {
+      id: v.id,
+      name: v.name,
+      color: p.colorOf(v),
+      size: p.sizeOf(v),
+      price,
+      currency,
+      cost,
+      fee: cost == null ? null : fee,
+      net,
+      margin: net == null || !price ? null : net / price,
+      suggested: cost == null ? null : upToNinetyNine((cost + CARD_FEE_FIXED) / (1 - CARD_FEE_PERCENT - TARGET_MARGIN)),
+    };
+  });
+  return json(
+    { product: { id: p.product.id, name: p.product.name }, target_margin: TARGET_MARGIN, variants },
+    200,
+    { 'Cache-Control': 'no-store' },
+  );
+}
+
+/**
+ * Sets one variant's retail price in Printful — the only place a price lives;
+ * the storefront and checkout both read it from there. The variant must belong
+ * to the product named, the amount is integer minor units, and the price is
+ * read back afterwards so the console never reports a change that did not take.
+ * A cart priced before the change is re-quoted at checkout (409), as for any
+ * price that moves in Printful.
+ */
+export async function adminSetPrice(env, printfulId, variantId, amount) {
+  if (!Number.isSafeInteger(amount) || amount <= 0 || amount > MAX_PRICE) {
+    throw new ShopError('Give the price as a whole number of cents, more than 0.');
+  }
+  const r = await printful(env, '/store/products/' + encodeURIComponent(printfulId));
+  const v = (r.sync_variants || []).find((x) => Number(x.id) === Number(variantId));
+  if (!v) throw new ShopError('That variant is not part of this product.', 404);
+  const currency = String(v.currency || 'USD').toUpperCase();
+  if (WHOLE_UNITS_ONLY.has(currency) && amount % 100 !== 0) {
+    throw new ShopError(currency + ' prices must be whole units.');
+  }
+  const before = parseMoney(v.retail_price, currency);
+  try {
+    await printful(env, '/store/variants/' + encodeURIComponent(v.id), { method: 'PUT', body: { retail_price: printfulMoney(amount, currency) } });
+  } catch (e) {
+    if (e instanceof PrintfulError) throw new ShopError('Printful would not change the price: ' + redactUpstream(e.message), 502);
+    throw e;
+  }
+  await purgeCatalogCache();
+  const read = await printful(env, '/store/variants/' + encodeURIComponent(v.id));
+  // The variant itself, or wrapped as { sync_variant } like the product call.
+  const now = (read && read.sync_variant) || read || {};
+  const after = parseMoney(now.retail_price, now.currency || currency);
+  if (after !== amount) {
+    throw new ShopError('Printful now shows ' + formatMoney(after, currency) + ' for this variant, not ' + formatMoney(amount, currency) + '. That is what the site charges: check it in Printful.', 502);
+  }
+  return json({ id: v.id, before, price: after, currency }, 200, { 'Cache-Control': 'no-store' });
+}
+
 export async function adminShopHealth(env) {
   const shape = (raw) => {
     const value = String(raw ?? '');
